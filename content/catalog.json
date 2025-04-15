@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "supportsDeltaUpdates": false,
+  "tracks": [
+    {
+      "name": "video_4mbps",
+      "namespace": "moqlivemock.eyevinn.se/media",
+      "packaging": "cmaf",
+      "renderGroup": 1,
+      "label": "High Quality Video",
+      "codec": "avc1.42001f",
+      "width": 1280,
+      "height": 720,
+      "framerate": 25,
+      "bitrate": 900000,
+      "altGroup": 1
+    },
+    {
+      "name": "video_2mbps",
+      "namespace": "moqlivemock.eyevinn.se/media",
+      "packaging": "cmaf",
+      "renderGroup": 1,
+      "label": "Medium Quality Video",
+      "codec": "avc1.42001f",
+      "width": 1280,
+      "height": 720,
+      "framerate": 25,
+      "bitrate": 600000,
+      "altGroup": 1
+    },
+    {
+      "name": "video_1mbps",
+      "namespace": "moqlivemock.eyevinn.se/media",
+      "packaging": "cmaf",
+      "renderGroup": 1,
+      "label": "Low Quality Video",
+      "codec": "avc1.42001f",
+      "width": 1280,
+      "height": 720,
+      "framerate": 25,
+      "bitrate": 400000,
+      "altGroup": 1
+    },
+    {
+      "name": "audio_128kbps",
+      "namespace": "moqlivemock.eyevinn.se/media",
+      "packaging": "cmaf",
+      "renderGroup": 1,
+      "label": "Stereo Audio",
+      "codec": "mp4a.40.2",
+      "samplerate": 48000,
+      "channelConfig": "2",
+      "bitrate": 170000
+    }
+  ]
+}
