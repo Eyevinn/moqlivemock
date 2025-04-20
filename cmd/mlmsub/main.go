@@ -7,6 +7,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/mengelbart/moqtransport"
@@ -31,6 +34,7 @@ type options struct {
 	namespace    string
 	trackname    string
 	version      bool
+	duration     int
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -46,6 +50,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.namespace, "namespace", "clock", "Namespace to subscribe to")
 	fs.StringVar(&opts.trackname, "trackname", "second", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
+	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -73,17 +78,34 @@ func run(args []string) error {
 		return nil
 	}
 
-	return runClient(opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if opts.duration > 0 {
+		tctx, tcancel := context.WithTimeout(ctx, time.Duration(opts.duration)*time.Second)
+		defer tcancel()
+		ctx = tctx
+	}
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		fmt.Fprintf(os.Stderr, "\nReceived signal, cancelling...\n")
+		cancel()
+	}()
+
+	return runClient(ctx, opts)
 }
 
-func runClient(opts *options) error {
+func runClient(ctx context.Context, opts *options) error {
 	h := &moqHandler{
 		quic:      !opts.webtransport,
 		addr:      opts.addr,
 		namespace: []string{opts.namespace},
 		trackname: opts.trackname,
 	}
-	return h.runClient(context.TODO(), opts.webtransport)
+	return h.runClient(ctx, opts.webtransport)
 }
 
 func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {

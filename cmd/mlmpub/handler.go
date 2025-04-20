@@ -121,7 +121,7 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		return
 	}
 	if err := session.Announce(context.Background(), h.namespace); err != nil {
-		log.Printf("faild to announce namespace '%v': %v", h.namespace, err)
+		log.Printf("failed to announce namespace '%v': %v", h.namespace, err)
 		return
 	}
 }
@@ -139,18 +139,11 @@ func (h *moqHandler) setupDateTrack() {
 					log.Printf("failed to open new subgroup: %v", err)
 					return
 				}
+				log.Printf("writing time to publisher %v", p)
 				if _, err := sg.WriteObject(0, []byte(fmt.Sprintf("%v", ts))); err != nil {
 					log.Printf("failed to write time to subgroup: %v", err)
 				}
 				sg.Close()
-				// if err := p.SendDatagram(moqtransport.Object{
-				// 	GroupID:    uint64(groupID),
-				// 	SubGroupID: 0,
-				// 	ObjectID:   0,
-				// 	Payload:    []byte(fmt.Sprintf("%v", ts)),
-				// }); err != nil {
-				// 	log.Printf("failed to write time to publisher: %v", err)
-				// }
 			}
 		case publisher := <-h.publishers:
 			log.Printf("got subscriber")

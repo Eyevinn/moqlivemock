@@ -1,0 +1,129 @@
+package internal
+
+import (
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestPrepareTrack(t *testing.T) {
+	testCases := []struct {
+		desc          string
+		filePath      string
+		contentType   string
+		language      string
+		timeScale     int
+		duration      int
+		sampleDur     int
+		nrSamples     int
+		gopLength     int
+		sampleBitrate int
+	}{
+		{
+			desc:          "video_400kbps",
+			filePath:      "../content/video_400kbps.mp4",
+			contentType:   "video",
+			timeScale:     12800,
+			duration:      128000,
+			sampleDur:     512,
+			nrSamples:     250,
+			gopLength:     25,
+			sampleBitrate: 373200,
+		},
+		{
+			desc:          "audio_128kbps",
+			filePath:      "../content/audio_128kbps.mp4",
+			contentType:   "audio",
+			timeScale:     48000,
+			duration:      469 * 1024,
+			sampleDur:     1024,
+			nrSamples:     469,
+			gopLength:     1,
+			sampleBitrate: 127691,
+			language:      "und",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.desc, func(t *testing.T) {
+			fh, err := os.Open(tc.filePath)
+			require.NoError(t, err)
+			ct, err := InitContentTrack(fh)
+			require.NoError(t, err)
+			require.Equal(t, tc.contentType, ct.contentType, "contentType")
+			require.Equal(t, tc.timeScale, int(ct.timeScale), "timeScale")
+			require.Equal(t, tc.duration, int(ct.duration), "duration")
+			require.Equal(t, tc.sampleDur, int(ct.sampleDur), "sampleDur")
+			require.Equal(t, tc.nrSamples, int(ct.nrSamples), "nrSamples")
+			require.Equal(t, tc.gopLength, int(ct.gopLength), "gopLength")
+			require.Equal(t, tc.sampleBitrate, int(ct.sampleBitrate), "sampleBitrate")
+		})
+	}
+}
+
+func TestLoadAsset(t *testing.T) {
+	asset, err := LoadAsset("../content")
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+
+	// Check asset name
+	require.Equal(t, "content", asset.name)
+
+	// Collect all tracks by contentType
+	trackCounts := map[string]int{}
+	for _, group := range asset.groups {
+		for _, track := range group.tracks {
+			trackCounts[track.contentType]++
+		}
+	}
+	// Expect 1 audio and 3 video tracks
+	require.Equal(t, 1, trackCounts["audio"], "should have 1 audio track")
+	require.Equal(t, 3, trackCounts["video"], "should have 3 video tracks")
+
+	// Check that track names match the files
+	var expectedNames = map[string]bool{
+		"audio_128kbps.mp4": true,
+		"video_400kbps.mp4": true,
+		"video_600kbps.mp4": true,
+		"video_900kbps.mp4": true,
+	}
+	for _, group := range asset.groups {
+		for _, track := range group.tracks {
+			_, ok := expectedNames[track.name]
+			require.True(t, ok, "unexpected track name: %s", track.name)
+		}
+	}
+
+	// Check that video tracks are in bitrate order (ascending)
+	var videoBitrates []int
+	var videoNames []string
+	for _, group := range asset.groups {
+		if len(group.tracks) > 0 && group.tracks[0].contentType == "video" {
+			for _, track := range group.tracks {
+				videoBitrates = append(videoBitrates, int(track.sampleBitrate))
+				videoNames = append(videoNames, track.name)
+			}
+		}
+	}
+	for i := 1; i < len(videoBitrates); i++ {
+		require.LessOrEqual(t, videoBitrates[i-1], videoBitrates[i],
+			"video tracks not in bitrate order: got %v (%v)", videoBitrates, videoNames)
+	}
+
+	// Check that video group has a lower altGroupID than audio group
+	var videoGroupID, audioGroupID uint32
+	for _, group := range asset.groups {
+		if len(group.tracks) > 0 {
+			switch group.tracks[0].contentType {
+			case "video":
+				videoGroupID = group.altGroupID
+			case "audio":
+				audioGroupID = group.altGroupID
+			}
+		}
+	}
+	if videoGroupID != 0 && audioGroupID != 0 {
+		require.Less(t, videoGroupID, audioGroupID, "video group altGroupID should be less than audio group altGroupID")
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/qlog"
@@ -29,8 +30,10 @@ func (h *moqHandler) runClient(ctx context.Context, wt bool) error {
 	if err != nil {
 		return err
 	}
-	h.handle(conn)
-	select {}
+	h.handle(ctx, conn)
+	<-ctx.Done()
+	log.Printf("end of runClient")
+	return ctx.Err()
 }
 
 func (h *moqHandler) getHandler() moqtransport.Handler {
@@ -60,7 +63,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 	})
 }
 
-func (h *moqHandler) handle(conn moqtransport.Connection) {
+func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
@@ -77,7 +80,8 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		}
 		return
 	}
-	if err := h.subscribeAndRead(session, h.namespace, h.trackname); err != nil {
+	close, err := h.subscribeAndRead(ctx, session, h.namespace, h.trackname)
+	if err != nil {
 		log.Printf("failed to subscribe to track: %v", err)
 		err = conn.CloseWithError(0, "internal error")
 		if err != nil {
@@ -85,16 +89,28 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		}
 		return
 	}
+	select {
+	case <-ctx.Done():
+		log.Printf("ctx done")
+	case <-time.After(4 * time.Second):
+		if close != nil {
+			err := close()
+			if err != nil {
+				log.Printf("failed to close subscription in cleanup: %v", err)
+			}
+		}
+	}
+	<-ctx.Done()
 }
 
-func (h *moqHandler) subscribeAndRead(s *moqtransport.Session, namespace []string, trackname string) error {
-	rs, err := s.Subscribe(context.Background(), namespace, trackname, "")
+func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string, trackname string) (close func() error, err error) {
+	rs, err := s.Subscribe(ctx, namespace, trackname, "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	go func() {
 		for {
-			o, err := rs.ReadObject(context.Background())
+			o, err := rs.ReadObject(ctx)
 			if err != nil {
 				if err == io.EOF {
 					log.Printf("got last object")
@@ -106,7 +122,11 @@ func (h *moqHandler) subscribeAndRead(s *moqtransport.Session, namespace []strin
 				len(o.Payload), string(o.Payload))
 		}
 	}()
-	return nil
+	cleanup := func() error {
+		log.Printf("cleanup: closing subscription to track %v/%v", namespace, trackname)
+		return rs.Close()
+	}
+	return cleanup, nil
 }
 
 func tupleEqual(a, b []string) bool {
