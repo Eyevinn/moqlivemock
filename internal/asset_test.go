@@ -2,8 +2,10 @@ package internal
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,6 +126,61 @@ func TestLoadAsset(t *testing.T) {
 		}
 	}
 	if videoGroupID != 0 && audioGroupID != 0 {
-		require.Less(t, videoGroupID, audioGroupID, "video group altGroupID should be less than audio group altGroupID")
+		require.Less(t, videoGroupID, audioGroupID,
+			"video group altGroupID should be less than audio group altGroupID")
+	}
+	require.Equal(t, 10000, int(asset.loopDurMS), "loop duration should be 10000ms")
+	for _, group := range asset.groups {
+		for _, track := range group.tracks {
+			require.Equal(t, int(10*track.timeScale), int(track.loopDur),
+				"loop duration should be 10s in timescale")
+		}
+	}
+}
+
+func TestGen20sCMAFStreams(t *testing.T) {
+	asset, err := LoadAsset("../content")
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+
+	tmpDir := t.TempDir()
+	cases := []struct {
+		name     string
+		groupIdx int
+		trackNr  int
+	}{
+		{"video_400kbps", 0, 0},
+		{"video_600kbps", 0, 1},
+		{"video_900kbps", 0, 2},
+		{"audio_128kbps", 1, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := asset.groups[tc.groupIdx].tracks[tc.trackNr]
+			outFile := filepath.Join(tmpDir, tc.name+".mp4")
+			ofh, err := os.Create(outFile)
+			require.NoError(t, err)
+			spc := tr.specData
+			data, err := spc.GenCMAFInitData()
+			require.NoError(t, err)
+			_, err = ofh.Write(data)
+			require.NoError(t, err)
+			nrSamples := int(20 * tr.timeScale / tr.sampleDur)
+			for nr := 0; nr < nrSamples; nr++ {
+				chunk, err := tr.GetCMAFChunk(uint64(nr))
+				require.NoError(t, err)
+				_, err = ofh.Write(chunk)
+				require.NoError(t, err)
+			}
+			ofh.Close()
+			fh, err := os.Open(outFile)
+			require.NoError(t, err)
+			defer fh.Close()
+			mp4f, err := mp4.DecodeFile(fh)
+			require.NoError(t, err)
+			require.Equal(t, 1, len(mp4f.Segments))
+			require.Equal(t, nrSamples, len(mp4f.Segments[0].Fragments))
+		})
 	}
 }

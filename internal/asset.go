@@ -7,7 +7,12 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+)
+
+const (
+	trackID = 1
 )
 
 type ContentTrack struct {
@@ -20,13 +25,19 @@ type ContentTrack struct {
 	gopLength     uint32
 	sampleDur     uint32
 	nrSamples     uint32
-	init          *mp4.InitSegment
+	loopDur       uint32 // Loop duration in local timescale
 	samples       []mp4.FullSample
+	specData      CodecSpecificData
 }
 
 type Asset struct {
-	name   string
-	groups []TrackGroup
+	name      string
+	groups    []TrackGroup
+	loopDurMS uint32
+}
+
+type CodecSpecificData interface {
+	GenCMAFInitData() ([]byte, error)
 }
 
 type TrackGroup struct {
@@ -52,18 +63,20 @@ func InitContentTrack(r io.Reader) (*ContentTrack, error) {
 	ct := ContentTrack{
 		timeScale: mdia.Mdhd.Timescale,
 		language:  mdia.Mdhd.GetLanguage(),
-		init:      init,
-	}
-	hdlr := mdia.Hdlr.HandlerType
-	switch hdlr {
-	case "vide":
-		ct.contentType = "video"
-	case "soun":
-		ct.contentType = "audio"
-	default:
-		return nil, fmt.Errorf("unknown media type: %s", hdlr)
 	}
 	ct.name = ct.contentType
+	sampleDesc, err := mdia.Minf.Stbl.Stsd.GetSampleDescription(0)
+	if err != nil {
+		return nil, fmt.Errorf("could not get sample description: %w", err)
+	}
+	switch sampleDesc.Type() {
+	case "avc1", "avc3":
+		ct.contentType = "video"
+	case "mp4a":
+		ct.contentType = "audio"
+	default:
+		return nil, fmt.Errorf("unsupported sample description type: %s", sampleDesc.Type())
+	}
 	trex := init.Moov.Mvex.Trex
 	for _, seg := range m.Segments {
 		for _, frag := range seg.Fragments {
@@ -113,8 +126,8 @@ func InitContentTrack(r io.Reader) (*ContentTrack, error) {
 			}
 		}
 		ct.samples = ct.samples[firsIdx:]
-		for _, s := range ct.samples {
-			s.DecodeTime -= timeOffset
+		for i := range ct.samples {
+			ct.samples[i].DecodeTime -= timeOffset
 		}
 	}
 
@@ -134,6 +147,22 @@ func InitContentTrack(r io.Reader) (*ContentTrack, error) {
 			}
 		}
 	}
+
+	switch sampleDesc.Type() {
+	case "avc1", "avc3":
+		ct.specData, err = initAVCData(init, ct.samples)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize AVC data: %w", err)
+		}
+	case "mp4a":
+		ct.specData, err = initAACData(init)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize AAC data: %w", err)
+		}
+	default:
+		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
+	}
+
 	ct.duration = uint32(len(ct.samples)) * ct.sampleDur
 	ct.nrSamples = uint32(len(ct.samples))
 	// Calculate sampleBitrate (bits per second)
@@ -182,12 +211,18 @@ func LoadAsset(dirPath string) (*Asset, error) {
 		sort.Slice(videoTracks, func(i, j int) bool {
 			return videoTracks[i].sampleBitrate < videoTracks[j].sampleBitrate
 		})
+		for i := 0; i < len(videoTracks); i++ {
+			if videoTracks[i].duration != videoTracks[0].duration {
+				return nil, fmt.Errorf("video tracks have different durations")
+			}
+		}
 		groups = append(groups, TrackGroup{
 			altGroupID: groupID,
 			tracks:     videoTracks,
 		})
 		groupID++
 	}
+
 	// Then audio group(s)
 	if audioTracks, ok := tracksByType["audio"]; ok {
 		sort.Slice(audioTracks, func(i, j int) bool {
@@ -199,23 +234,96 @@ func LoadAsset(dirPath string) (*Asset, error) {
 		})
 		groupID++
 	}
-	// Then any other types
-	for contentType, tracks := range tracksByType {
-		if contentType == "video" || contentType == "audio" {
-			continue
-		}
-		sort.Slice(tracks, func(i, j int) bool {
-			return tracks[i].sampleBitrate < tracks[j].sampleBitrate
-		})
-		groups = append(groups, TrackGroup{
-			altGroupID: groupID,
-			tracks:     tracks,
-		})
-		groupID++
-	}
 	asset := &Asset{
 		name:   filepath.Base(dirPath),
 		groups: groups,
 	}
+	if err := asset.setLoopDuration(); err != nil {
+		return nil, fmt.Errorf("could not set loop duration: %w", err)
+	}
 	return asset, nil
+}
+
+// setLoopDuration set a loop duration for all tracks in the asset
+// based on the first track in the first group.
+// All the tracks in the first group must have durations that
+// are equal to the loopDuration in their timeScale.
+func (a *Asset) setLoopDuration() error {
+	if len(a.groups) == 0 {
+		return fmt.Errorf("no tracks found")
+	}
+	loopDurMS := a.groups[0].tracks[0].duration * 1000 / a.groups[0].tracks[0].timeScale
+	for gNr, group := range a.groups {
+		for tNr, track := range group.tracks {
+			switch {
+			case gNr == 0:
+				if track.duration*1000 != loopDurMS*track.timeScale {
+					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.name)
+				}
+				group.tracks[tNr].loopDur = track.duration
+			case gNr > 0 && track.contentType == "audio":
+				if track.duration*1000 < loopDurMS*track.timeScale {
+					return fmt.Errorf("group %d audio track %s not compatible with loop duration", gNr, track.name)
+				}
+				group.tracks[tNr].loopDur = loopDurMS * track.timeScale / 1000
+			default:
+				if track.duration*1000 != loopDurMS*track.timeScale {
+					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.name)
+				}
+				group.tracks[tNr].loopDur = track.duration
+			}
+		}
+	}
+	a.loopDurMS = loopDurMS
+	return nil
+}
+
+// GetCMAFChunk returns a raw CMAF chunk consisting of one sample.
+// The number is 0-based relative to the UNIX epoch.
+// Therefore nr is translated into data for the time interval
+// [nr*d.sampleDur, (nr+1)*d.sampleDur].
+// This is calculated based on wrap-around given the loopDuration
+// of the asset.
+func (t *ContentTrack) GetCMAFChunk(nr uint64) ([]byte, error) {
+	startTime := nr * uint64(t.sampleDur)
+	nrWraps := startTime / uint64(t.loopDur)
+	wrapTime := nrWraps * uint64(t.loopDur)
+	offset := uint64(0)
+	if lacking := wrapTime % uint64(t.sampleDur); lacking > 0 {
+		offset = uint64(t.sampleDur) - lacking
+	}
+	startTime += offset
+	origNr := startTime / uint64(t.sampleDur) % uint64(t.nrSamples)
+	data, err := t.genCMAFChunk(startTime, nr, origNr)
+	if err != nil {
+		return nil, fmt.Errorf("could not generate CMAF chunk: %w", err)
+	}
+	return data, nil
+}
+
+func (t *ContentTrack) genCMAFChunk(startTime uint64, nr uint64, origNr uint64) ([]byte, error) {
+	f, err := mp4.CreateFragment(uint32(nr+1), trackID)
+	if err != nil {
+		return nil, err
+	}
+	orig := t.samples[origNr]
+	fs := mp4.FullSample{
+		Sample: mp4.Sample{
+			Flags: orig.Flags,
+			Dur:   uint32(t.sampleDur),
+			Size:  uint32(len(orig.Data)),
+		},
+		DecodeTime: startTime,
+		Data:       orig.Data,
+	}
+	f.AddFullSample(fs)
+	f.Moof.Traf.OptimizeTfhdTrun()
+	f.SetTrunDataOffsets()
+	size := f.Size()
+	sw := bits.NewFixedSliceWriter(int(size))
+	err = f.EncodeSW(sw)
+	if err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
 }
