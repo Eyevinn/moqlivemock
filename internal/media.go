@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 
 	"github.com/Eyevinn/mp4ff/aac"
 	"github.com/Eyevinn/mp4ff/avc"
@@ -17,6 +16,9 @@ type AVCData struct {
 	outInit *mp4.InitSegment
 	Spss    [][]byte
 	Ppss    [][]byte
+	codec   string
+	width   uint32
+	height  uint32
 }
 
 // initAVCData initializes AVCData from an init segment and samples.
@@ -52,7 +54,8 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 				samples[i].Data = append(samples[i].Data, work...)
 				samples[i].Data = append(samples[i].Data, nalu...)
 			default:
-				log.Printf("dropping NALU type %s", avc.NaluType(nalu[0]))
+				// silently drop other NALU types to make the samples smaller
+				// May want to add avc.NALU_SEI later
 			}
 		}
 	}
@@ -79,7 +82,17 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	ad.outInit = mp4.CreateEmptyInit()
 	timeScale := trak.Mdia.Mdhd.Timescale
 	ad.outInit.AddEmptyTrack(timeScale, "video", "und")
-	ad.outInit.Moov.Trak.SetAVCDescriptor("avc3", ad.Spss, ad.Ppss, false)
+	err := ad.outInit.Moov.Trak.SetAVCDescriptor("avc3", ad.Spss, ad.Ppss, false)
+	if err != nil {
+		return nil, fmt.Errorf("could not set AVC descriptor: %w", err)
+	}
+	sps, err := avc.ParseSPSNALUnit(ad.Spss[0], false)
+	if err != nil {
+		return nil, fmt.Errorf("could not decode SPS: %w", err)
+	}
+	ad.codec = avc.CodecString("avc3", sps)
+	ad.width = uint32(sps.Width)
+	ad.height = uint32(sps.Height)
 	return ad, nil
 }
 
@@ -103,9 +116,16 @@ func (d *AVCData) GenCMAFInitData() ([]byte, error) {
 	return sw.Bytes(), nil
 }
 
+func (d *AVCData) Codec() string {
+	return d.codec
+}
+
 type AACData struct {
-	inInit  *mp4.InitSegment
-	outInit *mp4.InitSegment
+	inInit        *mp4.InitSegment
+	outInit       *mp4.InitSegment
+	codec         string
+	sampleRate    uint32
+	channelConfig string
 }
 
 // GenCMAFInitData returns a base64 encoded CMAF initialization segment.
@@ -116,6 +136,10 @@ func (d *AACData) GenCMAFInitData() ([]byte, error) {
 		return nil, err
 	}
 	return sw.Bytes(), nil
+}
+
+func (d *AACData) Codec() string {
+	return d.codec
 }
 
 // initAACData recreates an AAC init segment from an existing init segment.
@@ -133,7 +157,6 @@ func initAACData(init *mp4.InitSegment) (*AACData, error) {
 		return nil, fmt.Errorf("could not decode audio specific config: %w", err)
 	}
 	objectType := asc.ObjectType
-	log.Printf("objectType: %d", objectType)
 	ad.outInit = mp4.CreateEmptyInit()
 	lang := init.Moov.Trak.Mdia.Mdhd.GetLanguage()
 	if init.Moov.Trak.Mdia.Elng != nil {
@@ -141,11 +164,13 @@ func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	}
 	timeScale := init.Moov.Trak.Mdia.Mdhd.Timescale
 	ad.outInit.AddEmptyTrack(timeScale, "audio", lang)
-	sampleRate := mp4a.SampleRate
+	ad.sampleRate = uint32(mp4a.SampleRate)
+	ad.channelConfig = fmt.Sprintf("%d", asc.ChannelConfiguration)
 	esdsOut := mp4.CreateEsdsBox(ascBytes)
 	mp4aOut := mp4.CreateAudioSampleEntryBox("mp4a",
 		uint16(asc.ChannelConfiguration),
-		16, uint16(sampleRate), esdsOut)
+		16, uint16(ad.sampleRate), esdsOut)
 	ad.outInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.AddChild(mp4aOut)
+	ad.codec = fmt.Sprintf("mp4a.40.%d", objectType)
 	return ad, nil
 }

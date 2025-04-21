@@ -15,7 +15,6 @@ import (
 	"os"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
 )
 
 const (
@@ -28,12 +27,11 @@ Usage of %s:
 `
 
 type options struct {
-	certFile  string
-	keyFile   string
-	addr      string
-	namespace string
-	trackname string
-	version   bool
+	certFile string
+	keyFile  string
+	addr     string
+	asset    string
+	version  bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -47,8 +45,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.certFile, "cert", "localhost.pem", "TLS certificate file (only used for server)")
 	fs.StringVar(&opts.keyFile, "key", "localhost-key.pem", "TLS key file (only used for server)")
 	fs.StringVar(&opts.addr, "addr", "localhost:8080", "listen or connect address")
-	fs.StringVar(&opts.namespace, "namespace", "clock", "Namespace to subscribe to")
-	fs.StringVar(&opts.trackname, "trackname", "second", "Track to subscribe to")
+	fs.StringVar(&opts.asset, "asset", "../../content", "Asset to serve")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -75,6 +72,10 @@ func run(args []string) error {
 }
 
 func runServer(opts *options) error {
+	if opts.version {
+		fmt.Printf("%s %s\n", appName, internal.GetVersion())
+		return nil
+	}
 	tlsConfig, err := generateTLSConfigWithCertAndKey(opts.certFile, opts.keyFile)
 	if err != nil {
 		log.Printf("failed to generate TLS config from cert file and key, generating in memory certs: %v", err)
@@ -83,17 +84,20 @@ func runServer(opts *options) error {
 			log.Fatal(err)
 		}
 	}
-	h := &moqHandler{
-		addr:       opts.addr,
-		tlsConfig:  tlsConfig,
-		namespace:  []string{opts.namespace},
-		trackname:  opts.trackname,
-		publishers: make(chan moqtransport.Publisher),
+	asset, err := internal.LoadAsset(opts.asset)
+	if err != nil {
+		return err
 	}
-
-	if opts.version {
-		fmt.Printf("%s %s\n", appName, internal.GetVersion())
-		return nil
+	catalog, err := asset.GenCMAFCatalogEntry()
+	if err != nil {
+		return err
+	}
+	h := &moqHandler{
+		addr:      opts.addr,
+		tlsConfig: tlsConfig,
+		namespace: []string{internal.Namespace},
+		asset:     asset,
+		catalog:   catalog,
 	}
 
 	return h.runServer(context.TODO())

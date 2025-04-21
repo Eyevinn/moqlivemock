@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -12,7 +13,8 @@ import (
 )
 
 const (
-	trackID = 1
+	trackID           = 1
+	cmafOverheadBytes = 112 // moof + mdat header size for one sample
 )
 
 type ContentTrack struct {
@@ -38,6 +40,7 @@ type Asset struct {
 
 type CodecSpecificData interface {
 	GenCMAFInitData() ([]byte, error)
+	Codec() string
 }
 
 type TrackGroup struct {
@@ -45,8 +48,21 @@ type TrackGroup struct {
 	tracks     []ContentTrack
 }
 
-// InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4)
-func InitContentTrack(r io.Reader) (*ContentTrack, error) {
+// GetTrackByName returns a pointer to a ContentTrack with the given name, or nil if not found.
+func (a *Asset) GetTrackByName(name string) *ContentTrack {
+	for _, group := range a.groups {
+		for _, ct := range group.tracks {
+			if ct.name == name {
+				return &ct
+			}
+		}
+	}
+	return nil
+}
+
+// InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4).
+// The name is stripped of any extension.
+func InitContentTrack(r io.Reader, name string) (*ContentTrack, error) {
 	m, err := mp4.DecodeFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode file: %w", err)
@@ -60,11 +76,14 @@ func InitContentTrack(r io.Reader) (*ContentTrack, error) {
 	init := m.Init
 	trak := init.Moov.Trak
 	mdia := trak.Mdia
+	if ext := filepath.Ext(name); ext != "" {
+		name = name[:len(name)-len(ext)]
+	}
 	ct := ContentTrack{
 		timeScale: mdia.Mdhd.Timescale,
 		language:  mdia.Mdhd.GetLanguage(),
+		name:      name,
 	}
-	ct.name = ct.contentType
 	sampleDesc, err := mdia.Minf.Stbl.Stsd.GetSampleDescription(0)
 	if err != nil {
 		return nil, fmt.Errorf("could not get sample description: %w", err)
@@ -177,7 +196,8 @@ func InitContentTrack(r io.Reader) (*ContentTrack, error) {
 	return &ct, nil
 }
 
-// LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each, groups them by contentType, and returns a pointer to an Asset.
+// LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
+// groups them by contentType, and returns a pointer to an Asset.
 func LoadAsset(dirPath string) (*Asset, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -196,12 +216,11 @@ func LoadAsset(dirPath string) (*Asset, error) {
 		if err != nil {
 			return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 		}
-		ct, err := InitContentTrack(fh)
+		ct, err := InitContentTrack(fh, entry.Name())
 		fh.Close()
 		if err != nil {
 			return nil, fmt.Errorf("could not create ContentTrack for %s: %w", filePath, err)
 		}
-		ct.name = entry.Name()
 		tracksByType[ct.contentType] = append(tracksByType[ct.contentType], *ct)
 	}
 	var groups []TrackGroup
@@ -232,7 +251,6 @@ func LoadAsset(dirPath string) (*Asset, error) {
 			altGroupID: groupID,
 			tracks:     audioTracks,
 		})
-		groupID++
 	}
 	asset := &Asset{
 		name:   filepath.Base(dirPath),
@@ -278,6 +296,75 @@ func (a *Asset) setLoopDuration() error {
 	return nil
 }
 
+// GenCMAFCatalogEntry generates a WARP/CMAF catalog entry for this asset, populating all available fields.
+func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
+	var tracks []Track
+	renderGroup := 1
+	for _, group := range a.groups {
+		altGroup := int(group.altGroupID)
+		for _, ct := range group.tracks {
+			initData := ""
+			if ct.specData != nil {
+				data, err := ct.specData.GenCMAFInitData()
+				if err != nil {
+					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.name, err)
+				}
+				initData = base64.StdEncoding.EncodeToString(data)
+			}
+
+			frameRate := float64(ct.timeScale) / float64(ct.sampleDur)
+			cmafBitrate := int(float64(ct.sampleBitrate) + 8*float64(cmafOverheadBytes)*frameRate)
+
+			track := Track{
+				Name:        ct.name,
+				Packaging:   "cmaf",
+				RenderGroup: &renderGroup,
+				AltGroup:    &altGroup,
+				InitData:    initData,
+				Codec:       ct.specData.Codec(),
+				Bitrate:     &cmafBitrate,
+				Language:    ct.language,
+			}
+
+			// Populate optional fields if available
+			switch ct.contentType {
+			case "video":
+				sd := ct.specData.(*AVCData)
+				track.MimeType = "video/mp4"
+				track.Framerate = Ptr(frameRate)
+				if sd.width != 0 {
+					track.Width = Ptr(int(sd.width))
+				}
+				if sd.height != 0 {
+					track.Height = Ptr(int(sd.height))
+				}
+			case "audio":
+				sd := ct.specData.(*AACData)
+				track.MimeType = "audio/mp4"
+				if sd.sampleRate != 0 {
+					track.SampleRate = Ptr(int(sd.sampleRate))
+				}
+				if sd.channelConfig != "" {
+					track.ChannelConfig = sd.channelConfig
+				}
+			}
+			track.Namespace = Namespace
+			track.Name = ct.name
+			tracks = append(tracks, track)
+		}
+	}
+	cat := &Catalog{
+		Version: 1,
+		Tracks:  tracks,
+	}
+	return cat, nil
+}
+
+// Ptr returns a pointer to any value
+func Ptr[T any](v T) *T {
+	return &v
+}
+
 // GetCMAFChunk returns a raw CMAF chunk consisting of one sample.
 // The number is 0-based relative to the UNIX epoch.
 // Therefore nr is translated into data for the time interval
@@ -317,7 +404,10 @@ func (t *ContentTrack) genCMAFChunk(startTime uint64, nr uint64, origNr uint64) 
 		Data:       orig.Data,
 	}
 	f.AddFullSample(fs)
-	f.Moof.Traf.OptimizeTfhdTrun()
+	err = f.Moof.Traf.OptimizeTfhdTrun()
+	if err != nil {
+		return nil, err
+	}
 	f.SetTrunDataOffsets()
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))

@@ -51,7 +51,7 @@ func TestPrepareTrack(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			fh, err := os.Open(tc.filePath)
 			require.NoError(t, err)
-			ct, err := InitContentTrack(fh)
+			ct, err := InitContentTrack(fh, tc.desc)
 			require.NoError(t, err)
 			require.Equal(t, tc.contentType, ct.contentType, "contentType")
 			require.Equal(t, tc.timeScale, int(ct.timeScale), "timeScale")
@@ -85,10 +85,10 @@ func TestLoadAsset(t *testing.T) {
 
 	// Check that track names match the files
 	var expectedNames = map[string]bool{
-		"audio_128kbps.mp4": true,
-		"video_400kbps.mp4": true,
-		"video_600kbps.mp4": true,
-		"video_900kbps.mp4": true,
+		"audio_128kbps": true,
+		"video_400kbps": true,
+		"video_600kbps": true,
+		"video_900kbps": true,
 	}
 	for _, group := range asset.groups {
 		for _, track := range group.tracks {
@@ -136,6 +136,15 @@ func TestLoadAsset(t *testing.T) {
 				"loop duration should be 10s in timescale")
 		}
 	}
+	cat, err := asset.GenCMAFCatalogEntry()
+	require.NoError(t, err)
+	require.NotNil(t, cat)
+	require.Equal(t, 4, len(cat.Tracks))
+	names := []string{"video_400kbps", "video_600kbps", "video_900kbps", "audio_128kbps"}
+	for i, track := range cat.Tracks {
+		require.Equal(t, Namespace, track.Namespace)
+		require.Equal(t, names[i], track.Name)
+	}
 }
 
 func TestGen20sCMAFStreams(t *testing.T) {
@@ -181,6 +190,14 @@ func TestGen20sCMAFStreams(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, len(mp4f.Segments))
 			require.Equal(t, nrSamples, len(mp4f.Segments[0].Fragments))
+			for _, frag := range mp4f.Segments[0].Fragments {
+				// Tfdt version will be 0 at start, but 1 as needed
+				// for big enough timestamps (64-bit need)
+				require.Equal(t, 0, int(frag.Moof.Traf.Tfdt.Version))
+				// Size of fragment should be 100 bytes for tfdt version 0
+				// and exactly one sample without compositionTimeOffset.
+				require.Equal(t, 100, int(frag.Moof.Size()))
+			}
 		})
 	}
 }

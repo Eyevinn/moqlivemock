@@ -23,7 +23,9 @@ const (
 	appName = "mlmsub"
 )
 
-var usg = `%s acts as a MoQ client and subscriber.
+var usg = `%s acts as a MoQ client and subscriber for WARP.
+Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
+one audio track and subscribe to these.
 
 Usage of %s:
 `
@@ -31,7 +33,6 @@ Usage of %s:
 type options struct {
 	addr         string
 	webtransport bool
-	namespace    string
 	trackname    string
 	version      bool
 	duration     int
@@ -47,8 +48,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	opts := options{}
 	fs.StringVar(&opts.addr, "addr", "localhost:8080", "listen or connect address")
 	fs.BoolVar(&opts.webtransport, "webtransport", false, "Use webtransport instead of QUIC (client only)")
-	fs.StringVar(&opts.namespace, "namespace", "clock", "Namespace to subscribe to")
-	fs.StringVar(&opts.trackname, "trackname", "second", "Track to subscribe to")
+	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
 	err := fs.Parse(args[1:])
@@ -102,8 +102,7 @@ func runClient(ctx context.Context, opts *options) error {
 	h := &moqHandler{
 		quic:      !opts.webtransport,
 		addr:      opts.addr,
-		namespace: []string{opts.namespace},
-		trackname: opts.trackname,
+		namespace: []string{internal.Namespace},
 	}
 	return h.runClient(ctx, opts.webtransport)
 }

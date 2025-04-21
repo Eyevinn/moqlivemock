@@ -90,7 +90,7 @@ func generateAudio() {
 	fmt.Println(cmdString)
 
 	// Write command to log file
-	logFileHandle.WriteString("Command: " + cmdString + "\n\n")
+	_, _ = logFileHandle.WriteString("Command: " + cmdString + "\n\n")
 
 	cmd := exec.Command("ffmpeg", cmdArgs...)
 	cmd.Stdout = logFileHandle
@@ -135,6 +135,7 @@ func generateVideo(bitrateInKbps int) {
 	logoScale := "scale=iw/2:ih/2"
 	rotationDuration := float64(duration) // 10s for a full rotation
 	rotationExpr := fmt.Sprintf("2*PI*n/(%d*%d)", frameRate, int(rotationDuration))
+	//nolint: lll
 	videoFilter := fmt.Sprintf(
 		"[1:v]%s,format=rgba,rotate='%s':c=none:ow=rotw(iw):oh=roth(ih)[logo];"+
 			"[0:v][logo]overlay=x=20:y=main_h-overlay_h-20:shortest=1[bg];"+
@@ -172,7 +173,7 @@ func generateVideo(bitrateInKbps int) {
 	fmt.Println(cmdString)
 
 	// Write command to log file
-	logFileHandle.WriteString("Command: " + cmdString + "\n\n")
+	_, _ = logFileHandle.WriteString("Command: " + cmdString + "\n\n")
 
 	// Run ffmpeg command
 	cmd := exec.Command("ffmpeg", cmdArgs...)

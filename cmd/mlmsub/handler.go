@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
-	"time"
+	"strings"
 
+	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
@@ -16,7 +20,7 @@ type moqHandler struct {
 	quic      bool
 	addr      string
 	namespace []string
-	trackname string
+	catalog   *internal.Catalog
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool) error {
@@ -80,33 +84,102 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 		return
 	}
-	close, err := h.subscribeAndRead(ctx, session, h.namespace, h.trackname)
+	err = h.subscribeToCatalog(ctx, session, h.namespace)
 	if err != nil {
-		log.Printf("failed to subscribe to track: %v", err)
+		log.Printf("failed to subscribe to catalog: %v", err)
 		err = conn.CloseWithError(0, "internal error")
 		if err != nil {
 			log.Printf("failed to close connection: %v", err)
 		}
 		return
 	}
-	select {
-	case <-ctx.Done():
-		log.Printf("ctx done")
-	case <-time.After(4 * time.Second):
-		if close != nil {
-			err := close()
-			if err != nil {
-				log.Printf("failed to close subscription in cleanup: %v", err)
+	videoTrack := ""
+	audioTrack := ""
+	for _, track := range h.catalog.Tracks {
+		if videoTrack == "" {
+			if strings.HasPrefix(track.MimeType, "video") {
+				videoTrack = track.Name
 			}
+		}
+		if audioTrack == "" {
+			if strings.HasPrefix(track.MimeType, "audio") {
+				audioTrack = track.Name
+			}
+		}
+	}
+	if videoTrack != "" {
+		_, err := h.subscribeAndRead(ctx, session, h.namespace, videoTrack)
+		if err != nil {
+			log.Printf("failed to subscribe to video track: %v", err)
+			err = conn.CloseWithError(0, "internal error")
+			if err != nil {
+				log.Printf("failed to close connection: %v", err)
+			}
+			return
+		}
+	}
+	if audioTrack != "" {
+		_, err := h.subscribeAndRead(ctx, session, h.namespace, audioTrack)
+		if err != nil {
+			log.Printf("failed to subscribe to audio track: %v", err)
+			err = conn.CloseWithError(0, "internal error")
+			if err != nil {
+				log.Printf("failed to close connection: %v", err)
+			}
+			return
 		}
 	}
 	<-ctx.Done()
 }
 
-func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string, trackname string) (close func() error, err error) {
+func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
+	rs, err := s.Subscribe(ctx, namespace, "catalog", "")
+	if err != nil {
+		return err
+	}
+	defer rs.Close()
+	o, err := rs.ReadObject(ctx)
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+
+	err = json.Unmarshal(o.Payload, &h.catalog)
+	if err != nil {
+		return err
+	}
+	log.Printf("got catalog %v/%v/%v of length %v\n", o.ObjectID, o.GroupID, o.SubGroupID,
+		len(o.Payload))
+	return nil
+}
+
+func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string,
+	trackname string) (close func() error, err error) {
 	rs, err := s.Subscribe(ctx, namespace, trackname, "")
 	if err != nil {
 		return nil, err
+	}
+	track := h.catalog.GetTrackByName(trackname)
+	if track == nil {
+		return nil, fmt.Errorf("track %s not found", trackname)
+	}
+	outName := trackname + ".mp4"
+	out, err := os.Create(outName)
+	if err != nil {
+		return nil, err
+	}
+	initData := track.InitData
+	if initData != "" {
+		initBytes, err := base64.StdEncoding.DecodeString(initData)
+		if err != nil {
+			return nil, err
+		}
+		_, err = out.Write(initBytes)
+		if err != nil {
+			return nil, err
+		}
 	}
 	go func() {
 		for {
@@ -118,8 +191,12 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 				}
 				return
 			}
-			log.Printf("got object %v/%v/%v of length %v: %v\n", o.ObjectID, o.GroupID, o.SubGroupID,
-				len(o.Payload), string(o.Payload))
+			log.Printf("got object %v/%v/%v of length %v\n", o.ObjectID, o.GroupID, o.SubGroupID,
+				len(o.Payload))
+			_, err = out.Write(o.Payload)
+			if err != nil {
+				return
+			}
 		}
 	}()
 	cleanup := func() error {
