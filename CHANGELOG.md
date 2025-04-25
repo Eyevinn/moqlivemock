@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Added
+
+- utils/videogen to generated test content
+- WARP catalog generation and parsing
+- wall-clock-synchronized media soursce
+- multiplexing received video and audio for direct playback via ffplay
+
+### Changed
+- configurable qlog destination
+- application log to stderr
+
+### Deleted
+
+- The clock namespace and code
+
 
 ## [0.1.0] - 2025-04-15
 

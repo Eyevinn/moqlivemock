@@ -6,8 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"os"
+	"log/slog"
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -21,9 +20,12 @@ type moqHandler struct {
 	addr      string
 	namespace []string
 	catalog   *internal.Catalog
+	mux       *cmafMux
+	outs      map[string]io.Writer
+	logfh     io.Writer
 }
 
-func (h *moqHandler) runClient(ctx context.Context, wt bool) error {
+func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
 	var conn moqtransport.Connection
 	var err error
 	if wt {
@@ -34,9 +36,13 @@ func (h *moqHandler) runClient(ctx context.Context, wt bool) error {
 	if err != nil {
 		return err
 	}
+	h.outs = outs
+	if outs["mux"] != nil {
+		h.mux = newCmafMux(outs["mux"])
+	}
 	h.handle(ctx, conn)
 	<-ctx.Done()
-	log.Printf("end of runClient")
+	slog.Info("end of runClient")
 	return ctx.Err()
 }
 
@@ -45,22 +51,24 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 		switch r.Method {
 		case moqtransport.MessageAnnounce:
 			if !tupleEqual(r.Namespace, h.namespace) {
-				log.Printf("got unexpected announcement namespace: %v, expected %v", r.Namespace, h.namespace)
+				slog.Warn("got unexpected announcement namespace",
+					"received", r.Namespace,
+					"expected", h.namespace)
 				err := w.Reject(0, "non-matching namespace")
 				if err != nil {
-					log.Printf("failed to reject announcement: %v", err)
+					slog.Error("failed to reject announcement", "error", err)
 				}
 				return
 			}
 			err := w.Accept()
 			if err != nil {
-				log.Printf("failed to accept announcement: %v", err)
+				slog.Error("failed to accept announcement", "error", err)
 				return
 			}
 		case moqtransport.MessageSubscribe:
 			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
 			if err != nil {
-				log.Printf("failed to reject subscription: %v", err)
+				slog.Error("failed to reject subscription", "error", err)
 			}
 			return
 		}
@@ -72,59 +80,79 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	transport := &moqtransport.Transport{
 		Conn:    conn,
 		Handler: h.getHandler(),
-		Qlogger: qlog.NewQLOGHandler(os.Stdout, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 		Session: session,
 	}
 	err := transport.Run()
 	if err != nil {
-		log.Printf("MoQ Session initialization failed: %v", err)
+		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
 		if err != nil {
-			log.Printf("failed to close connection: %v", err)
+			slog.Error("failed to close connection", "error", err)
 		}
 		return
 	}
 	err = h.subscribeToCatalog(ctx, session, h.namespace)
 	if err != nil {
-		log.Printf("failed to subscribe to catalog: %v", err)
+		slog.Error("failed to subscribe to catalog", "error", err)
 		err = conn.CloseWithError(0, "internal error")
 		if err != nil {
-			log.Printf("failed to close connection: %v", err)
+			slog.Error("failed to close connection", "error", err)
 		}
 		return
 	}
 	videoTrack := ""
 	audioTrack := ""
 	for _, track := range h.catalog.Tracks {
-		if videoTrack == "" {
-			if strings.HasPrefix(track.MimeType, "video") {
-				videoTrack = track.Name
+		if videoTrack == "" && strings.HasPrefix(track.MimeType, "video") {
+			videoTrack = track.Name
+			if h.outs["video"] != nil {
+				err = unpackWrite(track.InitData, h.outs["video"])
+				if err != nil {
+					slog.Error("failed to write init data", "error", err)
+				}
+			}
+			if h.mux != nil {
+				err = h.mux.addInit(track.InitData, "video")
+				if err != nil {
+					slog.Error("failed to add init data", "error", err)
+				}
 			}
 		}
-		if audioTrack == "" {
-			if strings.HasPrefix(track.MimeType, "audio") {
-				audioTrack = track.Name
+		if audioTrack == "" && strings.HasPrefix(track.MimeType, "audio") {
+			audioTrack = track.Name
+			if h.outs["audio"] != nil {
+				err = unpackWrite(track.InitData, h.outs["audio"])
+				if err != nil {
+					slog.Error("failed to write init data", "error", err)
+				}
+			}
+			if h.mux != nil {
+				err = h.mux.addInit(track.InitData, "audio")
+				if err != nil {
+					slog.Error("failed to add init data", "error", err)
+				}
 			}
 		}
 	}
 	if videoTrack != "" {
-		_, err := h.subscribeAndRead(ctx, session, h.namespace, videoTrack)
+		_, err := h.subscribeAndRead(ctx, session, h.namespace, videoTrack, "video")
 		if err != nil {
-			log.Printf("failed to subscribe to video track: %v", err)
+			slog.Error("failed to subscribe to video track", "error", err)
 			err = conn.CloseWithError(0, "internal error")
 			if err != nil {
-				log.Printf("failed to close connection: %v", err)
+				slog.Error("failed to close connection", "error", err)
 			}
 			return
 		}
 	}
 	if audioTrack != "" {
-		_, err := h.subscribeAndRead(ctx, session, h.namespace, audioTrack)
+		_, err := h.subscribeAndRead(ctx, session, h.namespace, audioTrack, "audio")
 		if err != nil {
-			log.Printf("failed to subscribe to audio track: %v", err)
+			slog.Error("failed to subscribe to audio track", "error", err)
 			err = conn.CloseWithError(0, "internal error")
 			if err != nil {
-				log.Printf("failed to close connection: %v", err)
+				slog.Error("failed to close connection", "error", err)
 			}
 			return
 		}
@@ -150,13 +178,16 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 	if err != nil {
 		return err
 	}
-	log.Printf("got catalog %v/%v/%v of length %v\n", o.ObjectID, o.GroupID, o.SubGroupID,
-		len(o.Payload))
+	slog.Info("got catalog",
+		"objectID", o.ObjectID,
+		"groupID", o.GroupID,
+		"subGroupID", o.SubGroupID,
+		"payloadLength", len(o.Payload))
 	return nil
 }
 
 func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string,
-	trackname string) (close func() error, err error) {
+	trackname, mediaType string) (close func() error, err error) {
 	rs, err := s.Subscribe(ctx, namespace, trackname, "")
 	if err != nil {
 		return nil, err
@@ -165,42 +196,39 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 	if track == nil {
 		return nil, fmt.Errorf("track %s not found", trackname)
 	}
-	outName := trackname + ".mp4"
-	out, err := os.Create(outName)
-	if err != nil {
-		return nil, err
-	}
-	initData := track.InitData
-	if initData != "" {
-		initBytes, err := base64.StdEncoding.DecodeString(initData)
-		if err != nil {
-			return nil, err
-		}
-		_, err = out.Write(initBytes)
-		if err != nil {
-			return nil, err
-		}
-	}
 	go func() {
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
 				if err == io.EOF {
-					log.Printf("got last object")
+					slog.Info("got last object")
 					return
 				}
 				return
 			}
-			log.Printf("got object %v/%v/%v of length %v\n", o.ObjectID, o.GroupID, o.SubGroupID,
-				len(o.Payload))
-			_, err = out.Write(o.Payload)
-			if err != nil {
-				return
+			slog.Debug("got object",
+				"objectID", o.ObjectID,
+				"groupID", o.GroupID,
+				"subGroupID", o.SubGroupID,
+				"payloadLength", len(o.Payload))
+			if h.mux != nil {
+				err = h.mux.muxSample(o.Payload, mediaType)
+				if err != nil {
+					slog.Error("failed to mux sample", "error", err)
+					return
+				}
+			}
+			if h.outs[mediaType] != nil {
+				_, err = h.outs[mediaType].Write(o.Payload)
+				if err != nil {
+					slog.Error("failed to write sample", "error", err)
+					return
+				}
 			}
 		}
 	}()
 	cleanup := func() error {
-		log.Printf("cleanup: closing subscription to track %v/%v", namespace, trackname)
+		slog.Info("cleanup: closing subscription to track", "namespace", namespace, "trackname", trackname)
 		return rs.Close()
 	}
 	return cleanup, nil
@@ -216,4 +244,16 @@ func tupleEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func unpackWrite(initData string, w io.Writer) error {
+	initBytes, err := base64.StdEncoding.DecodeString(initData)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(initBytes)
+	if err != nil {
+		return err
+	}
+	return nil
 }
