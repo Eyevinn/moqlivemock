@@ -10,7 +10,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"math/big"
 	"os"
 
@@ -21,16 +22,25 @@ const (
 	appName = "mlmpub"
 )
 
-var usg = `%s acts as a MoQ server and publisher.
+var usg = `%s acts as a MoQ server and publisher using WARP to send
+mocked live video and audio tracks, synchronized with wall-clock time.
+It is intended to be a test-bed for MoQ and WARP.
+
+The qlog logs are currently massive, and written to 
 
 Usage of %s:
 `
+
+const (
+	defaultQlogFileName = "mlmpub.log"
+)
 
 type options struct {
 	certFile string
 	keyFile  string
 	addr     string
 	asset    string
+	qlogfile string
 	version  bool
 }
 
@@ -46,14 +56,19 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.keyFile, "key", "localhost-key.pem", "TLS key file (only used for server)")
 	fs.StringVar(&opts.addr, "addr", "localhost:8080", "listen or connect address")
 	fs.StringVar(&opts.asset, "asset", "../../content", "Asset to serve")
+	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
 
 func main() {
+	// Initialize slog to log to stderr
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+
 	if err := run(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		slog.Error("error running application", "error", err)
 		os.Exit(1)
 	}
 }
@@ -78,10 +93,11 @@ func runServer(opts *options) error {
 	}
 	tlsConfig, err := generateTLSConfigWithCertAndKey(opts.certFile, opts.keyFile)
 	if err != nil {
-		log.Printf("failed to generate TLS config from cert file and key, generating in memory certs: %v", err)
+		slog.Warn("failed to generate TLS config from cert file and key, generating in memory certs", "error", err)
 		tlsConfig, err = generateTLSConfig()
 		if err != nil {
-			log.Fatal(err)
+			slog.Error("failed to generate in-memory TLS config", "error", err)
+			return err
 		}
 	}
 	asset, err := internal.LoadAsset(opts.asset)
@@ -92,12 +108,24 @@ func runServer(opts *options) error {
 	if err != nil {
 		return err
 	}
+
+	var logfh io.Writer
+	if opts.qlogfile == "-" {
+		logfh = os.Stderr
+	} else {
+		logfh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			slog.Error("failed to open log file", "error", err)
+		}
+		defer logfh.Close()
+	}
 	h := &moqHandler{
 		addr:      opts.addr,
 		tlsConfig: tlsConfig,
 		namespace: []string{internal.Namespace},
 		asset:     asset,
 		catalog:   catalog,
+		logfh:     logfh,
 	}
 
 	return h.runServer(context.TODO())

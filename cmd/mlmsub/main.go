@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -20,12 +22,19 @@ import (
 )
 
 const (
-	appName = "mlmsub"
+	appName             = "mlmsub"
+	defaultQlogFileName = "mlmsub.log"
 )
 
 var usg = `%s acts as a MoQ client and subscriber for WARP.
 Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
 one audio track and subscribe to these.
+
+When receiving the media, it can write out to concatenaded CMAF tracks but also multiplex
+the tracks into a single CMAF file. By muxing the tracks and choosing muxout to "-" (stdout),
+one can pipe the stream to ffplay get synchronized playback of video and audio.
+
+mlmsub -muxout - | ffplay - 
 
 Usage of %s:
 `
@@ -34,8 +43,12 @@ type options struct {
 	addr         string
 	webtransport bool
 	trackname    string
-	version      bool
 	duration     int
+	muxout       string
+	videoOut     string
+	audioOut     string
+	qlogfile     string
+	version      bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -51,13 +64,22 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
+	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
+	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
+	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
+	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
+
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
 
 func main() {
+	// Initialize slog to log to stderr
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+
 	if err := run(os.Args); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		slog.Error("error running application", "error", err)
 		os.Exit(1)
 	}
 }
@@ -99,12 +121,48 @@ func run(args []string) error {
 }
 
 func runClient(ctx context.Context, opts *options) error {
+	var logfh io.Writer
+	if opts.qlogfile == "-" {
+		logfh = os.Stderr
+	} else {
+		logfh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			slog.Error("failed to open log file", "error", err)
+		}
+		defer logfh.Close()
+	}
 	h := &moqHandler{
 		quic:      !opts.webtransport,
 		addr:      opts.addr,
 		namespace: []string{internal.Namespace},
+		logfh:     logfh,
 	}
-	return h.runClient(ctx, opts.webtransport)
+
+	outs := make(map[string]io.Writer)
+
+	outNames := map[string]string{
+		"mux":   opts.muxout,
+		"video": opts.videoOut,
+		"audio": opts.audioOut,
+	}
+
+	for name, out := range outNames {
+		switch out {
+		case "-":
+			outs[name] = os.Stdout
+		case "":
+			outs[name] = nil
+		default:
+			f, err := os.Create(out)
+			if err != nil {
+				return err
+			}
+			outs[name] = f
+			defer f.Close()
+		}
+	}
+
+	return h.runClient(ctx, opts.webtransport, outs)
 }
 
 func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {

@@ -372,15 +372,7 @@ func Ptr[T any](v T) *T {
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
 func (t *ContentTrack) GetCMAFChunk(nr uint64) ([]byte, error) {
-	startTime := nr * uint64(t.sampleDur)
-	nrWraps := startTime / uint64(t.loopDur)
-	wrapTime := nrWraps * uint64(t.loopDur)
-	offset := uint64(0)
-	if lacking := wrapTime % uint64(t.sampleDur); lacking > 0 {
-		offset = uint64(t.sampleDur) - lacking
-	}
-	startTime += offset
-	origNr := startTime / uint64(t.sampleDur) % uint64(t.nrSamples)
+	startTime, origNr := t.calcSample(nr)
 	data, err := t.genCMAFChunk(startTime, nr, origNr)
 	if err != nil {
 		return nil, fmt.Errorf("could not generate CMAF chunk: %w", err)
@@ -416,4 +408,19 @@ func (t *ContentTrack) genCMAFChunk(startTime uint64, nr uint64, origNr uint64) 
 		return nil, err
 	}
 	return sw.Bytes(), nil
+}
+
+func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
+	sampleDur := uint64(t.sampleDur)
+	startTime = nr * uint64(t.sampleDur)
+	nrWraps := startTime / uint64(t.loopDur)
+	wrapTime := nrWraps * uint64(t.loopDur)
+	if lacking := wrapTime % sampleDur; lacking > 0 {
+		offset := sampleDur - lacking
+		wrapTime += offset
+	}
+	deltaTime := startTime - wrapTime
+
+	origNr = deltaTime / sampleDur
+	return startTime, origNr
 }

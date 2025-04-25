@@ -26,18 +26,9 @@ type MoQObject []byte
 // The MoQGroup is generated based on the track's sample duration and the
 // constant (average) duration of all MoQGroups for this track.
 func GenMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) *MoQGroup {
-	startTime := nr * uint64(constantDurMS) * uint64(track.timeScale) / 1000
-	endTime := startTime + uint64(constantDurMS)*uint64(track.timeScale)/1000
-	startNr := startTime / uint64(track.sampleDur)
-	if missing := startTime % uint64(track.sampleDur); missing > 0 {
-		startTime += uint64(track.sampleDur) - missing
-		startNr++
-	}
-	endNr := endTime / uint64(track.sampleDur)
-	if missing := endTime % uint64(track.sampleDur); missing > 0 {
-		endTime += uint64(track.sampleDur) - missing
-		endNr++
-	}
+	startNr, endNr := calcMoQGroup(track, nr, constantDurMS)
+	startTime := startNr * uint64(track.sampleDur)
+	endTime := endNr * uint64(track.sampleDur)
 	mq := &MoQGroup{
 		id:         uint32(nr),
 		startTime:  startTime,
@@ -54,6 +45,20 @@ func GenMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) *MoQGroup
 		mq.MoQObjects = append(mq.MoQObjects, chunk)
 	}
 	return mq
+}
+
+func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
+	startTime := nr * uint64(constantDurMS) * uint64(track.timeScale) / 1000
+	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.timeScale) / 1000
+	startNr = startTime / uint64(track.sampleDur)
+	if startTime%uint64(track.sampleDur) != 0 {
+		startNr++
+	}
+	endNr = endTime / uint64(track.sampleDur)
+	if endTime%uint64(track.sampleDur) != 0 {
+		endNr++
+	}
+	return startNr, endNr
 }
 
 // CurrMoQGroupNr returns the current MoQGroup number/ID for a given time.
