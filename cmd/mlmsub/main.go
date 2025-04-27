@@ -125,11 +125,12 @@ func runClient(ctx context.Context, opts *options) error {
 	if opts.qlogfile == "-" {
 		logfh = os.Stderr
 	} else {
-		logfh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		fh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
 			slog.Error("failed to open log file", "error", err)
 		}
-		defer logfh.Close()
+		logfh = fh
+		defer fh.Close()
 	}
 	h := &moqHandler{
 		quic:      !opts.webtransport,
