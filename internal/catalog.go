@@ -1,5 +1,10 @@
 package internal
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Catalog represents the WARP JSON catalog as defined in
 // [draft-ietf-moq-warp-00.txt](https://tools.ietf.org/html/draft-ietf-moq-warp-00)
 // It provides information about the tracks being produced by a WARP publisher.
@@ -24,6 +29,32 @@ func (c *Catalog) GetTrackByName(name string) *Track {
 		}
 	}
 	return nil
+}
+
+// String returns a JSON string representation of the catalog with indentation.
+// The InitData fields longer than 20 characters are shortened to show only the first 20 characters
+// followed by "..." and the total length.
+func (c *Catalog) String() string {
+	// Create a deep copy of the catalog to modify InitData
+	copyCat := *c
+	copyTracks := make([]Track, len(c.Tracks))
+	
+	for i, track := range c.Tracks {
+		copyTracks[i] = track
+		if len(track.InitData) > 20 {
+			copyTracks[i].InitData = track.InitData[:20] + "..." + fmt.Sprintf("(len=%d)", len(track.InitData))
+		}
+	}
+	
+	copyCat.Tracks = copyTracks
+	
+	// Marshal with indentation
+	jsonBytes, err := json.MarshalIndent(copyCat, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error marshaling catalog: %v", err)
+	}
+	
+	return string(jsonBytes)
 }
 
 // Track represents a track object in the WARP catalog.

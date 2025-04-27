@@ -74,8 +74,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 }
 
 func main() {
-	// Initialize slog to log to stderr
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Initialize slog to log to stderr with Info level
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
 	slog.SetDefault(logger)
 
 	if err := run(os.Args); err != nil {
