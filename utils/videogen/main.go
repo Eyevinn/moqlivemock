@@ -58,7 +58,7 @@ func ensureRequiredFiles() {
 }
 
 func generateAudio() {
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("audio_%dkbps.mp4", audioBitrate))
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps.mp4", audioBitrate))
 	logFile := filepath.Join(logDir, fmt.Sprintf("audio_%dkbps.log", audioBitrate))
 	fmt.Printf("Generating audio file: %s\n", outputFile)
 
@@ -79,6 +79,7 @@ func generateAudio() {
 		"-b:a", fmt.Sprintf("%dk", audioBitrate), // Audio bitrate
 		"-ar", fmt.Sprintf("%d", audioSampleRate), // 48kHz sample rate
 		"-ac", "2", // Stereo audio (2 channels)
+		"-metadata:s:a:0", "language=mon", // Set language to 'mon' to indicate monotonic
 		"-t", fmt.Sprintf("%d", duration), // Duration in seconds
 		"-movflags", "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame", // MP4 fragmentation
 		outputFile,
