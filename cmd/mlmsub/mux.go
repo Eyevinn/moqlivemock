@@ -94,7 +94,7 @@ func (m *cmafMux) muxSample(sample []byte, mediaType string) error {
 	frag.Moof.Traf.Tfhd.TrackID = trackID
 	nowMS := time.Now().UnixMilli()
 	mediaMS := 1000 * int64(frag.Moof.Traf.Tfdt.BaseMediaDecodeTime()) / m.timeScales[mediaType]
-	slog.Info("timestamps", "mediaType", mediaType, "latency", nowMS-mediaMS)
+	slog.Debug("timestamps", "mediaType", mediaType, "mediaMS", mediaMS, "latencyMS", nowMS-mediaMS)
 	m.mu.Lock()
 	err = frag.Encode(m.w)
 	m.mu.Unlock()

@@ -249,11 +249,16 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 				}
 				return
 			}
-			slog.Debug("got object",
-				"objectID", o.ObjectID,
-				"groupID", o.GroupID,
-				"subGroupID", o.SubGroupID,
-				"payloadLength", len(o.Payload))
+			if o.ObjectID == 0 {
+				slog.Info("group start", "groupID", o.GroupID, "subGroupID", o.SubGroupID, "payloadLength", len(o.Payload))
+			} else {
+				slog.Debug("object",
+					"objectID", o.ObjectID,
+					"groupID", o.GroupID,
+					"subGroupID", o.SubGroupID,
+					"payloadLength", len(o.Payload))
+			}
+
 			if h.mux != nil {
 				err = h.mux.muxSample(o.Payload, mediaType)
 				if err != nil {

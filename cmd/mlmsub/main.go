@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -50,6 +51,7 @@ type options struct {
 	qlogfile     string
 	videoname    string
 	audioname    string
+	loglevel     string
 	version      bool
 }
 
@@ -72,21 +74,43 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track")
 	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track")
+	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
 
 func main() {
-	// Initialize slog to log to stderr with Info level
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
+	// Parse command line arguments first to get the log level
+	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
+	opts, err := parseOptions(fs, os.Args)
+	if err != nil {
+		if !errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
+		}
+		os.Exit(1)
+	}
 
-	if err := run(os.Args); err != nil {
+	if err := runWithOptions(opts); err != nil {
 		slog.Error("error running application", "error", err)
 		os.Exit(1)
+	}
+}
+
+// parseLogLevel converts a string log level to slog.Level
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warning", "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown log level: %s, using 'info'\n", level)
+		return slog.LevelInfo
 	}
 }
 
@@ -101,10 +125,19 @@ func run(args []string) error {
 		return err
 	}
 
+	return runWithOptions(opts)
+}
+
+func runWithOptions(opts *options) error {
 	if opts.version {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
 		return nil
 	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: parseLogLevel(opts.loglevel),
+	}))
+	slog.SetDefault(logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -64,6 +64,14 @@ cd cmd/mlmpub
 go run .
 ```
 
+You can also build the binary and then run it
+
+```shell
+cd cmd/mlmpub
+go build .
+./mlmpub
+```
+
 In another shell, start the subscriber and choose if the video, the audio,
 or a muxed combination should be output, e.g. 
 
@@ -72,11 +80,23 @@ cd cmd/mlmsub
 go run . -muxout - | ffplay -
 ```
 
+or build it similarly to `mlmpub` before you run it. This time with some other options
+
+```shell
+cd cmd/mlmsub
+go build .
+./mlmsub -videoname 600 -audioname scale -loglevel debug -muxout - | ffplay -
+```
+
 to directly play with ffplay.
+There are more options to change the loglevel, choose track etc.
 
 The subscriber will connect to the publisher and start receiving
-video and audio frames.
-Note. Currently, there are ways too much logs being written.
+video and audio frames if some tracks are selected.
+
+There is currently no working unsubscribe mechanism, so the closing of the
+subscribed tracks is not clean.
+
 
 ## Development
 
