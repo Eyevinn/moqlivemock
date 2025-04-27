@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -178,11 +179,13 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 	if err != nil {
 		return err
 	}
-	slog.Info("got catalog",
-		"objectID", o.ObjectID,
+	slog.Info("received catalog",
 		"groupID", o.GroupID,
 		"subGroupID", o.SubGroupID,
 		"payloadLength", len(o.Payload))
+	
+	// Print the catalog using the new String method
+	fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
 	return nil
 }
 
