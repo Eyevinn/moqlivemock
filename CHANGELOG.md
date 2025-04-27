@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WARP catalog generation and parsing
 - wall-clock-synchronized media soursce
 - multiplexing received video and audio for direct playback via ffplay
+- audio track with monotonic beeps and other track with scale sequence beeps
+- track selection based on name substring
 
 ### Changed
+
 - configurable qlog destination
 - application log to stderr
 
