@@ -24,6 +24,8 @@ type moqHandler struct {
 	mux       *cmafMux
 	outs      map[string]io.Writer
 	logfh     io.Writer
+	videoname string
+	audioname string
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
@@ -105,33 +107,62 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	videoTrack := ""
 	audioTrack := ""
 	for _, track := range h.catalog.Tracks {
-		if videoTrack == "" && strings.HasPrefix(track.MimeType, "video") {
-			videoTrack = track.Name
-			if h.outs["video"] != nil {
-				err = unpackWrite(track.InitData, h.outs["video"])
-				if err != nil {
-					slog.Error("failed to write init data", "error", err)
+		// Select video track
+		if strings.HasPrefix(track.MimeType, "video") {
+			// If videoname is specified, match it as a substring of the track name
+			if h.videoname != "" {
+				if strings.Contains(track.Name, h.videoname) {
+					videoTrack = track.Name
+					slog.Info("selected video track based on substring match", "trackName", track.Name, "substring", h.videoname)
 				}
+			} else if videoTrack == "" {
+				// If no videoname specified, use the first video track
+				videoTrack = track.Name
 			}
-			if h.mux != nil {
-				err = h.mux.addInit(track.InitData, "video")
-				if err != nil {
-					slog.Error("failed to add init data", "error", err)
+
+			// Initialize video track if it's the selected one
+			if videoTrack == track.Name {
+				if h.outs["video"] != nil {
+					err = unpackWrite(track.InitData, h.outs["video"])
+					if err != nil {
+						slog.Error("failed to write init data", "error", err)
+					}
+				}
+				if h.mux != nil {
+					err = h.mux.addInit(track.InitData, "video")
+					if err != nil {
+						slog.Error("failed to add init data", "error", err)
+					}
 				}
 			}
 		}
-		if audioTrack == "" && strings.HasPrefix(track.MimeType, "audio") {
-			audioTrack = track.Name
-			if h.outs["audio"] != nil {
-				err = unpackWrite(track.InitData, h.outs["audio"])
-				if err != nil {
-					slog.Error("failed to write init data", "error", err)
+
+		// Select audio track
+		if strings.HasPrefix(track.MimeType, "audio") {
+			// If audioname is specified, match it as a substring of the track name
+			if h.audioname != "" {
+				if strings.Contains(track.Name, h.audioname) {
+					audioTrack = track.Name
+					slog.Info("selected audio track based on substring match", "trackName", track.Name, "substring", h.audioname)
 				}
+			} else if audioTrack == "" {
+				// If no audioname specified, use the first audio track
+				audioTrack = track.Name
 			}
-			if h.mux != nil {
-				err = h.mux.addInit(track.InitData, "audio")
-				if err != nil {
-					slog.Error("failed to add init data", "error", err)
+
+			// Initialize audio track if it's the selected one
+			if audioTrack == track.Name {
+				if h.outs["audio"] != nil {
+					err = unpackWrite(track.InitData, h.outs["audio"])
+					if err != nil {
+						slog.Error("failed to write init data", "error", err)
+					}
+				}
+				if h.mux != nil {
+					err = h.mux.addInit(track.InitData, "audio")
+					if err != nil {
+						slog.Error("failed to add init data", "error", err)
+					}
 				}
 			}
 		}
@@ -158,6 +189,14 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 			return
 		}
 	}
+	if audioTrack == "" && videoTrack == "" {
+		slog.Error("no matching tracks found")
+		err = conn.CloseWithError(0, "no matching tracks found")
+		if err != nil {
+			slog.Error("failed to close connection", "error", err)
+		}
+		return
+	}
 	<-ctx.Done()
 }
 
@@ -182,10 +221,11 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 	slog.Info("received catalog",
 		"groupID", o.GroupID,
 		"subGroupID", o.SubGroupID,
-		"payloadLength", len(o.Payload))
-	
-	// Print the catalog using the new String method
-	fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
+		"payloadLength", len(o.Payload),
+	)
+	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
+		fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
+	}
 	return nil
 }
 
