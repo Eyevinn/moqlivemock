@@ -6,20 +6,37 @@ import (
 )
 
 // Catalog represents the WARP JSON catalog as defined in
-// [draft-ietf-moq-warp-00.txt](https://tools.ietf.org/html/draft-ietf-moq-warp-00)
+// [draft-ietf-moq-warp](https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html)
+// as of 28 Apr 2025 17:43:00 +0200
 // It provides information about the tracks being produced by a WARP publisher.
 type Catalog struct {
 	// Version specifies the version of WARP referenced by this catalog.
 	// Required field at the root level.
 	Version int `json:"version"`
 
+	// DeltaUpdate indicates that this catalog object represents a delta (or partial) update.
+	// Optional field at the root level.
+	DeltaUpdate bool `json:"deltaUpdate,omitempty"`
+
+	// AddTracks indicates a delta processing instruction to add new tracks.
+	// Optional field at the root level, only used in delta updates.
+	AddTracks []Track `json:"addTracks,omitempty"`
+
+	// RemoveTracks indicates a delta processing instruction to remove tracks.
+	// Optional field at the root level, only used in delta updates.
+	RemoveTracks []Track `json:"removeTracks,omitempty"`
+
+	// CloneTracks indicates a delta processing instruction to clone new tracks from previously declared tracks.
+	// Optional field at the root level, only used in delta updates.
+	CloneTracks []Track `json:"cloneTracks,omitempty"`
+
+	// Tracks is an array of track objects.
+	// Required field at the root level for non-delta updates.
+	Tracks []Track `json:"tracks,omitempty"`
+
 	// SupportsDeltaUpdates indicates if the publisher may issue incremental (delta) updates.
 	// Optional field at the root level. Default is false.
 	SupportsDeltaUpdates bool `json:"supportsDeltaUpdates,omitempty"`
-
-	// Tracks is an array of track objects.
-	// Required field at the root level.
-	Tracks []Track `json:"tracks"`
 }
 
 func (c *Catalog) GetTrackByName(name string) *Track {
@@ -38,22 +55,22 @@ func (c *Catalog) String() string {
 	// Create a deep copy of the catalog to modify InitData
 	copyCat := *c
 	copyTracks := make([]Track, len(c.Tracks))
-	
+
 	for i, track := range c.Tracks {
 		copyTracks[i] = track
 		if len(track.InitData) > 20 {
 			copyTracks[i].InitData = track.InitData[:20] + "..." + fmt.Sprintf("(len=%d)", len(track.InitData))
 		}
 	}
-	
+
 	copyCat.Tracks = copyTracks
-	
+
 	// Marshal with indentation
 	jsonBytes, err := json.MarshalIndent(copyCat, "", "  ")
 	if err != nil {
 		return fmt.Sprintf("Error marshaling catalog: %v", err)
 	}
-	
+
 	return string(jsonBytes)
 }
 
@@ -142,27 +159,8 @@ type Track struct {
 	// Language defines the dominant language of the track.
 	// Optional field at the track level.
 	Language string `json:"lang,omitempty"`
-}
 
-// CatalogPatch represents a JSON Patch operation as defined in RFC 6902.
-// Used for incremental updates to the catalog.
-type CatalogPatch []PatchOperation
-
-// PatchOperation represents a single operation in a JSON Patch.
-type PatchOperation struct {
-	// Op is the operation to perform.
-	// Allowed values: "add", "remove", "replace", "move", "copy", "test"
-	Op string `json:"op"`
-
-	// Path is a JSON Pointer (RFC 6901) that references a location in the target document.
-	Path string `json:"path"`
-
-	// Value is the value to be used within the operation.
-	// Used by "add", "replace", and "test" operations.
-	Value any `json:"value,omitempty"`
-
-	// From is a JSON Pointer that references the location in the target document
-	// to move/copy from.
-	// Used by "move" and "copy" operations.
-	From string `json:"from,omitempty"`
+	// ParentName defines the parent track name to be cloned.
+	// This field is only included inside a CloneTracks object.
+	ParentName string `json:"parentName,omitempty"`
 }
