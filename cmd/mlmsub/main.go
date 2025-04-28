@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"syscall"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -112,20 +112,6 @@ func parseLogLevel(level string) slog.Level {
 		fmt.Fprintf(os.Stderr, "Unknown log level: %s, using 'info'\n", level)
 		return slog.LevelInfo
 	}
-}
-
-func run(args []string) error {
-	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
-	opts, err := parseOptions(fs, args)
-
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-
-	return runWithOptions(opts)
 }
 
 func runWithOptions(opts *options) error {
