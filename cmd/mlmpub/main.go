@@ -108,7 +108,8 @@ func runServer(opts *options) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch, "videoSampleBatch", opts.videoSampleBatch)
+	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch,
+		"videoSampleBatch", opts.videoSampleBatch)
 	catalog, err := asset.GenCMAFCatalogEntry()
 	if err != nil {
 		return err

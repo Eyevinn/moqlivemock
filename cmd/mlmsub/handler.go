@@ -250,12 +250,12 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 				return
 			}
 			if o.ObjectID == 0 {
-				slog.Info("group start", "groupID", o.GroupID, "subGroupID", o.SubGroupID, "payloadLength", len(o.Payload))
+				slog.Info("group start", "track", trackname, "groupID", o.GroupID, "payloadLength", len(o.Payload))
 			} else {
 				slog.Debug("object",
+					"track", trackname,
 					"objectID", o.ObjectID,
 					"groupID", o.GroupID,
-					"subGroupID", o.SubGroupID,
 					"payloadLength", len(o.Payload))
 			}
 

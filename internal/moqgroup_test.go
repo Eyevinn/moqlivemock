@@ -18,13 +18,13 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	require.NotNil(t, asset)
 
 	var videoTrack, audioTrack *ContentTrack
-	for _, group := range asset.groups {
-		for i := range group.tracks {
-			ct := &group.tracks[i]
-			if ct.contentType == "video" && videoTrack == nil {
+	for _, group := range asset.Groups {
+		for i := range group.Tracks {
+			ct := &group.Tracks[i]
+			if ct.ContentType == "video" && videoTrack == nil {
 				videoTrack = ct
 			}
-			if ct.contentType == "audio" && audioTrack == nil {
+			if ct.ContentType == "audio" && audioTrack == nil {
 				audioTrack = ct
 			}
 		}
@@ -39,8 +39,8 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	vg := GenMoQGroup(videoTrack, groupNr, 1, groupDurMS)
 	require.NotNil(t, vg)
 	// startTime and endTime should be aligned to sample duration
-	require.Equal(t, uint64(0), vg.startTime%uint64(videoTrack.sampleDur), "video startTime not aligned")
-	require.Equal(t, uint64(0), vg.endTime%uint64(videoTrack.sampleDur), "video endTime not aligned")
+	require.Equal(t, uint64(0), vg.startTime%uint64(videoTrack.SampleDur), "video startTime not aligned")
+	require.Equal(t, uint64(0), vg.endTime%uint64(videoTrack.SampleDur), "video endTime not aligned")
 	// startNr and endNr should be integers
 	require.True(t, vg.startNr <= vg.endNr, "video startNr > endNr")
 	// The number of objects should match endNr-startNr
@@ -49,8 +49,8 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	// Audio
 	ag := GenMoQGroup(audioTrack, groupNr, 1, groupDurMS)
 	require.NotNil(t, ag)
-	require.Equal(t, uint64(0), ag.startTime%uint64(audioTrack.sampleDur), "audio startTime not aligned")
-	require.Equal(t, uint64(0), ag.endTime%uint64(audioTrack.sampleDur), "audio endTime not aligned")
+	require.Equal(t, uint64(0), ag.startTime%uint64(audioTrack.SampleDur), "audio startTime not aligned")
+	require.Equal(t, uint64(0), ag.endTime%uint64(audioTrack.SampleDur), "audio endTime not aligned")
 	require.True(t, ag.startNr <= ag.endNr, "audio startNr > endNr")
 	require.Equal(t, int(ag.endNr-ag.startNr), len(ag.MoQObjects), "audio MoQObjects count")
 }
@@ -62,15 +62,15 @@ func TestGenMoQStreams(t *testing.T) {
 	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
-	for _, group := range asset.groups {
-		for i := range group.tracks {
-			ct := &group.tracks[i]
-			ofh, err := os.Create(fmt.Sprintf("%s.mp4", ct.name))
+	for _, group := range asset.Groups {
+		for i := range group.Tracks {
+			ct := &group.Tracks[i]
+			ofh, err := os.Create(fmt.Sprintf("%s.mp4", ct.Name))
 			if err != nil {
 				t.Fatalf("failed to create output file: %v", err)
 			}
 			defer ofh.Close()
-			init, err := ct.specData.GenCMAFInitData()
+			init, err := ct.SpecData.GenCMAFInitData()
 			if err != nil {
 				t.Fatalf("failed to generate init data: %v", err)
 			}
@@ -106,7 +106,7 @@ func TestWriteMoQGroupLive(t *testing.T) {
 		t.Fatalf("failed to create output file: %v", err)
 	}
 	defer ofh.Close()
-	init, err := ct.specData.GenCMAFInitData()
+	init, err := ct.SpecData.GenCMAFInitData()
 	if err != nil {
 		t.Fatalf("failed to generate init data: %v", err)
 	}

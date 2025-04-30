@@ -18,25 +18,25 @@ const (
 )
 
 type ContentTrack struct {
-	name          string
-	contentType   string
-	language      string
-	sampleBitrate uint32
-	timeScale     uint32
-	duration      uint32
-	gopLength     uint32
-	sampleDur     uint32
-	nrSamples     uint32
-	loopDur       uint32 // Loop duration in local timescale
+	Name          string
+	ContentType   string
+	Language      string
+	SampleBitrate uint32
+	TimeScale     uint32
+	Duration      uint32
+	GopLength     uint32
+	SampleDur     uint32
+	NrSamples     uint32
+	LoopDur       uint32 // Loop duration in local timescale
 	SampleBatch   int
-	samples       []mp4.FullSample
-	specData      CodecSpecificData
+	Samples       []mp4.FullSample
+	SpecData      CodecSpecificData
 }
 
 type Asset struct {
-	name      string
-	groups    []TrackGroup
-	loopDurMS uint32
+	Name      string
+	Groups    []TrackGroup
+	LoopDurMS uint32
 }
 
 type CodecSpecificData interface {
@@ -45,15 +45,15 @@ type CodecSpecificData interface {
 }
 
 type TrackGroup struct {
-	altGroupID uint32
-	tracks     []ContentTrack
+	AltGroupID uint32
+	Tracks     []ContentTrack
 }
 
 // GetTrackByName returns a pointer to a ContentTrack with the given name, or nil if not found.
 func (a *Asset) GetTrackByName(name string) *ContentTrack {
-	for _, group := range a.groups {
-		for _, ct := range group.tracks {
-			if ct.name == name {
+	for _, group := range a.Groups {
+		for _, ct := range group.Tracks {
+			if ct.Name == name {
 				return &ct
 			}
 		}
@@ -81,9 +81,9 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		name = name[:len(name)-len(ext)]
 	}
 	ct := ContentTrack{
-		timeScale: mdia.Mdhd.Timescale,
-		language:  mdia.Mdhd.GetLanguage(),
-		name:      name,
+		TimeScale: mdia.Mdhd.Timescale,
+		Language:  mdia.Mdhd.GetLanguage(),
+		Name:      name,
 	}
 	sampleDesc, err := mdia.Minf.Stbl.Stsd.GetSampleDescription(0)
 	if err != nil {
@@ -91,10 +91,10 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	}
 	switch sampleDesc.Type() {
 	case "avc1", "avc3":
-		ct.contentType = "video"
+		ct.ContentType = "video"
 		ct.SampleBatch = videoSampleBatch
 	case "mp4a":
-		ct.contentType = "audio"
+		ct.ContentType = "audio"
 		ct.SampleBatch = audioSampleBatch
 	default:
 		return nil, fmt.Errorf("unsupported sample description type: %s", sampleDesc.Type())
@@ -106,21 +106,21 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 			if err != nil {
 				return nil, fmt.Errorf("could not get full samples: %w", err)
 			}
-			ct.samples = append(ct.samples, fs...)
+			ct.Samples = append(ct.Samples, fs...)
 		}
 	}
-	for i, s := range ct.samples {
-		if ct.sampleDur == 0 {
-			ct.sampleDur = s.Dur
+	for i, s := range ct.Samples {
+		if ct.SampleDur == 0 {
+			ct.SampleDur = s.Dur
 		} else {
 			// Last sample may have different duration, but all other should be same
-			if s.Dur != ct.sampleDur && i != len(ct.samples)-1 {
+			if s.Dur != ct.SampleDur && i != len(ct.Samples)-1 {
 				return nil, fmt.Errorf("sample duration is not consistent")
 			}
 		}
 	}
 	timeOffset := uint64(0)
-	if ct.contentType == "audio" {
+	if ct.ContentType == "audio" {
 		// Check edit list and possibly shift away a sample for proper
 		// alignment when looping witoout edit list
 		if trak.Edts != nil {
@@ -140,28 +140,28 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		// first time the sample is played. The loop transition may not be perfect
 		// from an audible perspective. but the timestamps will be correct.
 		firsIdx := 0
-		for _, s := range ct.samples {
+		for _, s := range ct.Samples {
 			if s.DecodeTime < timeOffset {
 				firsIdx++
 			} else {
 				break
 			}
 		}
-		ct.samples = ct.samples[firsIdx:]
-		for i := range ct.samples {
-			ct.samples[i].DecodeTime -= timeOffset
+		ct.Samples = ct.Samples[firsIdx:]
+		for i := range ct.Samples {
+			ct.Samples[i].DecodeTime -= timeOffset
 		}
 	}
 
-	if ct.samples[0].IsSync() {
+	if ct.Samples[0].IsSync() {
 		lastSync := 0
-		for i := 1; i < len(ct.samples); i++ {
-			if ct.samples[i].IsSync() {
+		for i := 1; i < len(ct.Samples); i++ {
+			if ct.Samples[i].IsSync() {
 				gopLen := i - lastSync
-				if ct.gopLength == 0 {
-					ct.gopLength = uint32(gopLen)
+				if ct.GopLength == 0 {
+					ct.GopLength = uint32(gopLen)
 				} else {
-					if ct.gopLength != uint32(gopLen) {
+					if ct.GopLength != uint32(gopLen) {
 						return nil, fmt.Errorf("gop length is not consistent")
 					}
 				}
@@ -172,12 +172,12 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 
 	switch sampleDesc.Type() {
 	case "avc1", "avc3":
-		ct.specData, err = initAVCData(init, ct.samples)
+		ct.SpecData, err = initAVCData(init, ct.Samples)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize AVC data: %w", err)
 		}
 	case "mp4a":
-		ct.specData, err = initAACData(init)
+		ct.SpecData, err = initAACData(init)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize AAC data: %w", err)
 		}
@@ -185,16 +185,16 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
 	}
 
-	ct.duration = uint32(len(ct.samples)) * ct.sampleDur
-	ct.nrSamples = uint32(len(ct.samples))
+	ct.Duration = uint32(len(ct.Samples)) * ct.SampleDur
+	ct.NrSamples = uint32(len(ct.Samples))
 	// Calculate sampleBitrate (bits per second)
 	totalBytes := 0
-	for _, s := range ct.samples {
+	for _, s := range ct.Samples {
 		totalBytes += int(s.Size)
 	}
-	durationSeconds := float64(ct.duration) / float64(ct.timeScale)
+	durationSeconds := float64(ct.Duration) / float64(ct.TimeScale)
 	if durationSeconds > 0 {
-		ct.sampleBitrate = uint32(float64(totalBytes*8) / durationSeconds)
+		ct.SampleBitrate = uint32(float64(totalBytes*8) / durationSeconds)
 	}
 	return &ct, nil
 }
@@ -224,23 +224,23 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 		if err != nil {
 			return nil, fmt.Errorf("could not create ContentTrack for %s: %w", filePath, err)
 		}
-		tracksByType[ct.contentType] = append(tracksByType[ct.contentType], *ct)
+		tracksByType[ct.ContentType] = append(tracksByType[ct.ContentType], *ct)
 	}
 	var groups []TrackGroup
 	groupID := uint32(1)
 	// Add video group(s) first
 	if videoTracks, ok := tracksByType["video"]; ok {
 		sort.Slice(videoTracks, func(i, j int) bool {
-			return videoTracks[i].sampleBitrate < videoTracks[j].sampleBitrate
+			return videoTracks[i].SampleBitrate < videoTracks[j].SampleBitrate
 		})
 		for i := 0; i < len(videoTracks); i++ {
-			if videoTracks[i].duration != videoTracks[0].duration {
+			if videoTracks[i].Duration != videoTracks[0].Duration {
 				return nil, fmt.Errorf("video tracks have different durations")
 			}
 		}
 		groups = append(groups, TrackGroup{
-			altGroupID: groupID,
-			tracks:     videoTracks,
+			AltGroupID: groupID,
+			Tracks:     videoTracks,
 		})
 		groupID++
 	}
@@ -248,16 +248,16 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 	// Then audio group(s)
 	if audioTracks, ok := tracksByType["audio"]; ok {
 		sort.Slice(audioTracks, func(i, j int) bool {
-			return audioTracks[i].sampleBitrate < audioTracks[j].sampleBitrate
+			return audioTracks[i].SampleBitrate < audioTracks[j].SampleBitrate
 		})
 		groups = append(groups, TrackGroup{
-			altGroupID: groupID,
-			tracks:     audioTracks,
+			AltGroupID: groupID,
+			Tracks:     audioTracks,
 		})
 	}
 	asset := &Asset{
-		name:   filepath.Base(dirPath),
-		groups: groups,
+		Name:   filepath.Base(dirPath),
+		Groups: groups,
 	}
 	if err := asset.setLoopDuration(); err != nil {
 		return nil, fmt.Errorf("could not set loop duration: %w", err)
@@ -270,32 +270,32 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 // All the tracks in the first group must have durations that
 // are equal to the loopDuration in their timeScale.
 func (a *Asset) setLoopDuration() error {
-	if len(a.groups) == 0 {
+	if len(a.Groups) == 0 {
 		return fmt.Errorf("no tracks found")
 	}
-	loopDurMS := a.groups[0].tracks[0].duration * 1000 / a.groups[0].tracks[0].timeScale
-	for gNr, group := range a.groups {
-		for tNr, track := range group.tracks {
+	loopDurMS := a.Groups[0].Tracks[0].Duration * 1000 / a.Groups[0].Tracks[0].TimeScale
+	for gNr, group := range a.Groups {
+		for tNr, track := range group.Tracks {
 			switch {
 			case gNr == 0:
-				if track.duration*1000 != loopDurMS*track.timeScale {
-					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.name)
+				if track.Duration*1000 != loopDurMS*track.TimeScale {
+					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
 				}
-				group.tracks[tNr].loopDur = track.duration
-			case gNr > 0 && track.contentType == "audio":
-				if track.duration*1000 < loopDurMS*track.timeScale {
-					return fmt.Errorf("group %d audio track %s not compatible with loop duration", gNr, track.name)
+				group.Tracks[tNr].LoopDur = track.Duration
+			case gNr > 0 && track.ContentType == "audio":
+				if track.Duration*1000 < loopDurMS*track.TimeScale {
+					return fmt.Errorf("group %d audio track %s not compatible with loop duration", gNr, track.Name)
 				}
-				group.tracks[tNr].loopDur = loopDurMS * track.timeScale / 1000
+				group.Tracks[tNr].LoopDur = loopDurMS * track.TimeScale / 1000
 			default:
-				if track.duration*1000 != loopDurMS*track.timeScale {
-					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.name)
+				if track.Duration*1000 != loopDurMS*track.TimeScale {
+					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
 				}
-				group.tracks[tNr].loopDur = track.duration
+				group.Tracks[tNr].LoopDur = track.Duration
 			}
 		}
 	}
-	a.loopDurMS = loopDurMS
+	a.LoopDurMS = loopDurMS
 	return nil
 }
 
@@ -303,36 +303,36 @@ func (a *Asset) setLoopDuration() error {
 func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
-	for _, group := range a.groups {
-		altGroup := int(group.altGroupID)
-		for _, ct := range group.tracks {
+	for _, group := range a.Groups {
+		altGroup := int(group.AltGroupID)
+		for _, ct := range group.Tracks {
 			initData := ""
-			if ct.specData != nil {
-				data, err := ct.specData.GenCMAFInitData()
+			if ct.SpecData != nil {
+				data, err := ct.SpecData.GenCMAFInitData()
 				if err != nil {
-					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.name, err)
+					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.Name, err)
 				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
 
-			frameRate := float64(ct.timeScale) / float64(ct.sampleDur)
-			cmafBitrate := calcCmafBitrate(ct.sampleBitrate, frameRate, ct.SampleBatch)
+			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
+			cmafBitrate := calcCmafBitrate(ct.SampleBitrate, frameRate, ct.SampleBatch)
 
 			track := Track{
-				Name:        ct.name,
+				Name:        ct.Name,
 				Packaging:   "cmaf",
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
 				InitData:    initData,
-				Codec:       ct.specData.Codec(),
+				Codec:       ct.SpecData.Codec(),
 				Bitrate:     &cmafBitrate,
-				Language:    ct.language,
+				Language:    ct.Language,
 			}
 
 			// Populate optional fields if available
-			switch ct.contentType {
+			switch ct.ContentType {
 			case "video":
-				sd := ct.specData.(*AVCData)
+				sd := ct.SpecData.(*AVCData)
 				track.MimeType = "video/mp4"
 				track.Framerate = Ptr(frameRate)
 				if sd.width != 0 {
@@ -342,7 +342,7 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 					track.Height = Ptr(int(sd.height))
 				}
 			case "audio":
-				sd := ct.specData.(*AACData)
+				sd := ct.SpecData.(*AACData)
 				track.MimeType = "audio/mp4"
 				if sd.sampleRate != 0 {
 					track.SampleRate = Ptr(int(sd.sampleRate))
@@ -352,7 +352,7 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 				}
 			}
 			track.Namespace = Namespace
-			track.Name = ct.name
+			track.Name = ct.Name
 			tracks = append(tracks, track)
 		}
 	}
@@ -387,11 +387,11 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	}
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.calcSample(uint64(sampleNr))
-		orig := t.samples[origNr]
+		orig := t.Samples[origNr]
 		fs := mp4.FullSample{
 			Sample: mp4.Sample{
 				Flags: orig.Flags,
-				Dur:   uint32(t.sampleDur),
+				Dur:   uint32(t.SampleDur),
 				Size:  uint32(len(orig.Data)),
 			},
 			DecodeTime: startTime,
@@ -411,10 +411,10 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 
 // calcSample calculates the start time and original sample number for a given output sample number.
 func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
-	sampleDur := uint64(t.sampleDur)
-	startTime = nr * uint64(t.sampleDur)
-	nrWraps := startTime / uint64(t.loopDur)
-	wrapTime := nrWraps * uint64(t.loopDur)
+	sampleDur := uint64(t.SampleDur)
+	startTime = nr * uint64(t.SampleDur)
+	nrWraps := startTime / uint64(t.LoopDur)
+	wrapTime := nrWraps * uint64(t.LoopDur)
 	if lacking := wrapTime % sampleDur; lacking > 0 {
 		offset := sampleDur - lacking
 		wrapTime += offset

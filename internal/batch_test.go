@@ -20,28 +20,28 @@ func TestCalcCmafBitrate(t *testing.T) {
 			sampleBitrate: 400000,
 			frameRate:     25.0,
 			sampleBatch:   1,
-			expectedRate:  402800, // 400000 + 8*112*25
+			expectedRate:  422400, // 400000 + 8*112*25
 		},
 		{
 			desc:          "video_batch_2",
 			sampleBitrate: 400000,
 			frameRate:     25.0,
 			sampleBatch:   2,
-			expectedRate:  401500, // 400000 + 8*(112+8)*25/2
+			expectedRate:  412000, // 400000 + 8*(112+8)*25/2
 		},
 		{
 			desc:          "audio_batch_1",
 			sampleBitrate: 128000,
 			frameRate:     46.875, // 48000/1024
 			sampleBatch:   1,
-			expectedRate:  130100, // 128000 + 8*112*46.875
+			expectedRate:  170000, // 128000 + 8*112*46.875
 		},
 		{
 			desc:          "audio_batch_4",
 			sampleBitrate: 128000,
 			frameRate:     46.875,
 			sampleBatch:   4,
-			expectedRate:  128759, // 128000 + 8*(112+3*8)*46.875/4
+			expectedRate:  140750, // 128000 + 8*(112+3*8)*46.875/4
 		},
 	}
 
@@ -134,15 +134,15 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			require.NotNil(t, asset)
 
 			// Check that all tracks have the correct batch size
-			for _, group := range asset.groups {
-				for _, track := range group.tracks {
-					switch track.contentType {
+			for _, group := range asset.Groups {
+				for _, track := range group.Tracks {
+					switch track.ContentType {
 					case "audio":
 						require.Equal(t, tc.audioSampleBatch, track.SampleBatch, 
-							"Audio track %s should have batch size %d", track.name, tc.audioSampleBatch)
+							"Audio track %s should have batch size %d", track.Name, tc.audioSampleBatch)
 					case "video":
 						require.Equal(t, tc.videoSampleBatch, track.SampleBatch, 
-							"Video track %s should have batch size %d", track.name, tc.videoSampleBatch)
+							"Video track %s should have batch size %d", track.Name, tc.videoSampleBatch)
 					}
 				}
 			}
@@ -159,10 +159,10 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			for _, track := range catalog.Tracks {
 				// Find the corresponding ContentTrack
 				var contentTrack *ContentTrack
-				for _, group := range asset.groups {
-					for i := range group.tracks {
-						if group.tracks[i].name == track.Name {
-							contentTrack = &group.tracks[i]
+				for _, group := range asset.Groups {
+					for i := range group.Tracks {
+						if group.Tracks[i].Name == track.Name {
+							contentTrack = &group.Tracks[i]
 							break
 						}
 					}
@@ -173,8 +173,8 @@ func TestLoadAssetWithBatch(t *testing.T) {
 				require.NotNil(t, contentTrack, "Track %s should exist in asset", track.Name)
 
 				// Calculate expected bitrate
-				frameRate := float64(contentTrack.timeScale) / float64(contentTrack.sampleDur)
-				expectedBitrate := calcCmafBitrate(contentTrack.sampleBitrate, frameRate, contentTrack.SampleBatch)
+				frameRate := float64(contentTrack.TimeScale) / float64(contentTrack.SampleDur)
+				expectedBitrate := calcCmafBitrate(contentTrack.SampleBitrate, frameRate, contentTrack.SampleBatch)
 				
 				require.Equal(t, expectedBitrate, *track.Bitrate, 
 					"Track %s should have bitrate calculated with batch size %d", 
@@ -215,8 +215,8 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 			require.NotNil(t, asset)
 
 			// Test chunk generation for each track
-			for _, group := range asset.groups {
-				for _, track := range group.tracks {
+			for _, group := range asset.Groups {
+				for _, track := range group.Tracks {
 					// Test with different batch sizes
 					batchSize := track.SampleBatch
 					
@@ -226,7 +226,7 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 					require.NotNil(t, chunk)
 					
 					// For video tracks with batch > 1, the chunk should be larger than a single sample chunk
-					if track.contentType == "video" && batchSize > 1 {
+					if track.ContentType == "video" && batchSize > 1 {
 						// Generate a single sample chunk for comparison
 						singleChunk, err := track.GenCMAFChunk(0, 0, 1)
 						require.NoError(t, err)
