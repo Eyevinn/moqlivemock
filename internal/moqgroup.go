@@ -78,7 +78,8 @@ func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, cb O
 			return ctx.Err()
 		}
 		now := time.Now().UnixMilli()
-		objTimeMS := int64(float64(int64(moq.startTime)+int64(nr+1)*int64(track.SampleDur)) * factorMS)
+		objTime := moq.startTime + uint64(nr+1)*uint64(track.SampleDur)*uint64(track.SampleBatch)
+		objTimeMS := int64(float64(objTime) * factorMS)
 		waitTime := objTimeMS - now
 		if waitTime <= 0 {
 			_, err := cb(uint64(nr), moqObj)
