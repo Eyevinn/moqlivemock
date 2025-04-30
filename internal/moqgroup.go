@@ -27,8 +27,8 @@ type MoQObject []byte
 // constant (average) duration of all MoQGroups for this track.
 func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantDurMS uint32) *MoQGroup {
 	startNr, endNr := calcMoQGroup(track, groupNr, constantDurMS)
-	startTime := startNr * uint64(track.sampleDur)
-	endTime := endNr * uint64(track.sampleDur)
+	startTime := startNr * uint64(track.SampleDur)
+	endTime := endNr * uint64(track.SampleDur)
 	mq := &MoQGroup{
 		id:         uint32(groupNr),
 		startTime:  startTime,
@@ -50,14 +50,14 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 }
 
 func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
-	startTime := nr * uint64(constantDurMS) * uint64(track.timeScale) / 1000
-	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.timeScale) / 1000
-	startNr = startTime / uint64(track.sampleDur)
-	if startTime%uint64(track.sampleDur) != 0 {
+	startTime := nr * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
+	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
+	startNr = startTime / uint64(track.SampleDur)
+	if startTime%uint64(track.SampleDur) != 0 {
 		startNr++
 	}
-	endNr = endTime / uint64(track.sampleDur)
-	if endTime%uint64(track.sampleDur) != 0 {
+	endNr = endTime / uint64(track.SampleDur)
+	if endTime%uint64(track.SampleDur) != 0 {
 		endNr++
 	}
 	return startNr, endNr
@@ -72,13 +72,13 @@ func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uin
 // The MoQGroup is sent in the correct time order and at appropriate times if ongoing session.
 // If the context is done, the function returns the error from the context.
 func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, cb ObjectWriter) error {
-	factorMS := 1000 / float64(track.timeScale)
+	factorMS := 1000 / float64(track.TimeScale)
 	for nr, moqObj := range moq.MoQObjects {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		now := time.Now().UnixMilli()
-		objTimeMS := int64(float64(int64(moq.startTime)+int64(nr+1)*int64(track.sampleDur)) * factorMS)
+		objTimeMS := int64(float64(int64(moq.startTime)+int64(nr+1)*int64(track.SampleDur)) * factorMS)
 		waitTime := objTimeMS - now
 		if waitTime <= 0 {
 			_, err := cb(uint64(nr), moqObj)

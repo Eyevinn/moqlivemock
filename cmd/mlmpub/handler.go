@@ -162,13 +162,13 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 }
 
 func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
-	contentTrack := asset.GetTrackByName(trackName)
-	if contentTrack == nil {
+	ct := asset.GetTrackByName(trackName)
+	if ct == nil {
 		slog.Error("track not found", "track", trackName)
 		return
 	}
 	now := time.Now().UnixMilli()
-	currGroupNr := internal.CurrMoQGroupNr(contentTrack, uint64(now), internal.MoqGroupDurMS)
+	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
 	groupNr := currGroupNr + 1 // Start stream on next group
 	slog.Info("publishing track", "track", trackName, "group", groupNr)
 	for {
@@ -180,9 +180,9 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 			slog.Error("failed to open subgroup", "error", err)
 			return
 		}
-		mg := internal.GenMoQGroup(contentTrack, groupNr, contentTrack.SampleBatch, internal.MoqGroupDurMS)
-		slog.Info("writing MoQ group", "group", groupNr, "objects", len(mg.MoQObjects))
-		err = internal.WriteMoQGroup(ctx, contentTrack, mg, sg.WriteObject)
+		mg := internal.GenMoQGroup(ct, groupNr, ct.SampleBatch, internal.MoqGroupDurMS)
+		slog.Info("writing MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+		err = internal.WriteMoQGroup(ctx, ct, mg, sg.WriteObject)
 		if err != nil {
 			slog.Error("failed to write MoQ group", "error", err)
 			return
@@ -192,7 +192,7 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 			slog.Error("failed to close subgroup", "error", err)
 			return
 		}
-		slog.Info("published MoQ group", "group", groupNr, "objects", len(mg.MoQObjects))
+		slog.Debug("published MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
 		groupNr++
 	}
 }

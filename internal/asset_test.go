@@ -53,13 +53,13 @@ func TestPrepareTrack(t *testing.T) {
 			require.NoError(t, err)
 			ct, err := InitContentTrack(fh, tc.desc, 1, 1)
 			require.NoError(t, err)
-			require.Equal(t, tc.contentType, ct.contentType, "contentType")
-			require.Equal(t, tc.timeScale, int(ct.timeScale), "timeScale")
-			require.Equal(t, tc.duration, int(ct.duration), "duration")
-			require.Equal(t, tc.sampleDur, int(ct.sampleDur), "sampleDur")
-			require.Equal(t, tc.nrSamples, int(ct.nrSamples), "nrSamples")
-			require.Equal(t, tc.gopLength, int(ct.gopLength), "gopLength")
-			require.Equal(t, tc.sampleBitrate, int(ct.sampleBitrate), "sampleBitrate")
+			require.Equal(t, tc.contentType, ct.ContentType, "contentType")
+			require.Equal(t, tc.timeScale, int(ct.TimeScale), "timeScale")
+			require.Equal(t, tc.duration, int(ct.Duration), "duration")
+			require.Equal(t, tc.sampleDur, int(ct.SampleDur), "sampleDur")
+			require.Equal(t, tc.nrSamples, int(ct.NrSamples), "nrSamples")
+			require.Equal(t, tc.gopLength, int(ct.GopLength), "gopLength")
+			require.Equal(t, tc.sampleBitrate, int(ct.SampleBitrate), "sampleBitrate")
 		})
 	}
 }
@@ -70,13 +70,13 @@ func TestLoadAsset(t *testing.T) {
 	require.NotNil(t, asset)
 
 	// Check asset name
-	require.Equal(t, "content", asset.name)
+	require.Equal(t, "content", asset.Name)
 
 	// Collect all tracks by contentType
 	trackCounts := map[string]int{}
-	for _, group := range asset.groups {
-		for _, track := range group.tracks {
-			trackCounts[track.contentType]++
+	for _, group := range asset.Groups {
+		for _, track := range group.Tracks {
+			trackCounts[track.ContentType]++
 		}
 	}
 	// Expect 2 audio and 3 video tracks
@@ -91,21 +91,21 @@ func TestLoadAsset(t *testing.T) {
 		"video_600kbps":           true,
 		"video_900kbps":           true,
 	}
-	for _, group := range asset.groups {
-		for _, track := range group.tracks {
-			_, ok := expectedNames[track.name]
-			require.True(t, ok, "unexpected track name: %s", track.name)
+	for _, group := range asset.Groups {
+		for _, track := range group.Tracks {
+			_, ok := expectedNames[track.Name]
+			require.True(t, ok, "unexpected track name: %s", track.Name)
 		}
 	}
 
 	// Check that video tracks are in bitrate order (ascending)
 	var videoBitrates []int
 	var videoNames []string
-	for _, group := range asset.groups {
-		if len(group.tracks) > 0 && group.tracks[0].contentType == "video" {
-			for _, track := range group.tracks {
-				videoBitrates = append(videoBitrates, int(track.sampleBitrate))
-				videoNames = append(videoNames, track.name)
+	for _, group := range asset.Groups {
+		if len(group.Tracks) > 0 && group.Tracks[0].ContentType == "video" {
+			for _, track := range group.Tracks {
+				videoBitrates = append(videoBitrates, int(track.SampleBitrate))
+				videoNames = append(videoNames, track.Name)
 			}
 		}
 	}
@@ -116,13 +116,13 @@ func TestLoadAsset(t *testing.T) {
 
 	// Check that video group has a lower altGroupID than audio group
 	var videoGroupID, audioGroupID uint32
-	for _, group := range asset.groups {
-		if len(group.tracks) > 0 {
-			switch group.tracks[0].contentType {
+	for _, group := range asset.Groups {
+		if len(group.Tracks) > 0 {
+			switch group.Tracks[0].ContentType {
 			case "video":
-				videoGroupID = group.altGroupID
+				videoGroupID = group.AltGroupID
 			case "audio":
-				audioGroupID = group.altGroupID
+				audioGroupID = group.AltGroupID
 			}
 		}
 	}
@@ -130,10 +130,10 @@ func TestLoadAsset(t *testing.T) {
 		require.Less(t, videoGroupID, audioGroupID,
 			"video group altGroupID should be less than audio group altGroupID")
 	}
-	require.Equal(t, 10000, int(asset.loopDurMS), "loop duration should be 10000ms")
-	for _, group := range asset.groups {
-		for _, track := range group.tracks {
-			require.Equal(t, int(10*track.timeScale), int(track.loopDur),
+	require.Equal(t, 10000, int(asset.LoopDurMS), "loop duration should be 10000ms")
+	for _, group := range asset.Groups {
+		for _, track := range group.Tracks {
+			require.Equal(t, int(10*track.TimeScale), int(track.LoopDur),
 				"loop duration should be 10s in timescale")
 		}
 	}
@@ -167,16 +167,16 @@ func TestGen20sCMAFStreams(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tr := asset.groups[tc.groupIdx].tracks[tc.trackNr]
+			tr := asset.Groups[tc.groupIdx].Tracks[tc.trackNr]
 			outFile := filepath.Join(tmpDir, tc.name+".mp4")
 			ofh, err := os.Create(outFile)
 			require.NoError(t, err)
-			spc := tr.specData
+			spc := tr.SpecData
 			data, err := spc.GenCMAFInitData()
 			require.NoError(t, err)
 			_, err = ofh.Write(data)
 			require.NoError(t, err)
-			nrSamples := int(20 * tr.timeScale / tr.sampleDur)
+			nrSamples := int(20 * tr.TimeScale / tr.SampleDur)
 			groupNr := uint32(0)
 			for nr := 0; nr < nrSamples; nr++ {
 				chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1))
