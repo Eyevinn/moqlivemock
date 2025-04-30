@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Catalog is now based on Github [catalog] of Feb. 28 2025
 
+### Added
+
+- Configuration options for `audiobatch` and `videobatch` to control how many frames should be sent in every MoQ object/CMAF chunk
+
 ## [0.2.0] - 2025-04-28
 
 ### Added

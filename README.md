@@ -1,4 +1,3 @@
-
 # moqlivemock
 
 ![Test](https://github.com/Eyevinn/moqlivemock/workflows/Go/badge.svg)
@@ -19,6 +18,8 @@ but it should be easy to combine a few frames into a chunk
 to lower the packaging overhead. LOC is currently not supported, but
 one possible scenario is to send LOC over the wire and then reassamble
 CMAF on the receiving side again.
+
+You can configure how many frames should be sent in every MoQ object/CMAF chunk using the `-audiobatch` and `-videobatch` options. This allows you to control the packaging overhead by batching multiple frames into a single chunk.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer.
 As the MoQ transport layer is still work in progress, this project is also
@@ -70,6 +71,12 @@ You can also build the binary and then run it
 cd cmd/mlmpub
 go build .
 ./mlmpub
+```
+
+You can also specify options for the publisher:
+
+```shell
+./mlmpub -audiobatch 4 -videobatch 2
 ```
 
 In another shell, start the subscriber and choose if the video, the audio,

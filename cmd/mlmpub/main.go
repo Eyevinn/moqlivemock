@@ -36,12 +36,14 @@ const (
 )
 
 type options struct {
-	certFile string
-	keyFile  string
-	addr     string
-	asset    string
-	qlogfile string
-	version  bool
+	certFile         string
+	keyFile          string
+	addr             string
+	asset            string
+	qlogfile         string
+	audioSampleBatch int
+	videoSampleBatch int
+	version          bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -57,6 +59,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.addr, "addr", "localhost:8080", "listen or connect address")
 	fs.StringVar(&opts.asset, "asset", "../../content", "Asset to serve")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
+	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
+	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -100,10 +104,11 @@ func runServer(opts *options) error {
 			return err
 		}
 	}
-	asset, err := internal.LoadAsset(opts.asset)
+	asset, err := internal.LoadAsset(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch)
 	if err != nil {
 		return err
 	}
+	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch, "videoSampleBatch", opts.videoSampleBatch)
 	catalog, err := asset.GenCMAFCatalogEntry()
 	if err != nil {
 		return err

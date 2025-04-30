@@ -180,7 +180,7 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 			slog.Error("failed to open subgroup", "error", err)
 			return
 		}
-		mg := internal.GenMoQGroup(contentTrack, groupNr, internal.MoqGroupDurMS)
+		mg := internal.GenMoQGroup(contentTrack, groupNr, contentTrack.SampleBatch, internal.MoqGroupDurMS)
 		slog.Info("writing MoQ group", "group", groupNr, "objects", len(mg.MoQObjects))
 		err = internal.WriteMoQGroup(ctx, contentTrack, mg, sg.WriteObject)
 		if err != nil {

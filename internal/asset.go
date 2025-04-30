@@ -28,6 +28,7 @@ type ContentTrack struct {
 	sampleDur     uint32
 	nrSamples     uint32
 	loopDur       uint32 // Loop duration in local timescale
+	SampleBatch   int
 	samples       []mp4.FullSample
 	specData      CodecSpecificData
 }
@@ -62,7 +63,7 @@ func (a *Asset) GetTrackByName(name string) *ContentTrack {
 
 // InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4).
 // The name is stripped of any extension.
-func InitContentTrack(r io.Reader, name string) (*ContentTrack, error) {
+func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBatch int) (*ContentTrack, error) {
 	m, err := mp4.DecodeFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode file: %w", err)
@@ -91,8 +92,10 @@ func InitContentTrack(r io.Reader, name string) (*ContentTrack, error) {
 	switch sampleDesc.Type() {
 	case "avc1", "avc3":
 		ct.contentType = "video"
+		ct.SampleBatch = videoSampleBatch
 	case "mp4a":
 		ct.contentType = "audio"
+		ct.SampleBatch = audioSampleBatch
 	default:
 		return nil, fmt.Errorf("unsupported sample description type: %s", sampleDesc.Type())
 	}
@@ -198,7 +201,7 @@ func InitContentTrack(r io.Reader, name string) (*ContentTrack, error) {
 
 // LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
 // groups them by contentType, and returns a pointer to an Asset.
-func LoadAsset(dirPath string) (*Asset, error) {
+func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read directory: %w", err)
@@ -216,7 +219,7 @@ func LoadAsset(dirPath string) (*Asset, error) {
 		if err != nil {
 			return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 		}
-		ct, err := InitContentTrack(fh, entry.Name())
+		ct, err := InitContentTrack(fh, entry.Name(), audioSampleBatch, videoSampleBatch)
 		fh.Close()
 		if err != nil {
 			return nil, fmt.Errorf("could not create ContentTrack for %s: %w", filePath, err)
@@ -313,7 +316,7 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 			}
 
 			frameRate := float64(ct.timeScale) / float64(ct.sampleDur)
-			cmafBitrate := int(float64(ct.sampleBitrate) + 8*float64(cmafOverheadBytes)*frameRate)
+			cmafBitrate := calcCmafBitrate(ct.sampleBitrate, frameRate, ct.SampleBatch)
 
 			track := Track{
 				Name:        ct.name,
@@ -360,45 +363,41 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 	return cat, nil
 }
 
+func calcCmafBitrate(sampleBitrate uint32, frameRate float64, sampleBatch int) int {
+	objectRate := frameRate / float64(sampleBatch)
+	cmafChunkOverhead := cmafOverheadBytes + (sampleBatch-1)*8
+	return int(float64(sampleBitrate) + 8*float64(cmafChunkOverhead)*objectRate)
+}
+
 // Ptr returns a pointer to any value
 func Ptr[T any](v T) *T {
 	return &v
 }
 
-// GetCMAFChunk returns a raw CMAF chunk consisting of one sample.
+// GenCMAFChunk returns a raw CMAF chunk consisting of endNr-startNr samples.
 // The number is 0-based relative to the UNIX epoch.
 // Therefore nr is translated into data for the time interval
 // [nr*d.sampleDur, (nr+1)*d.sampleDur].
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
-func (t *ContentTrack) GetCMAFChunk(nr uint64) ([]byte, error) {
-	startTime, origNr := t.calcSample(nr)
-	data, err := t.genCMAFChunk(startTime, nr, origNr)
-	if err != nil {
-		return nil, fmt.Errorf("could not generate CMAF chunk: %w", err)
-	}
-	return data, nil
-}
-
-func (t *ContentTrack) genCMAFChunk(startTime uint64, nr uint64, origNr uint64) ([]byte, error) {
-	f, err := mp4.CreateFragment(uint32(nr+1), trackID)
+func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
+	f, err := mp4.CreateFragment(chunkNr, trackID)
 	if err != nil {
 		return nil, err
 	}
-	orig := t.samples[origNr]
-	fs := mp4.FullSample{
-		Sample: mp4.Sample{
-			Flags: orig.Flags,
-			Dur:   uint32(t.sampleDur),
-			Size:  uint32(len(orig.Data)),
-		},
-		DecodeTime: startTime,
-		Data:       orig.Data,
-	}
-	f.AddFullSample(fs)
-	err = f.Moof.Traf.OptimizeTfhdTrun()
-	if err != nil {
-		return nil, err
+	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
+		startTime, origNr := t.calcSample(uint64(sampleNr))
+		orig := t.samples[origNr]
+		fs := mp4.FullSample{
+			Sample: mp4.Sample{
+				Flags: orig.Flags,
+				Dur:   uint32(t.sampleDur),
+				Size:  uint32(len(orig.Data)),
+			},
+			DecodeTime: startTime,
+			Data:       orig.Data,
+		}
+		f.AddFullSample(fs)
 	}
 	f.SetTrunDataOffsets()
 	size := f.Size()
@@ -410,6 +409,7 @@ func (t *ContentTrack) genCMAFChunk(startTime uint64, nr uint64, origNr uint64) 
 	return sw.Bytes(), nil
 }
 
+// calcSample calculates the start time and original sample number for a given output sample number.
 func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 	sampleDur := uint64(t.sampleDur)
 	startTime = nr * uint64(t.sampleDur)
