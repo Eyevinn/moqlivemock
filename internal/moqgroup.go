@@ -25,20 +25,22 @@ type MoQObject []byte
 // GenMoQGroup generates a MoQGroup for a given track and number.
 // The MoQGroup is generated based on the track's sample duration and the
 // constant (average) duration of all MoQGroups for this track.
-func GenMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) *MoQGroup {
-	startNr, endNr := calcMoQGroup(track, nr, constantDurMS)
+func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantDurMS uint32) *MoQGroup {
+	startNr, endNr := calcMoQGroup(track, groupNr, constantDurMS)
 	startTime := startNr * uint64(track.sampleDur)
 	endTime := endNr * uint64(track.sampleDur)
 	mq := &MoQGroup{
-		id:         uint32(nr),
+		id:         uint32(groupNr),
 		startTime:  startTime,
 		endTime:    endTime,
 		startNr:    startNr,
 		endNr:      endNr,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
-	for i := startNr; i < endNr; i++ {
-		chunk, err := track.GetCMAFChunk(i)
+	for i := startNr; i < endNr; i += uint64(sampleBatch) {
+		firstSample := i
+		endSample := min(i+uint64(sampleBatch), endNr)
+		chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample)
 		if err != nil {
 			return nil
 		}

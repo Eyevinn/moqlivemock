@@ -13,7 +13,7 @@ import (
 
 func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	// Use similar setup as in asset_test.go
-	asset, err := LoadAsset("../content") // adjust path if needed
+	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 
@@ -36,7 +36,7 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	const groupDurMS = 1000 // 1 second per MoQGroup
 
 	// Video
-	vg := GenMoQGroup(videoTrack, groupNr, groupDurMS)
+	vg := GenMoQGroup(videoTrack, groupNr, 1, groupDurMS)
 	require.NotNil(t, vg)
 	// startTime and endTime should be aligned to sample duration
 	require.Equal(t, uint64(0), vg.startTime%uint64(videoTrack.sampleDur), "video startTime not aligned")
@@ -47,7 +47,7 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	require.Equal(t, int(vg.endNr-vg.startNr), len(vg.MoQObjects), "video MoQObjects count")
 
 	// Audio
-	ag := GenMoQGroup(audioTrack, groupNr, groupDurMS)
+	ag := GenMoQGroup(audioTrack, groupNr, 1, groupDurMS)
 	require.NotNil(t, ag)
 	require.Equal(t, uint64(0), ag.startTime%uint64(audioTrack.sampleDur), "audio startTime not aligned")
 	require.Equal(t, uint64(0), ag.endTime%uint64(audioTrack.sampleDur), "audio endTime not aligned")
@@ -58,8 +58,8 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 func TestGenMoQStreams(t *testing.T) {
 	// StartNr corresponding to 2025-04-21T17:07:48Z
 	startNr := uint64(1745255189)
-	endNr := startNr + 15                 // 15 MoQGroups à 1s per MoQGroup
-	asset, err := LoadAsset("../content") // adjust path if needed
+	endNr := startNr + 15                       // 15 MoQGroups à 1s per MoQGroup
+	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 	for _, group := range asset.groups {
@@ -79,7 +79,7 @@ func TestGenMoQStreams(t *testing.T) {
 				t.Fatalf("failed to write init data: %v", err)
 			}
 			for nr := startNr; nr < endNr; nr++ {
-				moq := GenMoQGroup(ct, nr, 1000)
+				moq := GenMoQGroup(ct, nr, 1, 1000)
 				if moq == nil {
 					t.Fatalf("failed to generate MoQ group")
 				}
@@ -95,7 +95,7 @@ func TestGenMoQStreams(t *testing.T) {
 }
 
 func TestWriteMoQGroupLive(t *testing.T) {
-	asset, err := LoadAsset("../content") // adjust path if needed
+	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 	name := "video_400kbps"
@@ -123,7 +123,7 @@ func TestWriteMoQGroupLive(t *testing.T) {
 	groupNr := currGroupNr + 1 // Start stream on next group
 	endNr := groupNr + 1       // 1 MoQGroup à 1s per MoQGroup
 	for {
-		mg := GenMoQGroup(ct, groupNr, MoqGroupDurMS)
+		mg := GenMoQGroup(ct, groupNr, 1, MoqGroupDurMS)
 		err := WriteMoQGroup(context.Background(), ct, mg, cb)
 		if err != nil {
 			log.Printf("failed to write MoQ group: %v", err)

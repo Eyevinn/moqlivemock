@@ -51,7 +51,7 @@ func TestPrepareTrack(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			fh, err := os.Open(tc.filePath)
 			require.NoError(t, err)
-			ct, err := InitContentTrack(fh, tc.desc)
+			ct, err := InitContentTrack(fh, tc.desc, 1, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.contentType, ct.contentType, "contentType")
 			require.Equal(t, tc.timeScale, int(ct.timeScale), "timeScale")
@@ -65,7 +65,7 @@ func TestPrepareTrack(t *testing.T) {
 }
 
 func TestLoadAsset(t *testing.T) {
-	asset, err := LoadAsset("../content")
+	asset, err := LoadAsset("../content", 1, 1)
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 
@@ -149,7 +149,7 @@ func TestLoadAsset(t *testing.T) {
 }
 
 func TestGen20sCMAFStreams(t *testing.T) {
-	asset, err := LoadAsset("../content")
+	asset, err := LoadAsset("../content", 1, 1)
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 
@@ -177,8 +177,9 @@ func TestGen20sCMAFStreams(t *testing.T) {
 			_, err = ofh.Write(data)
 			require.NoError(t, err)
 			nrSamples := int(20 * tr.timeScale / tr.sampleDur)
+			groupNr := uint32(0)
 			for nr := 0; nr < nrSamples; nr++ {
-				chunk, err := tr.GetCMAFChunk(uint64(nr))
+				chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1))
 				require.NoError(t, err)
 				_, err = ofh.Write(chunk)
 				require.NoError(t, err)
