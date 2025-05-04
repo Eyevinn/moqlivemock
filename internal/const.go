@@ -1,6 +1,6 @@
 package internal
 
 const (
-	Namespace     = "moqlivemoq"
+	Namespace     = "moqlivemock"
 	MoqGroupDurMS = 1000
 )

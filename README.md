@@ -9,17 +9,15 @@
 moqlivemock is a simple media test service for [MoQ][moq] (Media over QUIC)
 and the [WARP][WARP] streaming format by providing a server which
 publishes an asset with wall-clock synchronized multi-bitrate video and
-audio, as well as a client that can receive these streams and even multiplex
-them for playback with ffplayh like `mlmsub -muxout - | ffplay -`.
+two audio tracks, as well as a client that can receive these streams and even multiplex
+them for playback with ffplay like `mlmsub -muxout - | ffplay -`.
 
 The input media is 10s of video and audio which is then disassembled
-into frames. Each frame is sent as a MoQ object as a CMAF chunk,
-but it should be easy to combine a few frames into a chunk
-to lower the packaging overhead. LOC is currently not supported, but
-one possible scenario is to send LOC over the wire and then reassamble
-CMAF on the receiving side again.
+into frames. One or more frames are then combined into a MoQ object as a CMAF chunk.
+How many frames are combined is configurable via the `-audiobatch` and `-videobatch` options.
 
-You can configure how many frames should be sent in every MoQ object/CMAF chunk using the `-audiobatch` and `-videobatch` options. This allows you to control the packaging overhead by batching multiple frames into a single chunk.
+LOC is currently not supported, but one possible scenario is to send LOC over the wire and
+then reassamble CMAF on the receiving side again.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer.
 As the MoQ transport layer is still work in progress, this project is also
@@ -27,11 +25,10 @@ work in progress.
 
 ## Session setup
 
-The first things that happens after the session establishmend
-is that the namespace is announced by the server.
-The client will subscribe for a WARP catalog.
-Once it has the catalog, it will subscribe to the first
-video and audio track from the catalog.
+The first things that happens after the session establishment is that the namespace is
+announced by the server. The client next subscribes to the WARP catalog.
+Once it has the catalog, it subscribes to the first video and audio track from the catalog
+or tracks that match the `-videoname` and `-audioname` options.
 
 It should later be possible to switch bitrate by unsubscribing to one
 track and subscribing to another, with no repeated or lost frames.
