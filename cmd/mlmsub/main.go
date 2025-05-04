@@ -63,7 +63,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	}
 
 	opts := options{}
-	fs.StringVar(&opts.addr, "addr", "localhost:8080", "listen or connect address")
+	fs.StringVar(&opts.addr, "addr", "localhost:8080", "connect address")
 	fs.BoolVar(&opts.webtransport, "webtransport", false, "Use webtransport instead of QUIC (client only)")
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))

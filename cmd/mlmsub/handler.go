@@ -79,7 +79,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
+	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 0)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
 		Handler: h.getHandler(),
