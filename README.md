@@ -98,8 +98,22 @@ There are more options to change the loglevel, choose track etc.
 The subscriber will connect to the publisher and start receiving
 video and audio frames if some tracks are selected.
 
-There is currently no working unsubscribe mechanism, so the closing of the
-subscribed tracks is not clean.
+### WARP browser player
+
+The browser player [warp-player][warp-player] has been created to match the
+mlmpub publisher. It will subscribe to and read a catalog.
+One can then choose video and audio tracks and start playing synchronized
+video and audio.
+
+For that to work, one typically need better certificates.
+
+One way to do that is with mkcert
+
+```sh
+> mkcert -key-file key.pem -cert-file cert.pem localhost 127.0.0.1 ::1
+> mkcert -install
+> go run . -cert cert.pem -key key.pem -addr locahost:4443
+```
 
 
 ## Development
@@ -135,3 +149,4 @@ Want to know more about Eyevinn and how it is to work here. Contact us at work@e
 [moq]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 [WARP]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-warp-00
 [moqtransport]: https://github.com/mengelbart/moqtransport
+[warp-player]: https://github.com/Eyevinn/warp-player

@@ -46,6 +46,9 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 			Addr:      h.addr,
 			TLSConfig: h.tlsConfig,
 		},
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
 	}
 	http.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
 		session, err := wt.Upgrade(w, r)
