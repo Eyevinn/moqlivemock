@@ -1,0 +1,39 @@
+[Unit]
+Description=MoqLiveMock Media over QUIC Publisher Service
+Documentation=https://github.com/Eyevinn/moqlivemock
+After=network.target
+
+[Service]
+Type=simple
+User=moqlivemock
+Group=moqlivemock
+
+# Binary location
+ExecStart=/usr/local/bin/mlmpub -addr ${MLMPUB_ADDR} -cert ${MLMPUB_CERT} -key ${MLMPUB_KEY}
+
+# Environment variables
+Environment="MLMPUB_ADDR=localhost:4443"
+Environment="MLMPUB_CERT=/etc/moqlivemock/cert.pem"
+Environment="MLMPUB_KEY=/etc/moqlivemock/key.pem"
+
+# Optional: Override with environment file
+EnvironmentFile=-/etc/moqlivemock/moqlivemock.env
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/moqlivemock
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=moqlivemock
+
+[Install]
+WantedBy=multi-user.target
