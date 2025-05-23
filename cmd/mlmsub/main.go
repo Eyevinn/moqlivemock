@@ -31,9 +31,9 @@ var usg = `%s acts as a MoQ client and subscriber for WARP.
 Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
 one audio track and subscribe to these.
 
-When receiving the media, it can write out to concatenaded CMAF tracks but also multiplex
+When receiving the media, it can write out to concatenated CMAF tracks but also multiplex
 the tracks into a single CMAF file. By muxing the tracks and choosing muxout to "-" (stdout),
-one can pipe the stream to ffplay get synchronized playback of video and audio.
+it is possible to pipe the stream to ffplay get synchronized playback of video and audio.
 
 mlmsub -muxout - | ffplay - 
 
@@ -41,18 +41,17 @@ Usage of %s:
 `
 
 type options struct {
-	addr         string
-	webtransport bool
-	trackname    string
-	duration     int
-	muxout       string
-	videoOut     string
-	audioOut     string
-	qlogfile     string
-	videoname    string
-	audioname    string
-	loglevel     string
-	version      bool
+	addr      string
+	trackname string
+	duration  int
+	muxout    string
+	videoOut  string
+	audioOut  string
+	qlogfile  string
+	videoname string
+	audioname string
+	loglevel  string
+	version   bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -63,8 +62,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	}
 
 	opts := options{}
-	fs.StringVar(&opts.addr, "addr", "localhost:8080", "connect address")
-	fs.BoolVar(&opts.webtransport, "webtransport", false, "Use webtransport instead of QUIC (client only)")
+	fs.StringVar(&opts.addr, "addr", "localhost:8080", "connect address (use https:// for WebTransport)")
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
@@ -72,8 +70,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
-	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track")
-	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track")
+	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track (default use first)")
+	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track (default use first)")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 
 	err := fs.Parse(args[1:])
@@ -157,8 +155,12 @@ func runClient(ctx context.Context, opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
+
+	// Automatically use WebTransport if address starts with https://
+	useWebTransport := strings.HasPrefix(opts.addr, "https://")
+
 	h := &moqHandler{
-		quic:      !opts.webtransport,
+		quic:      !useWebTransport,
 		addr:      opts.addr,
 		namespace: []string{internal.Namespace},
 		logfh:     logfh,
@@ -190,7 +192,7 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	return h.runClient(ctx, opts.webtransport, outs)
+	return h.runClient(ctx, useWebTransport, outs)
 }
 
 func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
