@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configuration options for `audiobatch` and `videobatch` to control how many frames should be sent in every MoQ object/CMAF chunk
 - systemd service script and helpers for mlmpub
 - fingerprint endpoint of mlmpub to be used with WebTransport browser clients like [warp-player[wp]
+- Certificate validation and auto-generation for WebTransport-compatible certificates (ECDSA, 14-day validity)
 
 ## [0.2.0] - 2025-04-28
 
