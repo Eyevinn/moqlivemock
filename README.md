@@ -107,13 +107,29 @@ video and audio.
 
 For that to work, one typically need better certificates.
 
-One way to do that is with mkcert
+#### Using mkcert (recommended for development)
+
+One way to do that is with mkcert:
 
 ```sh
 > mkcert -key-file key.pem -cert-file cert.pem localhost 127.0.0.1 ::1
 > mkcert -install
-> go run . -cert cert.pem -key key.pem -addr locahost:4443
+> go run . -cert cert.pem -key key.pem -addr localhost:4443
 ```
+
+#### Using certificate fingerprint
+
+Alternatively, you can use the certificate fingerprint feature for self-signed certificates without installing them in the browser:
+
+```sh
+> go run . -cert cert.pem -key key.pem -addr 0.0.0.0:4443 -fingerprintport 8081
+```
+
+This will:
+- Start the MoQ server on port 4443 (listening on all interfaces)
+- Start an HTTP server on port 8081 that serves the certificate's SHA-256 fingerprint
+
+The warp-player can then connect using the fingerprint URL to authenticate the self-signed certificate. Use `-fingerprintport 0` to disable the fingerprint server.
 
 
 ## Development

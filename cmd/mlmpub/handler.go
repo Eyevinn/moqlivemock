@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,15 +29,21 @@ const (
 )
 
 type moqHandler struct {
-	addr      string
-	tlsConfig *tls.Config
-	namespace []string
-	asset     *internal.Asset
-	catalog   *internal.Catalog
-	logfh     io.Writer
+	addr            string
+	tlsConfig       *tls.Config
+	namespace       []string
+	asset           *internal.Asset
+	catalog         *internal.Catalog
+	logfh           io.Writer
+	fingerprintPort int
 }
 
 func (h *moqHandler) runServer(ctx context.Context) error {
+	// Start HTTP server for fingerprint if port is specified
+	if h.fingerprintPort > 0 {
+		go h.startFingerprintServer()
+	}
+
 	listener, err := quic.ListenAddr(h.addr, h.tlsConfig, &quic.Config{
 		EnableDatagrams: true,
 	})
@@ -71,6 +80,59 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 			go h.handle(quicmoq.NewServer(conn))
 		}
 	}
+}
+
+func (h *moqHandler) startFingerprintServer() {
+	fingerprint := h.getCertificateFingerprint()
+	if fingerprint == "" {
+		slog.Error("failed to get certificate fingerprint")
+		return
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fingerprint", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+		
+		// Handle preflight OPTIONS request
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		fmt.Fprint(w, fingerprint)
+		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
+	})
+
+	addr := fmt.Sprintf(":%d", h.fingerprintPort)
+	slog.Info("Starting fingerprint HTTP server", "addr", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		slog.Error("fingerprint server failed", "error", err)
+	}
+}
+
+func (h *moqHandler) getCertificateFingerprint() string {
+	if len(h.tlsConfig.Certificates) == 0 {
+		return ""
+	}
+
+	cert := h.tlsConfig.Certificates[0]
+	if len(cert.Certificate) == 0 {
+		return ""
+	}
+
+	// Parse the certificate
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		slog.Error("failed to parse certificate", "error", err)
+		return ""
+	}
+
+	// Calculate SHA-256 fingerprint
+	fingerprint := sha256.Sum256(x509Cert.Raw)
+	return hex.EncodeToString(fingerprint[:])
 }
 
 func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {

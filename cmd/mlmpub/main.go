@@ -43,6 +43,7 @@ type options struct {
 	qlogfile         string
 	audioSampleBatch int
 	videoSampleBatch int
+	fingerprintPort  int
 	version          bool
 }
 
@@ -61,6 +62,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
+	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 8081, "Port for HTTP fingerprint server (0 to disable)")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -127,12 +129,13 @@ func runServer(opts *options) error {
 		defer fh.Close()
 	}
 	h := &moqHandler{
-		addr:      opts.addr,
-		tlsConfig: tlsConfig,
-		namespace: []string{internal.Namespace},
-		asset:     asset,
-		catalog:   catalog,
-		logfh:     logfh,
+		addr:            opts.addr,
+		tlsConfig:       tlsConfig,
+		namespace:       []string{internal.Namespace},
+		asset:           asset,
+		catalog:         catalog,
+		logfh:           logfh,
+		fingerprintPort: opts.fingerprintPort,
 	}
 
 	return h.runServer(context.TODO())
