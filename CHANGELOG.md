@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Configuration options for `audiobatch` and `videobatch` to control how many frames should be sent in every MoQ object/CMAF chunk
 - systemd service script and helpers for mlmpub
+- fingerprint endpoint of mlmpub to be used with WebTransport browser clients like [warp-player[wp]
 
 ## [0.2.0] - 2025-04-28
 
@@ -53,3 +54,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqtransport]: https://github.com/mengelbart/moqtransport
+[wp]: https://github.com/Eyevinn/warp-player
