@@ -83,6 +83,12 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 }
 
 func (h *moqHandler) startFingerprintServer() {
+	// Validate certificate for WebTransport requirements
+	if err := h.validateCertificateForWebTransport(); err != nil {
+		slog.Warn("Certificate does not meet WebTransport fingerprint requirements", "error", err)
+		slog.Warn("Fingerprint server may not work properly with WebTransport")
+	}
+
 	fingerprint := h.getCertificateFingerprint()
 	if fingerprint == "" {
 		slog.Error("failed to get certificate fingerprint")
@@ -133,6 +139,50 @@ func (h *moqHandler) getCertificateFingerprint() string {
 	// Calculate SHA-256 fingerprint
 	fingerprint := sha256.Sum256(x509Cert.Raw)
 	return hex.EncodeToString(fingerprint[:])
+}
+
+func (h *moqHandler) validateCertificateForWebTransport() error {
+	if len(h.tlsConfig.Certificates) == 0 {
+		return fmt.Errorf("no certificates found")
+	}
+
+	cert := h.tlsConfig.Certificates[0]
+	if len(cert.Certificate) == 0 {
+		return fmt.Errorf("certificate is empty")
+	}
+
+	// Parse the certificate
+	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	// Check 1: Must be self-signed (issuer == subject)
+	if x509Cert.Issuer.String() != x509Cert.Subject.String() {
+		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)", 
+			x509Cert.Issuer.String(), x509Cert.Subject.String())
+	}
+
+	// Check 2: Must use ECDSA algorithm
+	if x509Cert.PublicKeyAlgorithm != x509.ECDSA {
+		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s", 
+			x509Cert.PublicKeyAlgorithm.String())
+	}
+
+	// Check 3: Must be valid for 14 days or less
+	validityDuration := x509Cert.NotAfter.Sub(x509Cert.NotBefore)
+	maxDuration := 14 * 24 * time.Hour
+	if validityDuration > maxDuration {
+		validityDays := validityDuration.Hours() / 24
+		return fmt.Errorf("certificate validity exceeds 14 days (valid for %.1f days)", validityDays)
+	}
+
+	slog.Info("Certificate meets WebTransport fingerprint requirements",
+		"algorithm", x509Cert.PublicKeyAlgorithm.String(),
+		"validity_days", validityDuration.Hours()/24,
+		"self_signed", true)
+
+	return nil
 }
 
 func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {

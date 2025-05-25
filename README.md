@@ -114,22 +114,42 @@ One way to do that is with mkcert:
 ```sh
 > mkcert -key-file key.pem -cert-file cert.pem localhost 127.0.0.1 ::1
 > mkcert -install
-> go run . -cert cert.pem -key key.pem -addr localhost:4443
+> go run . -cert cert.pem -key key.pem
 ```
 
 #### Using certificate fingerprint
 
-Alternatively, you can use the certificate fingerprint feature for self-signed certificates without installing them in the browser:
+For browsers that support WebTransport certificate fingerprints (e.g., Chrome), you can use self-signed certificates without installing them:
 
+**Run mlmpub with fingerprint support**:
 ```sh
-> go run . -cert cert.pem -key key.pem -addr 0.0.0.0:4443 -fingerprintport 8081
+> go run . -fingerprintport 8081
+```
+
+This will automatically generate a WebTransport-compatible certificate with:
+- ECDSA algorithm (not RSA)
+- 14-day validity (WebTransport maximum)
+- Self-signed
+
+Alternatively, you can use your own certificate (e.g., generated with the included `generate-webtransport-cert.sh` script):
+```sh
+cd cmd/mlmpub
+./generate-webtransport-cert.sh
+go run . -cert cert-fp.pem -key key-fp.pem -fingerprintport 8081
 ```
 
 This will:
-- Start the MoQ server on port 4443 (listening on all interfaces)
+- Start the MoQ server on port 4443 (default address is `0.0.0.0:4443`, listening on all interfaces)
 - Start an HTTP server on port 8081 that serves the certificate's SHA-256 fingerprint
+- Validate that the certificate meets WebTransport requirements
 
-The warp-player can then connect using the fingerprint URL to authenticate the self-signed certificate. Use `-fingerprintport 0` to disable the fingerprint server.
+The warp-player (fingerprint branch) can then connect using:
+- Server URL: `https://localhost:4443/moq` or `https://127.0.0.1:4443/moq`
+- Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
+
+**Notes**: 
+- The fingerprint server is disabled by default (`-fingerprintport 0`). Only enable it when using certificates that meet WebTransport's strict requirements.
+- If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 
 
 ## Development
