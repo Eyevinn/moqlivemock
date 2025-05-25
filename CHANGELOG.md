@@ -10,10 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Catalog is now based on Github [catalog] of Feb. 28 2025
+- Now follows [draft-11 of MoQ Transport][moqt-d11] via [moqtransport][moqtransport] update
+- mlmsub now autodetects webtransport from `-addr` argument starting with https://
 
 ### Added
 
 - Configuration options for `audiobatch` and `videobatch` to control how many frames should be sent in every MoQ object/CMAF chunk
+- systemd service script and helpers for mlmpub
 
 ## [0.2.0] - 2025-04-28
 
@@ -48,3 +51,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.0]: https://github.com/Eyevinn/mp2ts-tools/releases/tag/v0.1.0
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
+[moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
+[moqtransport]: https://github.com/mengelbart/moqtransport
