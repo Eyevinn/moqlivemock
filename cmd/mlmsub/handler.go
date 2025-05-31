@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
+	"github.com/tobbee/moqtransport"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 )
@@ -79,7 +79,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 0)
+	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
 		Handler: h.getHandler(),

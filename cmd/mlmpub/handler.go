@@ -11,12 +11,13 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
-	"github.com/mengelbart/moqtransport/quicmoq"
-	"github.com/mengelbart/moqtransport/webtransportmoq"
+	"github.com/tobbee/moqtransport"
+	"github.com/tobbee/moqtransport/quicmoq"
+	"github.com/tobbee/moqtransport/webtransportmoq"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 	"github.com/quic-go/quic-go"
@@ -28,6 +29,16 @@ const (
 	mediaPriority = 128
 )
 
+// activeSubscription tracks a subscription's current state including priority
+type activeSubscription struct {
+	requestID  uint64
+	trackAlias uint64
+	trackName  string
+	priority   uint8
+	publisher  moqtransport.Publisher
+	cancelFunc context.CancelFunc
+}
+
 type moqHandler struct {
 	addr            string
 	tlsConfig       *tls.Config
@@ -36,6 +47,13 @@ type moqHandler struct {
 	catalog         *internal.Catalog
 	logfh           io.Writer
 	fingerprintPort int
+}
+
+// sessionHandler handles a single session's subscriptions
+type sessionHandler struct {
+	parent        *moqHandler
+	subscriptions map[uint64]*activeSubscription
+	subMutex      sync.RWMutex
 }
 
 func (h *moqHandler) runServer(ctx context.Context) error {
@@ -101,13 +119,13 @@ func (h *moqHandler) startFingerprintServer() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
-		
+
 		// Handle preflight OPTIONS request
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		fmt.Fprint(w, fingerprint)
 		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
 	})
@@ -159,13 +177,13 @@ func (h *moqHandler) validateCertificateForWebTransport() error {
 
 	// Check 1: Must be self-signed (issuer == subject)
 	if x509Cert.Issuer.String() != x509Cert.Subject.String() {
-		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)", 
+		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)",
 			x509Cert.Issuer.String(), x509Cert.Subject.String())
 	}
 
 	// Check 2: Must use ECDSA algorithm
 	if x509Cert.PublicKeyAlgorithm != x509.ECDSA {
-		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s", 
+		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s",
 			x509Cert.PublicKeyAlgorithm.String())
 	}
 
@@ -192,7 +210,7 @@ func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
 	}
 }
 
-func (h *moqHandler) getHandler() moqtransport.Handler {
+func (sh *sessionHandler) getHandler() moqtransport.Handler {
 	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
 		switch r.Method {
 		case moqtransport.MessageAnnounce:
@@ -203,10 +221,10 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 			}
 			return
 		case moqtransport.MessageSubscribe:
-			if !tupleEqual(r.Namespace, h.namespace) {
+			if !tupleEqual(r.Namespace, sh.parent.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", r.Namespace,
-					"expected", h.namespace)
+					"expected", sh.parent.namespace)
 				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
 				if err != nil {
 					slog.Error("failed to reject subscription", "error", err)
@@ -228,7 +246,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 					slog.Error("failed to open subgroup", "error", err)
 					return
 				}
-				json, err := json.Marshal(h.catalog)
+				json, err := json.Marshal(sh.parent.catalog)
 				if err != nil {
 					slog.Error("failed to marshal catalog", "error", err)
 					return
@@ -245,7 +263,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				}
 				return
 			}
-			for _, track := range h.catalog.Tracks {
+			for _, track := range sh.parent.catalog.Tracks {
 				if r.Track == track.Name {
 					err := w.Accept()
 					if err != nil {
@@ -255,9 +273,28 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 					publisher, ok := w.(moqtransport.Publisher)
 					if !ok {
 						slog.Error("subscription response writer does not implement publisher")
+						return
 					}
-					slog.Info("got subscription", "track", track.Name)
-					go publishTrack(context.TODO(), publisher, h.asset, track.Name)
+
+					// Create a cancellable context for this subscription
+					ctx, cancel := context.WithCancel(context.Background())
+
+					// Track the subscription
+					sub := &activeSubscription{
+						requestID:  r.RequestID,
+						trackAlias: r.TrackAlias,
+						trackName:  track.Name,
+						priority:   128, // Default priority
+						publisher:  publisher,
+						cancelFunc: cancel,
+					}
+
+					sh.subMutex.Lock()
+					sh.subscriptions[r.RequestID] = sub
+					sh.subMutex.Unlock()
+
+					slog.Info("got subscription", "track", track.Name, "requestID", r.RequestID)
+					go sh.publishTrack(ctx, sub)
 					return
 				}
 			}
@@ -266,45 +303,91 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 			if err != nil {
 				slog.Error("failed to reject subscription", "error", err)
 			}
+		case moqtransport.MessageSubscribeUpdate:
+			// Handle priority updates for existing subscriptions
+			sh.subMutex.Lock()
+			sub, exists := sh.subscriptions[r.RequestID]
+			if exists {
+				oldPriority := sub.priority
+				sub.priority = r.SubscriberPriority
+				slog.Info("updated subscription priority",
+					"requestID", r.RequestID,
+					"trackAlias", r.TrackAlias,
+					"oldPriority", oldPriority,
+					"newPriority", r.SubscriberPriority,
+					"forward", r.Forward)
+			} else {
+				slog.Warn("subscribe update for unknown request ID",
+					"requestID", r.RequestID)
+			}
+			sh.subMutex.Unlock()
+
+			// SUBSCRIBE_UPDATE doesn't need a response according to the spec
+			// The new priority will be used for future groups in publishTrack
+
 			// case moqtransport.MessageUnsubscribe:
 			// Need to handle unsubscribe
 			// For nice switching, it should be possible to unsubscrit to one video track
 			// and subscribe to another, and the publisher should go on until the end
 			// of the current MoQ group, and start the new track on the next MoQ group.
 			// This is not currently implemented.
+			// Using SubscribeUpdate with endGroups should hepl.
 		}
 	})
 }
 
-func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
-	ct := asset.GetTrackByName(trackName)
+// publishTrack publishes a track with dynamic priority updates
+func (sh *sessionHandler) publishTrack(ctx context.Context, sub *activeSubscription) {
+	ct := sh.parent.asset.GetTrackByName(sub.trackName)
 	if ct == nil {
-		slog.Error("track not found", "track", trackName)
+		slog.Error("track not found", "track", sub.trackName)
 		return
 	}
 	now := time.Now().UnixMilli()
 	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
 	groupNr := currGroupNr + 1 // Start stream on next group
-	slog.Info("publishing track", "track", trackName, "group", groupNr)
+	slog.Info("publishing track", "track", sub.trackName, "group", groupNr, "priority", sub.priority)
 	for {
 		if ctx.Err() != nil {
+			// Clean up subscription on exit
+			sh.subMutex.Lock()
+			delete(sh.subscriptions, sub.requestID)
+			sh.subMutex.Unlock()
 			return
 		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, mediaPriority)
+
+		// Get current priority for this group
+		sh.subMutex.RLock()
+		currentPriority := sub.priority
+		sh.subMutex.RUnlock()
+
+		sg, err := sub.publisher.OpenSubgroup(groupNr, 0, currentPriority)
 		if err != nil {
 			slog.Error("failed to open subgroup", "error", err)
+			// Clean up subscription on error
+			sh.subMutex.Lock()
+			delete(sh.subscriptions, sub.requestID)
+			sh.subMutex.Unlock()
 			return
 		}
 		mg := internal.GenMoQGroup(ct, groupNr, ct.SampleBatch, internal.MoqGroupDurMS)
-		slog.Info("writing MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+		slog.Info("writing MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects), "priority", currentPriority)
 		err = internal.WriteMoQGroup(ctx, ct, mg, sg.WriteObject)
 		if err != nil {
 			slog.Error("failed to write MoQ group", "error", err)
+			// Clean up subscription on error
+			sh.subMutex.Lock()
+			delete(sh.subscriptions, sub.requestID)
+			sh.subMutex.Unlock()
 			return
 		}
 		err = sg.Close()
 		if err != nil {
 			slog.Error("failed to close subgroup", "error", err)
+			// Clean up subscription on error
+			sh.subMutex.Lock()
+			delete(sh.subscriptions, sub.requestID)
+			sh.subMutex.Unlock()
 			return
 		}
 		slog.Debug("published MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
@@ -313,11 +396,17 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 }
 
 func (h *moqHandler) handle(conn moqtransport.Connection) {
+	// Create a session-specific handler
+	sh := &sessionHandler{
+		parent:        h,
+		subscriptions: make(map[uint64]*activeSubscription),
+	}
+
 	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
-		Handler: h.getHandler(),
-		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+		Handler: sh.getHandler(),
+		Qlogger: qlog.NewQLOGHandler(sh.parent.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 		Session: session,
 	}
 	err := transport.Run()
@@ -329,8 +418,8 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		}
 		return
 	}
-	if err := session.Announce(context.Background(), h.namespace); err != nil {
-		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
+	if err := session.Announce(context.Background(), sh.parent.namespace); err != nil {
+		slog.Error("failed to announce namespace", "namespace", sh.parent.namespace, "error", err)
 		return
 	}
 }

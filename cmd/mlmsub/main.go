@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
-	"github.com/mengelbart/moqtransport/quicmoq"
-	"github.com/mengelbart/moqtransport/webtransportmoq"
+	"github.com/tobbee/moqtransport"
+	"github.com/tobbee/moqtransport/quicmoq"
+	"github.com/tobbee/moqtransport/webtransportmoq"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/webtransport-go"
 )
