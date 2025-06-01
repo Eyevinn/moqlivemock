@@ -8,14 +8,14 @@ This directory contains the systemd service file for running mlmpub as a system 
    - `MLMPUB_ADDR` - Server address (defaults to `localhost:4443`)
    - `MLMPUB_CERT` - Certificate file path (defaults to `/etc/moqlivemock/cert.pem`)
    - `MLMPUB_KEY` - Key file path (defaults to `/etc/moqlivemock/key.pem`)
-   - `MLMPUB_ASSET` - Asset/content directory path (defaults to `/var/moqlivemock/content`)
+   - `MLMPUB_ASSET` - Asset/content directory path (defaults to `/var/moqlivemock/assets/test10s`)
 
 2. **Environment file support** - You can override settings by creating `/etc/moqlivemock/moqlivemock.env`:
    ```bash
    MLMPUB_ADDR=0.0.0.0:4443
    MLMPUB_CERT=/path/to/custom/cert.pem
    MLMPUB_KEY=/path/to/custom/key.pem
-   MLMPUB_ASSET=/path/to/custom/content
+   MLMPUB_ASSET=/path/to/custom/assets/test10s
    ```
 
 3. **Security hardening** with restricted privileges and filesystem access
@@ -40,17 +40,17 @@ This directory contains the systemd service file for running mlmpub as a system 
    ```bash
    sudo mkdir -p /etc/moqlivemock
    sudo mkdir -p /var/log/moqlivemock
-   sudo mkdir -p /var/moqlivemock/content
+   sudo mkdir -p /var/moqlivemock/assets/test10s
    sudo chown moqlivemock:moqlivemock /var/log/moqlivemock
-   sudo chown moqlivemock:moqlivemock /var/moqlivemock/content
+   sudo chown -R moqlivemock:moqlivemock /var/moqlivemock/assets
    ```
 
 4. Copy your content files to the asset directory:
    ```bash
-   # Copy the media files from the moqlivemock/content directory
+   # Copy the media files from the moqlivemock/assets/test10s directory
    # This includes the video (400/600/900 kbps) and audio (monotonic/scale) test files
-   sudo cp -r ../content/* /var/moqlivemock/content/
-   sudo chown -R moqlivemock:moqlivemock /var/moqlivemock/content
+   sudo cp -r ../assets/test10s/* /var/moqlivemock/assets/test10s/
+   sudo chown -R moqlivemock:moqlivemock /var/moqlivemock/assets
    ```
 
 5. Copy your certificates to the configuration directory:

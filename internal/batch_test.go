@@ -63,28 +63,28 @@ func TestInitContentTrackWithBatch(t *testing.T) {
 	}{
 		{
 			desc:             "video_400kbps_batch_1",
-			filePath:         "../content/video_400kbps.mp4",
+			filePath:         "../assets/test10s/video_400kbps.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 1,
 			expectedBatch:    1,
 		},
 		{
 			desc:             "video_400kbps_batch_3",
-			filePath:         "../content/video_400kbps.mp4",
+			filePath:         "../assets/test10s/video_400kbps.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 3,
 			expectedBatch:    3,
 		},
 		{
 			desc:             "audio_128kbps_batch_2",
-			filePath:         "../content/audio_monotonic_128kbps.mp4",
+			filePath:         "../assets/test10s/audio_monotonic_128kbps.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 3,
 			expectedBatch:    2,
 		},
 		{
 			desc:             "audio_128kbps_batch_4",
-			filePath:         "../content/audio_monotonic_128kbps.mp4",
+			filePath:         "../assets/test10s/audio_monotonic_128kbps.mp4",
 			audioSampleBatch: 4,
 			videoSampleBatch: 1,
 			expectedBatch:    4,
@@ -129,7 +129,7 @@ func TestLoadAssetWithBatch(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			asset, err := LoadAsset("../content", tc.audioSampleBatch, tc.videoSampleBatch)
+			asset, err := LoadAsset("../assets/test10s", tc.audioSampleBatch, tc.videoSampleBatch)
 			require.NoError(t, err)
 			require.NotNil(t, asset)
 
@@ -210,7 +210,7 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.desc, func(t *testing.T) {
-			asset, err := LoadAsset("../content", tc.audioSampleBatch, tc.videoSampleBatch)
+			asset, err := LoadAsset("../assets/test10s", tc.audioSampleBatch, tc.videoSampleBatch)
 			require.NoError(t, err)
 			require.NotNil(t, asset)
 
