@@ -64,7 +64,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.certFile, "cert", "cert.pem", "TLS certificate file (only used for server)")
 	fs.StringVar(&opts.keyFile, "key", "key.pem", "TLS key file (only used for server)")
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen or connect address")
-	fs.StringVar(&opts.asset, "asset", "../../content", "Asset to serve")
+	fs.StringVar(&opts.asset, "asset", "../../assets/test10s", "Asset to serve")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")

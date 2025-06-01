@@ -24,7 +24,7 @@ func TestPrepareTrack(t *testing.T) {
 	}{
 		{
 			desc:          "video_400kbps",
-			filePath:      "../content/video_400kbps.mp4",
+			filePath:      "../assets/test10s/video_400kbps.mp4",
 			contentType:   "video",
 			timeScale:     12800,
 			duration:      128000,
@@ -35,7 +35,7 @@ func TestPrepareTrack(t *testing.T) {
 		},
 		{
 			desc:          "audio_128kbps",
-			filePath:      "../content/audio_monotonic_128kbps.mp4",
+			filePath:      "../assets/test10s/audio_monotonic_128kbps.mp4",
 			contentType:   "audio",
 			timeScale:     48000,
 			duration:      469 * 1024,
@@ -65,12 +65,12 @@ func TestPrepareTrack(t *testing.T) {
 }
 
 func TestLoadAsset(t *testing.T) {
-	asset, err := LoadAsset("../content", 1, 1)
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 
 	// Check asset name
-	require.Equal(t, "content", asset.Name)
+	require.Equal(t, "test10s", asset.Name)
 
 	// Collect all tracks by contentType
 	trackCounts := map[string]int{}
@@ -149,7 +149,7 @@ func TestLoadAsset(t *testing.T) {
 }
 
 func TestGen20sCMAFStreams(t *testing.T) {
-	asset, err := LoadAsset("../content", 1, 1)
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 

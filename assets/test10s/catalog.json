@@ -4,7 +4,7 @@
   "tracks": [
     {
       "name": "video_4mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "moqlivemock/test10s",
       "packaging": "cmaf",
       "renderGroup": 1,
       "label": "High Quality Video",
@@ -17,7 +17,7 @@
     },
     {
       "name": "video_2mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "moqlivemock/test10s",
       "packaging": "cmaf",
       "renderGroup": 1,
       "label": "Medium Quality Video",
@@ -30,7 +30,7 @@
     },
     {
       "name": "video_1mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "moqlivemock/test10s",
       "packaging": "cmaf",
       "renderGroup": 1,
       "label": "Low Quality Video",
@@ -43,7 +43,7 @@
     },
     {
       "name": "audio_128kbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "moqlivemock/test10s",
       "packaging": "cmaf",
       "renderGroup": 1,
       "label": "Stereo Audio",

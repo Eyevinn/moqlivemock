@@ -52,7 +52,7 @@ There are two commands
 * `mlmpub` is the server and publisher
 * `mlmsub` is the client and subscriber
 
-The content used is in the `content` directory, and was
+The content used is in the `assets/test10s` directory, and was
 generate using the code in `utils/videogen`.
 
 To run the system, first start the publisher

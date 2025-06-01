@@ -15,7 +15,7 @@ ExecStart=/usr/local/bin/mlmpub -asset ${MLMPUB_ASSET} -addr ${MLMPUB_ADDR} -cer
 Environment="MLMPUB_ADDR=0.0.0.0:443"
 Environment="MLMPUB_CERT=/etc/moqlivemock/cert.pem"
 Environment="MLMPUB_KEY=/etc/moqlivemock/key.pem"
-Environment="MLMPUB_ASSET=/var/moqlivemock/content"
+Environment="MLMPUB_ASSET=/var/moqlivemock/assets/test10s"
 
 # Optional: Override with environment file
 EnvironmentFile=-/etc/moqlivemock/moqlivemock.env

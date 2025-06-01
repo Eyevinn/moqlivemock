@@ -13,7 +13,7 @@ import (
 
 func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	// Use similar setup as in asset_test.go
-	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
+	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 
@@ -59,7 +59,7 @@ func TestGenMoQStreams(t *testing.T) {
 	// StartNr corresponding to 2025-04-21T17:07:48Z
 	startNr := uint64(1745255189)
 	endNr := startNr + 15                       // 15 MoQGroups à 1s per MoQGroup
-	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
+	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 	for _, group := range asset.Groups {
@@ -95,7 +95,7 @@ func TestGenMoQStreams(t *testing.T) {
 }
 
 func TestWriteMoQGroupLive(t *testing.T) {
-	asset, err := LoadAsset("../content", 1, 1) // adjust path if needed
+	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
 	name := "video_400kbps"
