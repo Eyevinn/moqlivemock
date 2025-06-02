@@ -4,7 +4,7 @@ go 1.23.6
 
 require (
 	github.com/Eyevinn/mp4ff v0.48.0
-	github.com/mengelbart/moqtransport v0.3.1-0.20250505084632-4b917d14281c
+	github.com/mengelbart/moqtransport v0.3.1-0.20250602103256-a67bb792b05a
 	github.com/mengelbart/qlog v0.1.0
 	github.com/quic-go/quic-go v0.50.1
 	github.com/quic-go/webtransport-go v0.8.1-0.20241018022711-4ac2c9250e66
