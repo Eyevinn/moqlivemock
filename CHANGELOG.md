@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Nothing yet
+### Fixes
+
+- RequestID setting in mlmsub (#19)
+- MaxRequestID from server in mlmsub
 
 ## [0.3.0] - 2025-05-25
 
