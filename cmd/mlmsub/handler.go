@@ -16,6 +16,10 @@ import (
 	"github.com/mengelbart/qlog/moqt"
 )
 
+const (
+	initialMaxRequestID = 64
+)
+
 type moqHandler struct {
 	quic      bool
 	addr      string
@@ -79,7 +83,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 0)
+	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
 		Handler: h.getHandler(),
