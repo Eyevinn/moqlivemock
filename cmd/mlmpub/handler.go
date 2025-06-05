@@ -193,19 +193,29 @@ func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
 }
 
 func (h *moqHandler) getHandler() moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-		switch r.Method {
+	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
+		switch r.Method() {
 		case moqtransport.MessageAnnounce:
-			slog.Warn("got unexpected announcement", "namespace", r.Namespace)
+			am, ok := r.(*moqtransport.AnnounceMessage)
+			if !ok {
+				slog.Error("failed to type assert AnnounceMessage")
+				return
+			}
+			slog.Warn("got unexpected announcement", "namespace", am.Namespace)
 			err := w.Reject(0, fmt.Sprintf("%s doesn't take announcements", appName))
 			if err != nil {
 				slog.Error("failed to reject announcement", "error", err)
 			}
 			return
 		case moqtransport.MessageSubscribe:
-			if !tupleEqual(r.Namespace, h.namespace) {
+			sm, ok := r.(*moqtransport.SubscribeMessage)
+			if !ok {
+				slog.Error("failed to type assert SubscribeMessage")
+				return
+			}
+			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
-					"received", r.Namespace,
+					"received", sm.Namespace,
 					"expected", h.namespace)
 				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
 				if err != nil {
@@ -213,7 +223,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				}
 				return
 			}
-			if r.Track == "catalog" {
+			if sm.Track == "catalog" {
 				err := w.Accept()
 				if err != nil {
 					slog.Error("failed to accept subscription", "error", err)
@@ -246,7 +256,7 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				return
 			}
 			for _, track := range h.catalog.Tracks {
-				if r.Track == track.Name {
+				if sm.Track == track.Name {
 					err := w.Accept()
 					if err != nil {
 						slog.Error("failed to accept subscription", "error", err)
