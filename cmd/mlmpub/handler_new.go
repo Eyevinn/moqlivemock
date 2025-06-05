@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,21 +23,42 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-const (
-	mediaPriority = 128
-)
-
-type moqHandler struct {
+// moqHandlerNew is the new handler that uses the TrackPublisher architecture
+type moqHandlerNew struct {
 	addr            string
 	tlsConfig       *tls.Config
 	namespace       []string
 	asset           *internal.Asset
 	catalog         *internal.Catalog
+	publisherMgr    *internal.PublisherManager
 	logfh           io.Writer
 	fingerprintPort int
 }
 
-func (h *moqHandler) runServer(ctx context.Context) error {
+// newMoqHandler creates a new handler with the PublisherManager architecture
+func newMoqHandler(addr string, tlsConfig *tls.Config, namespace []string, asset *internal.Asset, catalog *internal.Catalog, logfh io.Writer, fingerprintPort int) *moqHandlerNew {
+	publisherMgr := internal.NewPublisherManager(asset, catalog)
+
+	return &moqHandlerNew{
+		addr:            addr,
+		tlsConfig:       tlsConfig,
+		namespace:       namespace,
+		asset:           asset,
+		catalog:         catalog,
+		publisherMgr:    publisherMgr,
+		logfh:           logfh,
+		fingerprintPort: fingerprintPort,
+	}
+}
+
+func (h *moqHandlerNew) runServer(ctx context.Context) error {
+	// Start the publisher manager
+	err := h.publisherMgr.Start(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start publisher manager: %w", err)
+	}
+	defer h.publisherMgr.Stop()
+
 	// Start HTTP server for fingerprint if port is specified
 	if h.fingerprintPort > 0 {
 		go h.startFingerprintServer()
@@ -82,7 +102,7 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 	}
 }
 
-func (h *moqHandler) startFingerprintServer() {
+func (h *moqHandlerNew) startFingerprintServer() {
 	// Validate certificate for WebTransport requirements
 	if err := h.validateCertificateForWebTransport(); err != nil {
 		slog.Warn("Certificate does not meet WebTransport fingerprint requirements", "error", err)
@@ -101,13 +121,13 @@ func (h *moqHandler) startFingerprintServer() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
-		
+
 		// Handle preflight OPTIONS request
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		fmt.Fprint(w, fingerprint)
 		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
 	})
@@ -119,7 +139,7 @@ func (h *moqHandler) startFingerprintServer() {
 	}
 }
 
-func (h *moqHandler) getCertificateFingerprint() string {
+func (h *moqHandlerNew) getCertificateFingerprint() string {
 	if len(h.tlsConfig.Certificates) == 0 {
 		return ""
 	}
@@ -141,7 +161,7 @@ func (h *moqHandler) getCertificateFingerprint() string {
 	return hex.EncodeToString(fingerprint[:])
 }
 
-func (h *moqHandler) validateCertificateForWebTransport() error {
+func (h *moqHandlerNew) validateCertificateForWebTransport() error {
 	if len(h.tlsConfig.Certificates) == 0 {
 		return fmt.Errorf("no certificates found")
 	}
@@ -159,13 +179,13 @@ func (h *moqHandler) validateCertificateForWebTransport() error {
 
 	// Check 1: Must be self-signed (issuer == subject)
 	if x509Cert.Issuer.String() != x509Cert.Subject.String() {
-		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)", 
+		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)",
 			x509Cert.Issuer.String(), x509Cert.Subject.String())
 	}
 
 	// Check 2: Must use ECDSA algorithm
 	if x509Cert.PublicKeyAlgorithm != x509.ECDSA {
-		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s", 
+		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s",
 			x509Cert.PublicKeyAlgorithm.String())
 	}
 
@@ -185,14 +205,7 @@ func (h *moqHandler) validateCertificateForWebTransport() error {
 	return nil
 }
 
-func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
-	err := wt.ServeQUICConn(conn)
-	if err != nil {
-		slog.Error("failed to serve QUIC connection", "error", err)
-	}
-}
-
-func (h *moqHandler) getHandler() moqtransport.Handler {
+func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
 		switch r.Method() {
 		case moqtransport.MessageAnnounce:
@@ -213,6 +226,14 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				slog.Error("failed to type assert SubscribeMessage")
 				return
 			}
+			
+			slog.Info("received subscribe message",
+				"requestID", sm.RequestID(),
+				"track", sm.Track,
+				"namespace", sm.Namespace,
+				"filterType", sm.FilterType,
+				"subscriberPriority", sm.SubscriberPriority)
+			
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,
@@ -223,148 +244,39 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				}
 				return
 			}
-			if sm.Track == "catalog" {
-				err := w.Accept()
+
+			// Cast to SubscribeResponseWriter to use the new publisher manager
+			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
+			if !ok {
+				slog.Error("response writer is not a SubscribeResponseWriter")
+				err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
 				if err != nil {
-					slog.Error("failed to accept subscription", "error", err)
-					return
-				}
-				publisher, ok := w.(moqtransport.Publisher)
-				if !ok {
-					slog.Error("subscription response writer does not implement publisher")
-				}
-				sg, err := publisher.OpenSubgroup(0, 0, 0)
-				if err != nil {
-					slog.Error("failed to open subgroup", "error", err)
-					return
-				}
-				json, err := json.Marshal(h.catalog)
-				if err != nil {
-					slog.Error("failed to marshal catalog", "error", err)
-					return
-				}
-				_, err = sg.WriteObject(0, json)
-				if err != nil {
-					slog.Error("failed to write catalog", "error", err)
-					return
-				}
-				err = sg.Close()
-				if err != nil {
-					slog.Error("failed to close subgroup", "error", err)
-					return
+					slog.Error("failed to reject subscription", "error", err)
 				}
 				return
 			}
-			for _, track := range h.catalog.Tracks {
-				if sm.Track == track.Name {
-					// Only support FilterTypeNextGroupStart for track subscriptions
-					if sm.FilterType != moqtransport.FilterTypeNextGroupStart {
-						err := w.Reject(moqtransport.ErrorCodeSubscribeNotSupported,
-							fmt.Sprintf("track %s only supports FilterTypeNextGroupStart, got %d", track.Name, sm.FilterType))
-						if err != nil {
-							slog.Error("failed to reject subscription", "error", err)
-						}
-						return
-					}
-					
-					// Cast to SubscribeResponseWriter to use AcceptWithOptions
-					subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
-					if !ok {
-						slog.Error("response writer is not a SubscribeResponseWriter")
-						err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
-						if err != nil {
-							slog.Error("failed to reject subscription", "error", err)
-						}
-						return
-					}
-					
-					// Get track from asset to calculate largest location
-					ct := h.asset.GetTrackByName(track.Name)
-					if ct == nil {
-						err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "track not found in asset")
-						if err != nil {
-							slog.Error("failed to reject subscription", "error", err)
-						}
-						return
-					}
-					
-					// Get largest object location based on current time
-					now := time.Now().UnixMilli()
-					largestLoc := internal.GetLargestObject(ct, uint64(now), internal.MoqGroupDurMS)
-					
-					// Create SubscribeOkOptions with LargestLocation
-					opts := moqtransport.DefaultSubscribeOkOptions()
-					opts.LargestLocation = &moqtransport.Location{
-						Group:  largestLoc.Group,
-						Object: largestLoc.Object,
-					}
-					
-					err := subscribeWriter.AcceptWithOptions(opts)
-					if err != nil {
-						slog.Error("failed to accept subscription", "error", err)
-						return
-					}
-					publisher, ok := w.(moqtransport.Publisher)
-					if !ok {
-						slog.Error("subscription response writer does not implement publisher")
-					}
-					slog.Info("got subscription", "track", track.Name)
-					go publishTrack(context.TODO(), publisher, h.asset, track.Name)
-					return
-				}
-			}
-			// If we get here, the track was not found
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
+
+			// Handle subscription using publisher manager
+			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter)
 			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
+				slog.Error("failed to handle subscription", "track", sm.Track, "error", err)
+				var errorCode uint64 = moqtransport.ErrorCodeInternal
+				if err.Error() == "track not found: "+sm.Track {
+					errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
+				}
+				rejErr := subscribeWriter.Reject(errorCode, err.Error())
+				if rejErr != nil {
+					slog.Error("failed to reject subscription", "error", rejErr)
+				}
+				return
 			}
-			// case moqtransport.MessageUnsubscribe:
-			// Need to handle unsubscribe
-			// For nice switching, it should be possible to unsubscrit to one video track
-			// and subscribe to another, and the publisher should go on until the end
-			// of the current MoQ group, and start the new track on the next MoQ group.
-			// This is not currently implemented.
+
+			slog.Info("handled subscription", "track", sm.Track)
 		}
 	})
 }
 
-func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
-	ct := asset.GetTrackByName(trackName)
-	if ct == nil {
-		slog.Error("track not found", "track", trackName)
-		return
-	}
-	now := time.Now().UnixMilli()
-	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
-	groupNr := currGroupNr + 1 // Start stream on next group
-	slog.Info("publishing track", "track", trackName, "group", groupNr)
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, mediaPriority)
-		if err != nil {
-			slog.Error("failed to open subgroup", "error", err)
-			return
-		}
-		mg := internal.GenMoQGroup(ct, groupNr, ct.SampleBatch, internal.MoqGroupDurMS)
-		slog.Info("writing MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
-		err = internal.WriteMoQGroup(ctx, ct, mg, sg.WriteObject)
-		if err != nil {
-			slog.Error("failed to write MoQ group", "error", err)
-			return
-		}
-		err = sg.Close()
-		if err != nil {
-			slog.Error("failed to close subgroup", "error", err)
-			return
-		}
-		slog.Debug("published MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
-		groupNr++
-	}
-}
-
-func (h *moqHandler) handle(conn moqtransport.Connection) {
+func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
@@ -385,16 +297,4 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
 		return
 	}
-}
-
-func tupleEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, t := range a {
-		if t != b[i] {
-			return false
-		}
-	}
-	return true
 }

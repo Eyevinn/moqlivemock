@@ -33,6 +33,19 @@ or tracks that match the `-videoname` and `-audioname` options.
 It should later be possible to switch bitrate by unsubscribing to one
 track and subscribing to another, with no repeated or lost frames.
 
+## Availability time of groups and objects
+
+The mlmpub pushes objects as soon as they are available.
+The availability time is determined like this
+
+* Object (G, 0) is available G seconds + sampleOffset + objectDuration relative to the Epoch start.
+* Object (G, N) is available N*objectDuration later
+
+The sample offset is zero for video, but for audio
+it is given by the minimal time later than the video
+object given the audio sample duration (e.g. 1024/48000s).
+
+
 ## Requirements
 
 * Go 1.23 or later

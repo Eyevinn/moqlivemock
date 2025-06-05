@@ -54,12 +54,17 @@ func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.
 }
 
 func (h *moqHandler) getHandler() moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-		switch r.Method {
+	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
+		switch r.Method() {
 		case moqtransport.MessageAnnounce:
-			if !tupleEqual(r.Namespace, h.namespace) {
+			am, ok := r.(*moqtransport.AnnounceMessage)
+			if !ok {
+				slog.Error("failed to type assert AnnounceMessage")
+				return
+			}
+			if !tupleEqual(am.Namespace, h.namespace) {
 				slog.Warn("got unexpected announcement namespace",
-					"received", r.Namespace,
+					"received", am.Namespace,
 					"expected", h.namespace)
 				err := w.Reject(0, "non-matching namespace")
 				if err != nil {
