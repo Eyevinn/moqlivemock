@@ -51,6 +51,7 @@ type options struct {
 	videoSampleBatch int
 	fingerprintPort  int
 	version          bool
+	useNewHandler    bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -70,6 +71,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
+	fs.BoolVar(&opts.useNewHandler, "new", false, "Use new TrackPublisher architecture (experimental)")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -134,17 +136,23 @@ func runServer(opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
-	h := &moqHandler{
-		addr:            opts.addr,
-		tlsConfig:       tlsConfig,
-		namespace:       []string{internal.Namespace},
-		asset:           asset,
-		catalog:         catalog,
-		logfh:           logfh,
-		fingerprintPort: opts.fingerprintPort,
-	}
 
-	return h.runServer(context.TODO())
+	if opts.useNewHandler {
+		slog.Info("Using new TrackPublisher architecture")
+		h := newMoqHandler(opts.addr, tlsConfig, []string{internal.Namespace}, asset, catalog, logfh, opts.fingerprintPort)
+		return h.runServer(context.TODO())
+	} else {
+		h := &moqHandler{
+			addr:            opts.addr,
+			tlsConfig:       tlsConfig,
+			namespace:       []string{internal.Namespace},
+			asset:           asset,
+			catalog:         catalog,
+			logfh:           logfh,
+			fingerprintPort: opts.fingerprintPort,
+		}
+		return h.runServer(context.TODO())
+	}
 }
 
 func generateTLSConfigWithCertAndKey(certFile, keyFile string) (*tls.Config, error) {

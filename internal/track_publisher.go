@@ -1,0 +1,296 @@
+package internal
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+// ConcreteTrackPublisher implements TrackPublisher for content tracks
+type ConcreteTrackPublisher struct {
+	mu            sync.RWMutex
+	track         *ContentTrack
+	asset         *Asset
+	mediaType     MediaType
+	subscriptions map[uint64]*Subscription
+	groupGen      *GroupGenerator
+	
+	// Publishing state
+	ctx           context.Context
+	cancel        context.CancelFunc
+	started       bool
+	currentGroup  uint64
+	currentObject uint64
+}
+
+// NewTrackPublisher creates a new track publisher for the given content track
+func NewTrackPublisher(asset *Asset, track *ContentTrack, groupGen *GroupGenerator) (*ConcreteTrackPublisher, error) {
+	var mediaType MediaType
+	switch track.ContentType {
+	case "video":
+		mediaType = VIDEO
+	case "audio":
+		mediaType = AUDIO
+	default:
+		return nil, fmt.Errorf("unsupported content type: %s", track.ContentType)
+	}
+	
+	return &ConcreteTrackPublisher{
+		track:         track,
+		asset:         asset,
+		mediaType:     mediaType,
+		subscriptions: make(map[uint64]*Subscription),
+		groupGen:      groupGen,
+	}, nil
+}
+
+// Start begins publishing this track
+func (tp *ConcreteTrackPublisher) Start(ctx context.Context) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	if tp.started {
+		return ErrAlreadyStarted
+	}
+	
+	tp.ctx, tp.cancel = context.WithCancel(ctx)
+	tp.started = true
+	
+	// Initialize current group from group generator
+	tp.currentGroup = tp.groupGen.GetCurrentGroup()
+	
+	go tp.publishLoop()
+	return nil
+}
+
+// Stop stops publishing this track
+func (tp *ConcreteTrackPublisher) Stop() error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	if !tp.started {
+		return ErrNotStarted
+	}
+	
+	tp.cancel()
+	tp.started = false
+	
+	// Close all subscription channels
+	for _, sub := range tp.subscriptions {
+		close(sub.Done)
+	}
+	
+	return nil
+}
+
+// GetMediaType returns the media type of this track
+func (tp *ConcreteTrackPublisher) GetMediaType() MediaType {
+	return tp.mediaType
+}
+
+// GetTrackName returns the name of this track
+func (tp *ConcreteTrackPublisher) GetTrackName() string {
+	return tp.track.Name
+}
+
+// AddSubscription adds a new subscription to this track
+func (tp *ConcreteTrackPublisher) AddSubscription(sub *Subscription) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	tp.subscriptions[sub.RequestID] = sub
+	slog.Info("added subscription", "track", tp.track.Name, "requestID", sub.RequestID)
+	return nil
+}
+
+// RemoveSubscription removes a subscription from this track
+func (tp *ConcreteTrackPublisher) RemoveSubscription(requestID uint64) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	sub, exists := tp.subscriptions[requestID]
+	if !exists {
+		return ErrSubscriptionNotFound
+	}
+	
+	delete(tp.subscriptions, requestID)
+	close(sub.Done)
+	slog.Info("removed subscription", "track", tp.track.Name, "requestID", requestID)
+	return nil
+}
+
+// UpdateSubscription updates an existing subscription
+func (tp *ConcreteTrackPublisher) UpdateSubscription(requestID uint64, update SubscriptionUpdate) error {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	sub, exists := tp.subscriptions[requestID]
+	if !exists {
+		return ErrSubscriptionNotFound
+	}
+	
+	// Update end group if specified
+	if update.EndGroup != nil {
+		sub.EndGroup = update.EndGroup
+		slog.Info("updated subscription end group", 
+			"track", tp.track.Name, 
+			"requestID", requestID, 
+			"endGroup", *update.EndGroup)
+	}
+	
+	// Update priority if specified
+	if update.Priority != nil {
+		sub.Priority = *update.Priority
+		slog.Info("updated subscription priority", 
+			"track", tp.track.Name, 
+			"requestID", requestID, 
+			"priority", *update.Priority)
+	}
+	
+	return nil
+}
+
+// GetCurrentGroup returns the current group number
+func (tp *ConcreteTrackPublisher) GetCurrentGroup() uint64 {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	return tp.currentGroup
+}
+
+// GetLargestLocation returns the largest group and object location
+func (tp *ConcreteTrackPublisher) GetLargestLocation() (group uint64, object uint64) {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	
+	// Calculate largest object within the current group
+	now := time.Now().UnixMilli()
+	largestLoc := GetLargestObject(tp.track, uint64(now), MoqGroupDurMS)
+	
+	return largestLoc.Group, largestLoc.Object
+}
+
+// GetTrackStatus returns current status information
+func (tp *ConcreteTrackPublisher) GetTrackStatus() TrackStatus {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	
+	return TrackStatus{
+		MediaType:       tp.mediaType,
+		CurrentGroup:    tp.currentGroup,
+		CurrentObject:   tp.currentObject,
+		SubscriberCount: len(tp.subscriptions),
+		Bitrate:         uint64(tp.track.SampleBitrate),
+		IsLive:          tp.started,
+	}
+}
+
+// publishLoop is the main publishing loop for this track
+func (tp *ConcreteTrackPublisher) publishLoop() {
+	// Sync with group generator timing
+	ticker := time.NewTicker(time.Duration(MoqGroupDurMS) * time.Millisecond)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-tp.ctx.Done():
+			return
+		case <-ticker.C:
+			tp.publishNextGroup()
+		}
+	}
+}
+
+// publishNextGroup publishes the next group to all subscriptions
+func (tp *ConcreteTrackPublisher) publishNextGroup() {
+	tp.mu.Lock()
+	
+	// Get current group from group generator
+	currentGroup := tp.groupGen.GetCurrentGroup()
+	if currentGroup <= tp.currentGroup {
+		tp.mu.Unlock()
+		return // No new group to publish
+	}
+	
+	tp.currentGroup = currentGroup
+	
+	// Copy subscriptions to avoid holding lock during publishing
+	activeSubs := make([]*Subscription, 0, len(tp.subscriptions))
+	for _, sub := range tp.subscriptions {
+		// Check if subscription should continue
+		if sub.EndGroup != nil && tp.currentGroup > *sub.EndGroup {
+			// Send SUBSCRIBE_DONE and mark for removal
+			go tp.sendSubscribeDone(sub)
+			continue
+		}
+		
+		// Only include subscriptions that should receive this group
+		if tp.currentGroup >= sub.StartGroup {
+			activeSubs = append(activeSubs, sub)
+		}
+	}
+	
+	tp.mu.Unlock()
+	
+	// Publish to active subscriptions
+	for _, sub := range activeSubs {
+		go tp.publishGroupToSubscription(sub, tp.currentGroup)
+	}
+}
+
+// publishGroupToSubscription publishes a group to a specific subscription
+func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, groupNr uint64) {
+	sg, err := sub.Publisher.OpenSubgroup(groupNr, 0, sub.Priority)
+	if err != nil {
+		slog.Error("failed to open subgroup", 
+			"track", tp.track.Name, 
+			"group", groupNr, 
+			"error", err)
+		return
+	}
+	
+	// Generate and write MoQ group
+	mg := GenMoQGroup(tp.track, groupNr, tp.track.SampleBatch, MoqGroupDurMS)
+	err = WriteMoQGroup(tp.ctx, tp.track, mg, sg.WriteObject)
+	if err != nil {
+		slog.Error("failed to write MoQ group", 
+			"track", tp.track.Name, 
+			"group", groupNr, 
+			"error", err)
+		return
+	}
+	
+	err = sg.Close()
+	if err != nil {
+		slog.Error("failed to close subgroup", 
+			"track", tp.track.Name, 
+			"group", groupNr, 
+			"error", err)
+		return
+	}
+	
+	tp.mu.Lock()
+	sub.LastGroupSent = groupNr
+	sub.LastObjectSent = uint64(len(mg.MoQObjects) - 1)
+	tp.mu.Unlock()
+	
+	slog.Debug("published group to subscription", 
+		"track", tp.track.Name, 
+		"group", groupNr, 
+		"requestID", sub.RequestID)
+}
+
+// sendSubscribeDone sends a SUBSCRIBE_DONE message and cleans up the subscription
+func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
+	// TODO: Implement SUBSCRIBE_DONE message sending
+	// This will be implemented in Phase 2 when we add control message support
+	
+	slog.Info("subscription ended", 
+		"track", tp.track.Name, 
+		"requestID", sub.RequestID, 
+		"finalGroup", sub.LastGroupSent)
+	
+	// Remove subscription
+	tp.RemoveSubscription(sub.RequestID)
+}
