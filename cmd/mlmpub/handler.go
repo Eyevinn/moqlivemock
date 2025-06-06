@@ -257,7 +257,49 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 			}
 			for _, track := range h.catalog.Tracks {
 				if sm.Track == track.Name {
-					err := w.Accept()
+					// Only support FilterTypeNextGroupStart for track subscriptions
+					if sm.FilterType != moqtransport.FilterTypeNextGroupStart {
+						err := w.Reject(moqtransport.ErrorCodeSubscribeNotSupported,
+							fmt.Sprintf("track %s only supports FilterTypeNextGroupStart, got %d", track.Name, sm.FilterType))
+						if err != nil {
+							slog.Error("failed to reject subscription", "error", err)
+						}
+						return
+					}
+					
+					// Cast to SubscribeResponseWriter to use AcceptWithOptions
+					subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
+					if !ok {
+						slog.Error("response writer is not a SubscribeResponseWriter")
+						err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
+						if err != nil {
+							slog.Error("failed to reject subscription", "error", err)
+						}
+						return
+					}
+					
+					// Get track from asset to calculate largest location
+					ct := h.asset.GetTrackByName(track.Name)
+					if ct == nil {
+						err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "track not found in asset")
+						if err != nil {
+							slog.Error("failed to reject subscription", "error", err)
+						}
+						return
+					}
+					
+					// Get largest object location based on current time
+					now := time.Now().UnixMilli()
+					largestLoc := internal.GetLargestObject(ct, uint64(now), internal.MoqGroupDurMS)
+					
+					// Create SubscribeOkOptions with LargestLocation
+					opts := moqtransport.DefaultSubscribeOkOptions()
+					opts.LargestLocation = &moqtransport.Location{
+						Group:  largestLoc.Group,
+						Object: largestLoc.Object,
+					}
+					
+					err := subscribeWriter.AcceptWithOptions(opts)
 					if err != nil {
 						slog.Error("failed to accept subscription", "error", err)
 						return
