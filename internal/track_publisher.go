@@ -16,6 +16,7 @@ type ConcreteTrackPublisher struct {
 	mediaType     MediaType
 	subscriptions map[uint64]*Subscription
 	groupGen      *GroupGenerator
+	failedSubs    map[uint64]bool  // Track subscriptions that have failed
 	
 	// Publishing state
 	ctx           context.Context
@@ -45,6 +46,7 @@ func NewTrackPublisher(asset *Asset, track *ContentTrack, groupGen *GroupGenerat
 		subscriptions: make(map[uint64]*Subscription),
 		groupGen:      groupGen,
 		groupCh:       make(chan uint64, 10), // Buffered channel for group notifications
+		failedSubs:    make(map[uint64]bool),  // Track failed subscriptions
 	}, nil
 }
 
@@ -106,7 +108,10 @@ func (tp *ConcreteTrackPublisher) AddSubscription(sub *Subscription) error {
 	defer tp.mu.Unlock()
 	
 	tp.subscriptions[sub.RequestID] = sub
-	slog.Info("added subscription", "track", tp.track.Name, "requestID", sub.RequestID)
+	slog.Info("added subscription", 
+		"track", tp.track.Name, 
+		"requestID", sub.RequestID,
+		"totalSubscribers", len(tp.subscriptions))
 	return nil
 }
 
@@ -121,8 +126,19 @@ func (tp *ConcreteTrackPublisher) RemoveSubscription(requestID uint64) error {
 	}
 	
 	delete(tp.subscriptions, requestID)
+	// Immediately mark as failed to suppress any ongoing goroutine error logging
+	tp.failedSubs[requestID] = true
 	close(sub.Done)
-	slog.Info("removed subscription", "track", tp.track.Name, "requestID", requestID)
+	slog.Info("removed subscription", 
+		"track", tp.track.Name, 
+		"requestID", requestID,
+		"totalSubscribers", len(tp.subscriptions))
+	
+	// Log when track has no more subscribers
+	if len(tp.subscriptions) == 0 {
+		slog.Warn("track has no remaining subscribers", "track", tp.track.Name)
+	}
+	
 	return nil
 }
 
@@ -191,6 +207,94 @@ func (tp *ConcreteTrackPublisher) GetTrackStatus() TrackStatus {
 	}
 }
 
+// LogSubscriberStats logs current subscriber statistics for this track
+func (tp *ConcreteTrackPublisher) LogSubscriberStats() {
+	tp.mu.RLock()
+	defer tp.mu.RUnlock()
+	
+	if len(tp.subscriptions) == 0 {
+		slog.Info("track status", 
+			"track", tp.track.Name,
+			"subscribers", 0,
+			"status", "no_subscribers")
+		return
+	}
+	
+	// Count active vs stale subscriptions and mark stale ones as failed immediately
+	activeCount := 0
+	staleCount := 0
+	for requestID, sub := range tp.subscriptions {
+		if sub.LastGroupSent > 0 && tp.currentGroup-sub.LastGroupSent > 5 {
+			staleCount++
+			// Immediately mark as failed to prevent any further error logging
+			tp.failedSubs[requestID] = true
+		} else {
+			activeCount++
+		}
+	}
+	
+	slog.Info("track status", 
+		"track", tp.track.Name,
+		"totalSubscribers", len(tp.subscriptions),
+		"activeSubscribers", activeCount,
+		"staleSubscribers", staleCount,
+		"currentGroup", tp.currentGroup,
+		"bitrate", tp.track.SampleBitrate)
+	
+	if staleCount > 0 {
+		slog.Warn("detected stale subscribers", 
+			"track", tp.track.Name,
+			"staleCount", staleCount)
+	}
+}
+
+// CleanupStaleSubscribers removes subscriptions that haven't received data for too long
+func (tp *ConcreteTrackPublisher) CleanupStaleSubscribers() {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	
+	staleThreshold := uint64(10) // Remove if 10+ groups behind
+	var staleRequestIDs []uint64
+	
+	for requestID, sub := range tp.subscriptions {
+		// Consider a subscription stale if it's far behind current group
+		if sub.LastGroupSent > 0 && tp.currentGroup-sub.LastGroupSent > staleThreshold {
+			staleRequestIDs = append(staleRequestIDs, requestID)
+		}
+	}
+	
+	// Remove stale subscriptions
+	for _, requestID := range staleRequestIDs {
+		sub := tp.subscriptions[requestID]
+		delete(tp.subscriptions, requestID)
+		tp.failedSubs[requestID] = true  // Mark as failed to prevent further error logging
+		close(sub.Done)
+		
+		slog.Warn("removed stale subscription", 
+			"track", tp.track.Name,
+			"requestID", requestID,
+			"lastGroupSent", sub.LastGroupSent,
+			"currentGroup", tp.currentGroup,
+			"groupsBehind", tp.currentGroup-sub.LastGroupSent)
+	}
+	
+	if len(staleRequestIDs) > 0 {
+		slog.Info("cleanup complete", 
+			"track", tp.track.Name,
+			"removedStaleSubscribers", len(staleRequestIDs),
+			"remainingSubscribers", len(tp.subscriptions))
+	}
+	
+	// Also clean up failed subscriptions that are no longer in subscriptions map
+	// to prevent memory leak
+	for requestID := range tp.failedSubs {
+		if _, exists := tp.subscriptions[requestID]; !exists {
+			// This failed subscription has already been removed, safe to clean up
+			delete(tp.failedSubs, requestID)
+		}
+	}
+}
+
 // publishLoop is the main publishing loop for this track
 func (tp *ConcreteTrackPublisher) publishLoop() {
 	for {
@@ -232,6 +336,11 @@ func (tp *ConcreteTrackPublisher) publishGroup(groupNr uint64) {
 	// Copy subscriptions to avoid holding lock during publishing
 	activeSubs := make([]*Subscription, 0, len(tp.subscriptions))
 	for _, sub := range tp.subscriptions {
+		// Skip subscriptions that have already failed
+		if tp.failedSubs[sub.RequestID] {
+			continue
+		}
+		
 		// Check if subscription should continue
 		if sub.EndGroup != nil && groupNr > *sub.EndGroup {
 			// Send SUBSCRIBE_DONE and mark for removal
@@ -255,32 +364,116 @@ func (tp *ConcreteTrackPublisher) publishGroup(groupNr uint64) {
 
 // publishGroupToSubscription publishes a group to a specific subscription
 func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, groupNr uint64) {
+	// Quick check if subscription has already failed or been removed
+	tp.mu.RLock()
+	if tp.failedSubs[sub.RequestID] {
+		tp.mu.RUnlock()
+		return // Already marked as failed, skip silently
+	}
+	// Also check if subscription still exists (may have been removed)
+	_, stillExists := tp.subscriptions[sub.RequestID]
+	if !stillExists {
+		tp.mu.RUnlock()
+		// Mark as failed to prevent any other goroutines from trying
+		tp.mu.Lock()
+		tp.failedSubs[sub.RequestID] = true
+		tp.mu.Unlock()
+		return // Subscription removed, skip silently
+	}
+	tp.mu.RUnlock()
+	
 	sg, err := sub.Publisher.OpenSubgroup(groupNr, 0, sub.Priority)
 	if err != nil {
-		slog.Error("failed to open subgroup", 
-			"track", tp.track.Name, 
-			"group", groupNr, 
-			"error", err)
+		// Only log if this is the first error for this subscription
+		tp.mu.RLock()
+		alreadyFailed := tp.failedSubs[sub.RequestID]
+		tp.mu.RUnlock()
+		
+		if !alreadyFailed {
+			slog.Error("failed to open subgroup - subscriber may have vanished", 
+				"track", tp.track.Name, 
+				"group", groupNr, 
+				"requestID", sub.RequestID,
+				"error", err)
+		}
+		// Remove the problematic subscription
+		tp.handleSubscriberError(sub, "failed to open subgroup", err)
 		return
 	}
+	
+	// Check again before proceeding with write - subscription might have been removed
+	tp.mu.RLock()
+	if tp.failedSubs[sub.RequestID] {
+		tp.mu.RUnlock()
+		sg.Close()
+		return // Already marked as failed, abort
+	}
+	_, stillExists = tp.subscriptions[sub.RequestID]
+	if !stillExists {
+		tp.mu.RUnlock()
+		sg.Close()
+		tp.mu.Lock()
+		tp.failedSubs[sub.RequestID] = true
+		tp.mu.Unlock()
+		return // Subscription removed, abort
+	}
+	tp.mu.RUnlock()
 	
 	// Generate and write MoQ group
 	mg := GenMoQGroup(tp.track, groupNr, tp.track.SampleBatch, MoqGroupDurMS)
 	err = WriteMoQGroup(tp.ctx, tp.track, mg, sg.WriteObject)
 	if err != nil {
-		slog.Error("failed to write MoQ group", 
-			"track", tp.track.Name, 
-			"group", groupNr, 
-			"error", err)
+		// Only log if this is the first error for this subscription
+		tp.mu.RLock()
+		alreadyFailed := tp.failedSubs[sub.RequestID]
+		tp.mu.RUnlock()
+		
+		if !alreadyFailed {
+			slog.Error("failed to write MoQ group - subscriber may have vanished", 
+				"track", tp.track.Name, 
+				"group", groupNr, 
+				"requestID", sub.RequestID,
+				"error", err)
+		}
+		// Try to close subgroup before removing subscription
+		sg.Close()
+		tp.handleSubscriberError(sub, "failed to write MoQ group", err)
 		return
 	}
 	
+	// Check one more time before closing - subscription might have been removed during write
+	tp.mu.RLock()
+	if tp.failedSubs[sub.RequestID] {
+		tp.mu.RUnlock()
+		sg.Close()
+		return // Already marked as failed, abort
+	}
+	_, stillExists = tp.subscriptions[sub.RequestID]
+	if !stillExists {
+		tp.mu.RUnlock()
+		sg.Close()
+		tp.mu.Lock()
+		tp.failedSubs[sub.RequestID] = true
+		tp.mu.Unlock()
+		return // Subscription removed, abort
+	}
+	tp.mu.RUnlock()
+	
 	err = sg.Close()
 	if err != nil {
-		slog.Error("failed to close subgroup", 
-			"track", tp.track.Name, 
-			"group", groupNr, 
-			"error", err)
+		// Only log if this is the first error for this subscription
+		tp.mu.RLock()
+		alreadyFailed := tp.failedSubs[sub.RequestID]
+		tp.mu.RUnlock()
+		
+		if !alreadyFailed {
+			slog.Error("failed to close subgroup - subscriber may have vanished", 
+				"track", tp.track.Name, 
+				"group", groupNr, 
+				"requestID", sub.RequestID,
+				"error", err)
+		}
+		tp.handleSubscriberError(sub, "failed to close subgroup", err)
 		return
 	}
 	
@@ -300,11 +493,39 @@ func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
 	// TODO: Implement SUBSCRIBE_DONE message sending
 	// This will be implemented in Phase 2 when we add control message support
 	
-	slog.Info("subscription ended", 
+	slog.Info("subscription ended normally", 
 		"track", tp.track.Name, 
 		"requestID", sub.RequestID, 
 		"finalGroup", sub.LastGroupSent)
 	
 	// Remove subscription
 	tp.RemoveSubscription(sub.RequestID)
+}
+
+// handleSubscriberError handles errors that indicate a subscriber has vanished
+func (tp *ConcreteTrackPublisher) handleSubscriberError(sub *Subscription, operation string, err error) {
+	tp.mu.Lock()
+	// Check if we've already marked this subscription as failed
+	if tp.failedSubs[sub.RequestID] {
+		tp.mu.Unlock()
+		return // Already handled, avoid duplicate logging
+	}
+	
+	// Mark subscription as failed to prevent further attempts
+	tp.failedSubs[sub.RequestID] = true
+	
+	// Check if subscription still exists before logging
+	_, stillExists := tp.subscriptions[sub.RequestID]
+	tp.mu.Unlock()
+	
+	if stillExists {
+		slog.Warn("subscriber appears to have vanished - removing subscription",
+			"track", tp.track.Name,
+			"requestID", sub.RequestID,
+			"operation", operation,
+			"error", err)
+		
+		// Remove the problematic subscription
+		tp.RemoveSubscription(sub.RequestID)
+	}
 }
