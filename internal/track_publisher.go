@@ -23,6 +23,7 @@ type ConcreteTrackPublisher struct {
 	started       bool
 	currentGroup  uint64
 	currentObject uint64
+	groupCh       chan uint64  // Channel to receive new group notifications
 }
 
 // NewTrackPublisher creates a new track publisher for the given content track
@@ -43,6 +44,7 @@ func NewTrackPublisher(asset *Asset, track *ContentTrack, groupGen *GroupGenerat
 		mediaType:     mediaType,
 		subscriptions: make(map[uint64]*Subscription),
 		groupGen:      groupGen,
+		groupCh:       make(chan uint64, 10), // Buffered channel for group notifications
 	}, nil
 }
 
@@ -76,6 +78,9 @@ func (tp *ConcreteTrackPublisher) Stop() error {
 	
 	tp.cancel()
 	tp.started = false
+	
+	// Close group notification channel
+	close(tp.groupCh)
 	
 	// Close all subscription channels
 	for _, sub := range tp.subscriptions {
@@ -188,45 +193,54 @@ func (tp *ConcreteTrackPublisher) GetTrackStatus() TrackStatus {
 
 // publishLoop is the main publishing loop for this track
 func (tp *ConcreteTrackPublisher) publishLoop() {
-	// Sync with group generator timing
-	ticker := time.NewTicker(time.Duration(MoqGroupDurMS) * time.Millisecond)
-	defer ticker.Stop()
-	
 	for {
 		select {
 		case <-tp.ctx.Done():
 			return
-		case <-ticker.C:
-			tp.publishNextGroup()
+		case groupNr := <-tp.groupCh:
+			// Publish the specified group
+			tp.publishGroup(groupNr)
 		}
 	}
 }
 
-// publishNextGroup publishes the next group to all subscriptions
-func (tp *ConcreteTrackPublisher) publishNextGroup() {
+// onNewGroup is called by GroupGenerator when a new group becomes available
+func (tp *ConcreteTrackPublisher) onNewGroup(groupNr uint64) {
+	select {
+	case tp.groupCh <- groupNr:
+		// Successfully queued group for publishing
+	default:
+		// Channel full, skip this group (shouldn't happen with buffered channel)
+		slog.Warn("dropped group notification, channel full", 
+			"track", tp.track.Name, 
+			"group", groupNr)
+	}
+}
+
+// publishGroup publishes a specific group to all subscriptions
+func (tp *ConcreteTrackPublisher) publishGroup(groupNr uint64) {
 	tp.mu.Lock()
 	
-	// Get current group from group generator
-	currentGroup := tp.groupGen.GetCurrentGroup()
-	if currentGroup <= tp.currentGroup {
+	// Skip if we've already published this group or if it's older
+	if groupNr <= tp.currentGroup {
 		tp.mu.Unlock()
-		return // No new group to publish
+		return
 	}
 	
-	tp.currentGroup = currentGroup
+	tp.currentGroup = groupNr
 	
 	// Copy subscriptions to avoid holding lock during publishing
 	activeSubs := make([]*Subscription, 0, len(tp.subscriptions))
 	for _, sub := range tp.subscriptions {
 		// Check if subscription should continue
-		if sub.EndGroup != nil && tp.currentGroup > *sub.EndGroup {
+		if sub.EndGroup != nil && groupNr > *sub.EndGroup {
 			// Send SUBSCRIBE_DONE and mark for removal
 			go tp.sendSubscribeDone(sub)
 			continue
 		}
 		
 		// Only include subscriptions that should receive this group
-		if tp.currentGroup >= sub.StartGroup {
+		if groupNr >= sub.StartGroup {
 			activeSubs = append(activeSubs, sub)
 		}
 	}
@@ -235,7 +249,7 @@ func (tp *ConcreteTrackPublisher) publishNextGroup() {
 	
 	// Publish to active subscriptions
 	for _, sub := range activeSubs {
-		go tp.publishGroupToSubscription(sub, tp.currentGroup)
+		go tp.publishGroupToSubscription(sub, groupNr)
 	}
 }
 

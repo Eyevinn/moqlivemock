@@ -119,7 +119,6 @@ type GroupGenerator struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	stopCh    chan struct{}
-	ticker    *time.Ticker
 	started   bool
 }
 
@@ -172,12 +171,8 @@ func (gg *GroupGenerator) Start(ctx context.Context) error {
 	}
 	
 	gg.ctx, gg.cancel = context.WithCancel(ctx)
-	gg.ticker = time.NewTicker(gg.groupDuration)
 	gg.started = true
-	
-	// Initialize current group based on current time
-	now := time.Now().UnixMilli()
-	gg.currentGroup = uint64(now) / uint64(gg.groupDuration.Milliseconds())
+	gg.currentGroup = 0 // Will be calculated properly in calculateNextGroup
 	
 	go gg.run()
 	return nil
@@ -193,7 +188,6 @@ func (gg *GroupGenerator) Stop() error {
 	}
 	
 	gg.cancel()
-	gg.ticker.Stop()
 	close(gg.stopCh)
 	gg.started = false
 	return nil
@@ -205,15 +199,128 @@ func (gg *GroupGenerator) run() {
 		select {
 		case <-gg.ctx.Done():
 			return
-		case <-gg.ticker.C:
-			gg.advanceGroup()
+		default:
+			// Calculate when the next group should start based on object availability
+			nextGroup := gg.calculateNextGroup()
+			if nextGroup > gg.GetCurrentGroup() {
+				gg.setCurrentGroup(nextGroup)
+				gg.notifyTracks(nextGroup)
+			}
+			
+			// Calculate and sleep until the next group starts
+			sleepDuration := gg.calculateSleepUntilNextGroup()
+			if sleepDuration > 0 {
+				time.Sleep(sleepDuration)
+			} else {
+				// If next group should already be available, check again immediately
+				time.Sleep(1 * time.Millisecond)
+			}
 		}
 	}
 }
 
-// advanceGroup increments the current group number
-func (gg *GroupGenerator) advanceGroup() {
+// calculateNextGroup determines the current group based on object availability timing
+func (gg *GroupGenerator) calculateNextGroup() uint64 {
+	gg.mu.RLock()
+	defer gg.mu.RUnlock()
+	
+	// Get a representative track to calculate timing
+	// All tracks of the same media type should have similar timing characteristics
+	var sampleTrack TrackPublisher
+	for _, track := range gg.tracks {
+		sampleTrack = track
+		break
+	}
+	
+	if sampleTrack == nil {
+		return gg.currentGroup
+	}
+	
+	// Use concrete track to get timing information
+	if ctp, ok := sampleTrack.(*ConcreteTrackPublisher); ok {
+		nowMS := uint64(time.Now().UnixMilli())
+		return CurrMoQGroupNr(ctp.track, nowMS, MoqGroupDurMS)
+	}
+	
+	return gg.currentGroup
+}
+
+// calculateSleepUntilNextGroup calculates how long to sleep until the next group starts
+func (gg *GroupGenerator) calculateSleepUntilNextGroup() time.Duration {
+	gg.mu.RLock()
+	defer gg.mu.RUnlock()
+	
+	// Get a representative track to calculate timing
+	var sampleTrack TrackPublisher
+	for _, track := range gg.tracks {
+		sampleTrack = track
+		break
+	}
+	
+	if sampleTrack == nil {
+		return 100 * time.Millisecond // Default fallback
+	}
+	
+	// Use concrete track to calculate when next group starts
+	if ctp, ok := sampleTrack.(*ConcreteTrackPublisher); ok {
+		nowMS := uint64(time.Now().UnixMilli())
+		currentGroup := CurrMoQGroupNr(ctp.track, nowMS, MoqGroupDurMS)
+		nextGroup := currentGroup + 1
+		
+		// Calculate when the next group's first object becomes available
+		// This is based on the availability timing from the README:
+		// Object (G, 0) is available at G seconds + sampleOffset + objectDuration
+		
+		// Calculate object duration in milliseconds
+		objectDurMS := float64(ctp.track.SampleDur*uint32(ctp.track.SampleBatch)) * 1000.0 / float64(ctp.track.TimeScale)
+		
+		// Calculate sample offset based on content type
+		var sampleOffsetMS float64
+		if ctp.track.ContentType == "audio" {
+			// For audio, offset is minimal time later than video given audio sample duration
+			audioSampleDurMS := float64(ctp.track.SampleDur) * 1000.0 / float64(ctp.track.TimeScale)
+			sampleOffsetMS = audioSampleDurMS
+		} else {
+			// Video has no sample offset
+			sampleOffsetMS = 0
+		}
+		
+		// Next group's first object becomes available at:
+		// nextGroup seconds + sampleOffset + objectDuration
+		nextGroupStartMS := float64(nextGroup)*1000.0 + sampleOffsetMS + objectDurMS
+		
+		sleepMS := int64(nextGroupStartMS) - int64(nowMS)
+		if sleepMS <= 0 {
+			return 0 // Group should already be available
+		}
+		
+		return time.Duration(sleepMS) * time.Millisecond
+	}
+	
+	// Fallback to group duration if we can't calculate precisely
+	return gg.groupDuration
+}
+
+// setCurrentGroup updates the current group number
+func (gg *GroupGenerator) setCurrentGroup(group uint64) {
 	gg.mu.Lock()
 	defer gg.mu.Unlock()
-	gg.currentGroup++
+	gg.currentGroup = group
+}
+
+// notifyTracks notifies all registered tracks of a new group
+func (gg *GroupGenerator) notifyTracks(group uint64) {
+	gg.mu.RLock()
+	tracks := make([]TrackPublisher, 0, len(gg.tracks))
+	for _, track := range gg.tracks {
+		tracks = append(tracks, track)
+	}
+	gg.mu.RUnlock()
+	
+	// Notify tracks without holding the lock
+	for _, track := range tracks {
+		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
+			go ctp.onNewGroup(group)
+		}
+	}
 }
