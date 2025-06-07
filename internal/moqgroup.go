@@ -59,6 +59,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 	return mq
 }
 
+// calcMoQGroup calculates the start and end sample numbers for a MoQGroup
 func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
 	startTime := nr * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
 	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
@@ -74,35 +75,93 @@ func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr
 }
 
 // CurrMoQGroupNr returns the current MoQGroup number/ID for a given time.
+// Takes into account sample offset and object duration - groups don't start exactly at full seconds.
 func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uint64 {
-	return nowMS / uint64(constantDurMS)
+	// Calculate object duration in milliseconds
+	objectDurMS := float64(track.SampleDur*uint32(track.SampleBatch)) * 1000.0 / float64(track.TimeScale)
+	
+	// Calculate sample offset based on content type
+	var sampleOffsetMS float64
+	if track.ContentType == "audio" {
+		// For audio, offset is minimal time later than video given audio sample duration
+		audioSampleDurMS := float64(track.SampleDur) * 1000.0 / float64(track.TimeScale)
+		sampleOffsetMS = audioSampleDurMS
+	} else {
+		// Video has no sample offset
+		sampleOffsetMS = 0
+	}
+	
+	// The effective start time for groups is shifted by sampleOffset + objectDuration
+	// Group 0 first object becomes available at: sampleOffset + objectDuration
+	// Group 1 first object becomes available at: 1000 + sampleOffset + objectDuration
+	// So group G starts effectively at: G * constantDurMS + sampleOffset + objectDuration
+	
+	groupStartOffset := sampleOffsetMS + objectDurMS
+	
+	// If we're before the first group starts, we're in group 0
+	if float64(nowMS) < groupStartOffset {
+		return 0
+	}
+	
+	// Calculate which group we're in based on the effective start time
+	adjustedTime := float64(nowMS) - groupStartOffset
+	return uint64(adjustedTime / float64(constantDurMS))
 }
 
 // WriteMoQGroup writes all MoQGroup objects to an ObjectWriter.
 // The MoQGroup is sent in the correct time order and at appropriate times if ongoing session.
 // If the context is done, the function returns the error from the context.
+//
+// Availability time calculation:
+// - Object (G, 0) is available at G seconds + sampleOffset + objectDuration relative to Epoch
+// - Object (G, N) is available N*objectDuration later
+// - Video has sampleOffset = 0
+// - Audio has sampleOffset = minimal time later than video given audio sample duration
 func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow ObjectWriter) error {
-	factorMS := 1000 / float64(track.TimeScale)
-	for nr, moqObj := range moq.MoQObjects {
+	groupNr := uint64(moq.id)
+
+	// Calculate object duration in milliseconds
+	objectDurMS := float64(track.SampleDur*uint32(track.SampleBatch)) * 1000.0 / float64(track.TimeScale)
+
+	// Calculate sample offset based on content type
+	var sampleOffsetMS float64
+	if track.ContentType == "audio" {
+		// For audio, offset is minimal time later than video given audio sample duration
+		// This ensures audio objects are available slightly after corresponding video
+		audioSampleDurMS := float64(track.SampleDur) * 1000.0 / float64(track.TimeScale)
+		sampleOffsetMS = audioSampleDurMS
+	} else {
+		// Video has no sample offset
+		sampleOffsetMS = 0
+	}
+
+	for objNr, moqObj := range moq.MoQObjects {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+
+		// Calculate availability time:
+		// Object (G, 0) = G seconds + sampleOffset + objectDuration (available when object ENDS)
+		// Object (G, N) = Object (G, 0) + N * objectDuration
+		baseAvailabilityMS := float64(groupNr)*1000.0 + sampleOffsetMS + objectDurMS
+		objAvailabilityMS := baseAvailabilityMS + float64(objNr)*objectDurMS
+
 		now := time.Now().UnixMilli()
-		objTime := moq.startTime + uint64(nr+1)*uint64(track.SampleDur)*uint64(track.SampleBatch)
-		objTimeMS := int64(float64(objTime) * factorMS)
-		waitTime := objTimeMS - now
+		waitTime := int64(objAvailabilityMS) - now
+
 		if waitTime <= 0 {
-			_, err := ow(uint64(nr), moqObj)
+			_, err := ow(uint64(objNr), moqObj)
 			if err != nil {
 				return err
 			}
 			continue
 		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(time.Duration(waitTime) * time.Millisecond):
-			_, err := ow(uint64(nr), moqObj)
+			_, err := ow(uint64(objNr), moqObj)
 			if err != nil {
 				return err
 			}
@@ -114,41 +173,51 @@ func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow O
 // GetLargestObject returns the largest object location for a track at the current time.
 // According to draft-11, this is the object with the largest Location {Group, Object}
 // from the perspective of the current publishing state.
+// Objects are available when they END, not when they start.
 func GetLargestObject(track *ContentTrack, nowMS uint64, constantDurMS uint32) Location {
+	// Calculate object duration in milliseconds
+	objectDurMS := float64(track.SampleDur*uint32(track.SampleBatch)) * 1000.0 / float64(track.TimeScale)
+
+	// Calculate sample offset based on content type
+	var sampleOffsetMS float64
+	if track.ContentType == "audio" {
+		// For audio, offset is minimal time later than video given audio sample duration
+		audioSampleDurMS := float64(track.SampleDur) * 1000.0 / float64(track.TimeScale)
+		sampleOffsetMS = audioSampleDurMS
+	} else {
+		// Video has no sample offset
+		sampleOffsetMS = 0
+	}
+
+	// Find the largest available object by iterating through groups and objects
+	// Start from current group and work backwards if needed
 	currentGroupNr := CurrMoQGroupNr(track, nowMS, constantDurMS)
-	
-	// Use calcMoQGroup to get the sample range for this group
-	startNr, endNr := calcMoQGroup(track, currentGroupNr, constantDurMS)
-	
-	// Calculate which sample should be available at the current time
-	currentTimeTrackUnits := nowMS * uint64(track.TimeScale) / 1000
-	currentSampleNr := currentTimeTrackUnits / uint64(track.SampleDur)
-	
-	// Clamp to the group boundaries
-	if currentSampleNr < startNr {
-		// We're before this group starts, return previous group's last object
-		if currentGroupNr > 0 {
-			prevStartNr, prevEndNr := calcMoQGroup(track, currentGroupNr-1, constantDurMS)
-			samplesInPrevGroup := prevEndNr - prevStartNr
-			objectsInPrevGroup := (samplesInPrevGroup + uint64(track.SampleBatch) - 1) / uint64(track.SampleBatch)
-			return Location{
-				Group:  currentGroupNr - 1,
-				Object: objectsInPrevGroup - 1, // 0-based index
+
+	// Check objects in current and previous groups
+	for groupNr := int64(currentGroupNr); groupNr >= 0; groupNr-- {
+		// Calculate how many objects are in this group
+		startNr, endNr := calcMoQGroup(track, uint64(groupNr), constantDurMS)
+		samplesInGroup := endNr - startNr
+		objectsInGroup := (samplesInGroup + uint64(track.SampleBatch) - 1) / uint64(track.SampleBatch)
+
+		// Check objects in reverse order (highest object number first)
+		for objNr := int64(objectsInGroup) - 1; objNr >= 0; objNr-- {
+			// Calculate availability time for this object:
+			// Object (G, 0) = G seconds + sampleOffset + objectDuration (when object ENDS)
+			// Object (G, N) = Object (G, 0) + N * objectDuration
+			baseAvailabilityMS := float64(groupNr)*1000.0 + sampleOffsetMS + objectDurMS
+			objAvailabilityMS := baseAvailabilityMS + float64(objNr)*objectDurMS
+
+			// If this object is available now (has ended), it's our largest object
+			if float64(nowMS) >= objAvailabilityMS {
+				return Location{
+					Group:  uint64(groupNr),
+					Object: uint64(objNr),
+				}
 			}
 		}
-		return Location{Group: 0, Object: 0}
 	}
-	
-	if currentSampleNr >= endNr {
-		currentSampleNr = endNr - 1 // Last sample in this group
-	}
-	
-	// Calculate which object this sample belongs to within the group
-	samplesIntoGroup := currentSampleNr - startNr
-	objectNr := samplesIntoGroup / uint64(track.SampleBatch)
-	
-	return Location{
-		Group:  currentGroupNr,
-		Object: objectNr,
-	}
+
+	// If no objects are available yet, return (0, 0)
+	return Location{Group: 0, Object: 0}
 }

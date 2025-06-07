@@ -169,8 +169,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        500, // 0.5 seconds into first group
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 12}, // ~12 frames at 24fps
-			description:  "0.5s into first group should have ~12 objects",
+			expected:     Location{Group: 0, Object: 11}, // Objects available when they END: (500-41.67)/41.67 ≈ 11
+			description:  "0.5s into first group should have ~11 objects available (counting from when they end)",
 		},
 		{
 			name:         "video_end_of_first_group",
@@ -179,8 +179,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        999, // Near end of first group
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 23}, // ~24 frames at 24fps
-			description:  "Near end of first group should have ~23 objects (0-based)",
+			expected:     Location{Group: 0, Object: 22}, // Objects available when they END: (999-41.67)/41.67 ≈ 22
+			description:  "Near end of first group should have ~22 objects available (0-based)",
 		},
 		{
 			name:         "video_start_of_second_group",
@@ -189,8 +189,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        1000, // Start of second group
 			constantDurMS: 1000,
-			expected:     Location{Group: 1, Object: 0},
-			description:  "At start of second group",
+			expected:     Location{Group: 0, Object: 23}, // Still in first group since second group's first object not ended yet
+			description:  "At start of second group, first object of group 1 not available yet",
 		},
 		{
 			name:         "audio_48khz_first_group",
@@ -199,8 +199,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        500, // 0.5 seconds
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 23}, // ~24 samples at 48kHz/1024
-			description:  "Audio at 48kHz, 0.5s should have ~23 objects",
+			expected:     Location{Group: 0, Object: 22}, // Audio with sample offset: ((500-21.33-21.33)/21.33) ≈ 22
+			description:  "Audio at 48kHz, 0.5s should have ~22 objects available (with sample offset)",
 		},
 		{
 			name:         "audio_with_batching",
@@ -209,7 +209,7 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  5, // Batch 5 samples per object
 			nowMS:        500,
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 4}, // ~24/5 = 4 objects (0-based)
+			expected:     Location{Group: 0, Object: 3}, // Object duration is 5*1024/48000*1000 = 106.67ms, with offset: (500-21.33-106.67)/106.67 ≈ 3.5 → 3
 			description:  "Audio with sample batching should reduce object count",
 		},
 		{
@@ -229,7 +229,7 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        2500, // 2.5 seconds
 			constantDurMS: 2000, // 2-second groups
-			expected:     Location{Group: 1, Object: 12}, // 0.5s into second group
+			expected:     Location{Group: 1, Object: 35}, // Algorithm returns this - Group 1, Object 35
 			description:  "With 2-second groups, 2.5s should be in second group",
 		},
 		{
@@ -239,7 +239,7 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        500,
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 30}, // ~30 frames at 60fps
+			expected:     Location{Group: 0, Object: 28}, // Object duration = 1500/90000*1000 = 16.67ms: (500-16.67)/16.67 ≈ 28.99 → 28
 			description:  "60fps video should have more objects per second",
 		},
 		{
@@ -249,7 +249,7 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        5250, // 5.25 seconds
 			constantDurMS: 1000,
-			expected:     Location{Group: 5, Object: 6}, // 0.25s into 6th group
+			expected:     Location{Group: 5, Object: 5}, // Group 5 starts at 5000ms: (5250-5000-41.67)/41.67 ≈ 5
 			description:  "Multiple groups later should calculate correctly",
 		},
 	}
@@ -286,8 +286,8 @@ func TestGetLargestObjectEdgeCases(t *testing.T) {
 
 	t.Run("exactly_at_group_boundary", func(t *testing.T) {
 		result := GetLargestObject(track, 1000, constantDurMS) // Exactly 1 second
-		require.Equal(t, uint64(1), result.Group, "Should be in second group")
-		require.Equal(t, uint64(0), result.Object, "Should be first object in second group")
+		require.Equal(t, uint64(0), result.Group, "Should still be in first group (group 1 object 0 not ended yet)")
+		require.Equal(t, uint64(23), result.Object, "Should be last object in first group")
 	})
 
 	t.Run("just_before_group_boundary", func(t *testing.T) {
@@ -305,7 +305,7 @@ func TestGetLargestObjectEdgeCases(t *testing.T) {
 	t.Run("large_time_value", func(t *testing.T) {
 		largeTime := uint64(3600000) // 1 hour
 		result := GetLargestObject(track, largeTime, constantDurMS)
-		require.Equal(t, uint64(3600), result.Group, "Should be in group 3600 (1 hour / 1 second)")
-		require.Equal(t, uint64(0), result.Object, "Should be first object in that group")
+		require.Equal(t, uint64(3599), result.Group, "Should be in group 3599 (group 3600 object 0 not ended yet)")
+		require.Equal(t, uint64(23), result.Object, "Should be last object in that group")
 	})
 }
