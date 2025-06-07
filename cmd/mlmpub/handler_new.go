@@ -38,7 +38,7 @@ type moqHandlerNew struct {
 // newMoqHandler creates a new handler with the PublisherManager architecture
 func newMoqHandler(addr string, tlsConfig *tls.Config, namespace []string, asset *internal.Asset, catalog *internal.Catalog, logfh io.Writer, fingerprintPort int) *moqHandlerNew {
 	publisherMgr := internal.NewPublisherManager(asset, catalog)
-	
+
 	return &moqHandlerNew{
 		addr:            addr,
 		tlsConfig:       tlsConfig,
@@ -121,13 +121,13 @@ func (h *moqHandlerNew) startFingerprintServer() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
-		
+
 		// Handle preflight OPTIONS request
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		fmt.Fprint(w, fingerprint)
 		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
 	})
@@ -179,13 +179,13 @@ func (h *moqHandlerNew) validateCertificateForWebTransport() error {
 
 	// Check 1: Must be self-signed (issuer == subject)
 	if x509Cert.Issuer.String() != x509Cert.Subject.String() {
-		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)", 
+		return fmt.Errorf("certificate is not self-signed (issuer: %s, subject: %s)",
 			x509Cert.Issuer.String(), x509Cert.Subject.String())
 	}
 
 	// Check 2: Must use ECDSA algorithm
 	if x509Cert.PublicKeyAlgorithm != x509.ECDSA {
-		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s", 
+		return fmt.Errorf("certificate must use ECDSA algorithm, but uses %s",
 			x509Cert.PublicKeyAlgorithm.String())
 	}
 
@@ -226,6 +226,14 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				slog.Error("failed to type assert SubscribeMessage")
 				return
 			}
+			
+			slog.Info("received subscribe message",
+				"requestID", sm.RequestID(),
+				"track", sm.Track,
+				"namespace", sm.Namespace,
+				"filterType", sm.FilterType,
+				"subscriberPriority", sm.SubscriberPriority)
+			
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,

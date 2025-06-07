@@ -17,7 +17,6 @@ type PublisherManager struct {
 	catalog       *Catalog
 	mediaSyncer   *MediaSyncer
 	trackPubs     map[string]*ConcreteTrackPublisher
-	nextRequestID uint64
 	subscriptions map[uint64]*Subscription
 }
 
@@ -168,9 +167,8 @@ func (pm *PublisherManager) HandleSubscribe(sm *moqtransport.SubscribeMessage, w
 		return fmt.Errorf("subscription response writer does not implement publisher")
 	}
 	
-	// Create subscription
-	requestID := pm.nextRequestID
-	pm.nextRequestID++
+	// Create subscription using client-provided request ID
+	requestID := sm.RequestID()
 	
 	currentGroup := trackPub.GetCurrentGroup()
 	
