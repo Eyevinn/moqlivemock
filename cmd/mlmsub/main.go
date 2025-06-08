@@ -44,6 +44,7 @@ type options struct {
 	addr      string
 	trackname string
 	duration  int
+	endAfter  int
 	muxout    string
 	videoOut  string
 	audioOut  string
@@ -66,6 +67,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
+	fs.IntVar(&opts.endAfter, "end-after", 0,
+		"Send SUBSCRIBE_UPDATE to end subscriptions after X groups from first group (0 means no limit)")
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
@@ -166,6 +169,7 @@ func runClient(ctx context.Context, opts *options) error {
 		logfh:     logfh,
 		videoname: opts.videoname,
 		audioname: opts.audioname,
+		endAfter:  opts.endAfter,
 	}
 
 	outs := make(map[string]io.Writer)

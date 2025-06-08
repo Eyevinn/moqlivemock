@@ -342,7 +342,7 @@ func (tp *ConcreteTrackPublisher) publishGroup(groupNr uint64) {
 		}
 		
 		// Check if subscription should continue
-		if sub.EndGroup != nil && groupNr > *sub.EndGroup {
+		if sub.EndGroup != nil && groupNr >= *sub.EndGroup {
 			// Send SUBSCRIBE_DONE and mark for removal
 			go tp.sendSubscribeDone(sub)
 			continue
