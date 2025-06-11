@@ -41,17 +41,19 @@ Usage of %s:
 `
 
 type options struct {
-	addr      string
-	trackname string
-	duration  int
-	muxout    string
-	videoOut  string
-	audioOut  string
-	qlogfile  string
-	videoname string
-	audioname string
-	loglevel  string
-	version   bool
+	addr         string
+	trackname    string
+	duration     int
+	endAfter     int
+	switchTracks bool
+	muxout       string
+	videoOut     string
+	audioOut     string
+	qlogfile     string
+	videoname    string
+	audioname    string
+	loglevel     string
+	version      bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -66,6 +68,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
+	fs.IntVar(&opts.endAfter, "end-after", 0,
+		"Send SUBSCRIBE_UPDATE to end subscriptions after X groups from first group (0 means no limit)")
+	fs.BoolVar(&opts.switchTracks, "switch-tracks", false,
+		"Start with video+audio, then switch video tracks (400kbps→600kbps→900kbps), then audio tracks (monotonic→scale)")
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
@@ -160,12 +166,14 @@ func runClient(ctx context.Context, opts *options) error {
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
 	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
+		quic:         !useWebTransport,
+		addr:         opts.addr,
+		namespace:    []string{internal.Namespace},
+		logfh:        logfh,
+		videoname:    opts.videoname,
+		audioname:    opts.audioname,
+		endAfter:     opts.endAfter,
+		switchTracks: opts.switchTracks,
 	}
 
 	outs := make(map[string]io.Writer)

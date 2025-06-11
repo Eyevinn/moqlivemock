@@ -209,7 +209,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  5, // Batch 5 samples per object
 			nowMS:        500,
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 3}, // Object duration is 5*1024/48000*1000 = 106.67ms, with offset: (500-21.33-106.67)/106.67 ≈ 3.5 → 3
+			// Object duration is 5*1024/48000*1000 = 106.67ms, with offset: (500-21.33-106.67)/106.67 ≈ 3.5 → 3
+			expected:     Location{Group: 0, Object: 3},
 			description:  "Audio with sample batching should reduce object count",
 		},
 		{
@@ -239,7 +240,8 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:  1,
 			nowMS:        500,
 			constantDurMS: 1000,
-			expected:     Location{Group: 0, Object: 28}, // Object duration = 1500/90000*1000 = 16.67ms: (500-16.67)/16.67 ≈ 28.99 → 28
+			// Object duration = 1500/90000*1000 = 16.67ms: (500-16.67)/16.67 ≈ 28.99 → 28
+			expected:     Location{Group: 0, Object: 28},
 			description:  "60fps video should have more objects per second",
 		},
 		{
