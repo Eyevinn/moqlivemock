@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -75,7 +76,7 @@ func (ms *MediaSyncer) GetCurrentGroup(mediaType MediaType) uint64 {
 	}
 }
 
-// Start starts both group generators
+// Start starts both group generators and monitoring
 func (ms *MediaSyncer) Start(ctx context.Context) error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
@@ -85,9 +86,14 @@ func (ms *MediaSyncer) Start(ctx context.Context) error {
 	}
 	
 	if err := ms.audioGroupGen.Start(ctx); err != nil {
-		ms.videoGroupGen.Stop()
+		if stopErr := ms.videoGroupGen.Stop(); stopErr != nil {
+			slog.Error("failed to stop video group generator after audio start error", "error", stopErr)
+		}
 		return err
 	}
+	
+	// Start subscriber monitoring
+	go ms.monitorSubscribers(ctx)
 	
 	return nil
 }
@@ -322,5 +328,95 @@ func (gg *GroupGenerator) notifyTracks(group uint64) {
 		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
 			go ctp.onNewGroup(group)
 		}
+	}
+}
+
+// monitorSubscribers periodically logs subscriber statistics and cleans up stale subscribers
+func (ms *MediaSyncer) monitorSubscribers(ctx context.Context) {
+	logTicker := time.NewTicker(10 * time.Second)   // Log every 10 seconds
+	cleanupTicker := time.NewTicker(30 * time.Second) // Cleanup every 30 seconds
+	defer logTicker.Stop()
+	defer cleanupTicker.Stop()
+	
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-logTicker.C:
+			ms.logAllSubscriberStats()
+		case <-cleanupTicker.C:
+			ms.cleanupAllStaleSubscribers()
+		}
+	}
+}
+
+// logAllSubscriberStats logs subscriber statistics for all tracks
+func (ms *MediaSyncer) logAllSubscriberStats() {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	
+	totalVideoSubs := 0
+	totalAudioSubs := 0
+	
+	// Log video track stats
+	for _, track := range ms.videoTracks {
+		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
+			status := ctp.GetTrackStatus()
+			totalVideoSubs += status.SubscriberCount
+			ctp.LogSubscriberStats()
+		}
+	}
+	
+	// Log audio track stats
+	for _, track := range ms.audioTracks {
+		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
+			status := ctp.GetTrackStatus()
+			totalAudioSubs += status.SubscriberCount
+			ctp.LogSubscriberStats()
+		}
+	}
+	
+	// Log overall stats
+	slog.Info("subscriber summary",
+		"totalVideoTracks", len(ms.videoTracks),
+		"totalAudioTracks", len(ms.audioTracks),
+		"totalVideoSubscribers", totalVideoSubs,
+		"totalAudioSubscribers", totalAudioSubs)
+	
+	if totalVideoSubs == 0 && totalAudioSubs == 0 {
+		slog.Warn("no subscribers connected to any tracks")
+	}
+}
+
+// cleanupAllStaleSubscribers removes stale subscribers from all tracks
+func (ms *MediaSyncer) cleanupAllStaleSubscribers() {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	
+	totalCleaned := 0
+	
+	// Cleanup video tracks
+	for _, track := range ms.videoTracks {
+		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
+			beforeCount := ctp.GetTrackStatus().SubscriberCount
+			ctp.CleanupStaleSubscribers()
+			afterCount := ctp.GetTrackStatus().SubscriberCount
+			totalCleaned += beforeCount - afterCount
+		}
+	}
+	
+	// Cleanup audio tracks
+	for _, track := range ms.audioTracks {
+		if ctp, ok := track.(*ConcreteTrackPublisher); ok {
+			beforeCount := ctp.GetTrackStatus().SubscriberCount
+			ctp.CleanupStaleSubscribers()
+			afterCount := ctp.GetTrackStatus().SubscriberCount
+			totalCleaned += beforeCount - afterCount
+		}
+	}
+	
+	if totalCleaned > 0 {
+		slog.Info("stale subscriber cleanup complete",
+			"totalRemoved", totalCleaned)
 	}
 }

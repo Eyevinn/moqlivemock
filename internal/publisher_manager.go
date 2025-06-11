@@ -123,7 +123,10 @@ func (pm *PublisherManager) Stop() error {
 }
 
 // HandleSubscribe handles a subscribe message using the new architecture
-func (pm *PublisherManager) HandleSubscribe(sm *moqtransport.SubscribeMessage, w moqtransport.SubscribeResponseWriter) error {
+func (pm *PublisherManager) HandleSubscribe(
+	sm *moqtransport.SubscribeMessage,
+	w moqtransport.SubscribeResponseWriter,
+) error {
 	trackName := sm.Track
 	
 	// Check if this is a catalog subscription
@@ -232,6 +235,44 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 	err = sg.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close subgroup: %w", err)
+	}
+	
+	return nil
+}
+
+// HandleSubscribeUpdate handles a subscribe update message
+func (pm *PublisherManager) HandleSubscribeUpdate(sum *moqtransport.SubscribeUpdateMessage) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	
+	requestID := sum.RequestID()
+	subscription, exists := pm.subscriptions[requestID]
+	if !exists {
+		return fmt.Errorf("subscription not found for request ID: %d", requestID)
+	}
+	
+	slog.Info("updating subscription",
+		"requestID", requestID,
+		"track", subscription.TrackName,
+		"endGroup", sum.EndGroup,
+		"subscriberPriority", sum.SubscriberPriority)
+	
+	// Find the track publisher
+	trackPub, exists := pm.trackPubs[subscription.TrackName]
+	if !exists {
+		return fmt.Errorf("track publisher not found for track: %s", subscription.TrackName)
+	}
+	
+	// Create subscription update
+	update := SubscriptionUpdate{
+		EndGroup: &sum.EndGroup,
+		Priority: &sum.SubscriberPriority,
+	}
+	
+	// Update the subscription via track publisher
+	err := trackPub.UpdateSubscription(requestID, update)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription: %w", err)
 	}
 	
 	return nil

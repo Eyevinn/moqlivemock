@@ -490,16 +490,27 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 
 // sendSubscribeDone sends a SUBSCRIBE_DONE message and cleans up the subscription
 func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
-	// TODO: Implement SUBSCRIBE_DONE message sending
-	// This will be implemented in Phase 2 when we add control message support
-	
 	slog.Info("subscription ended normally", 
 		"track", tp.track.Name, 
 		"requestID", sub.RequestID, 
 		"finalGroup", sub.LastGroupSent)
 	
+	// Send SUBSCRIBE_DONE with success status
+	err := sub.Publisher.CloseWithError(0, "Subscription completed successfully")
+	if err != nil {
+		slog.Error("failed to send SUBSCRIBE_DONE", 
+			"track", tp.track.Name, 
+			"requestID", sub.RequestID, 
+			"error", err)
+	}
+	
 	// Remove subscription
-	tp.RemoveSubscription(sub.RequestID)
+	if err := tp.RemoveSubscription(sub.RequestID); err != nil {
+		slog.Error("failed to remove subscription after SUBSCRIBE_DONE", 
+			"track", tp.track.Name, 
+			"requestID", sub.RequestID, 
+			"error", err)
+	}
 }
 
 // handleSubscriberError handles errors that indicate a subscriber has vanished
@@ -526,6 +537,11 @@ func (tp *ConcreteTrackPublisher) handleSubscriberError(sub *Subscription, opera
 			"error", err)
 		
 		// Remove the problematic subscription
-		tp.RemoveSubscription(sub.RequestID)
+		if err := tp.RemoveSubscription(sub.RequestID); err != nil {
+			slog.Error("failed to remove problematic subscription", 
+				"track", tp.track.Name, 
+				"requestID", sub.RequestID, 
+				"error", err)
+		}
 	}
 }
