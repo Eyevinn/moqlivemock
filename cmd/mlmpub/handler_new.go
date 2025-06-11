@@ -239,13 +239,6 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				return
 			}
 
-			slog.Info("received subscribe message",
-				"requestID", sm.RequestID(),
-				"track", sm.Track,
-				"namespace", sm.Namespace,
-				"filterType", sm.FilterType,
-				"subscriberPriority", sm.SubscriberPriority)
-
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,
@@ -267,6 +260,18 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				}
 				return
 			}
+
+			subID := internal.SubscriptionID{
+				Session:   subscribeWriter.Session(),
+				RequestID: sm.RequestID(),
+			}
+
+			slog.Info("received subscribe message",
+				"subscriptionID", subID.String(),
+				"track", sm.Track,
+				"namespace", sm.Namespace,
+				"filterType", sm.FilterType,
+				"subscriberPriority", sm.SubscriberPriority)
 
 			// Handle subscription using publisher manager
 			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter)
@@ -290,17 +295,21 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				return
 			}
 
-			slog.Info("received subscribe update message",
-				"requestID", sum.RequestID(),
-				"endGroup", sum.EndGroup,
-				"subscriberPriority", sum.SubscriberPriority)
-
 			// Cast to SubscribeResponseWriter to get session information
 			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
 			if !ok {
 				slog.Error("response writer is not a SubscribeResponseWriter for subscribe update")
 				return
 			}
+
+			subID := internal.SubscriptionID{
+				Session:   subscribeWriter.Session(),
+				RequestID: sum.RequestID(),
+			}
+			slog.Info("received subscribe update message",
+				"subscriptionID", subID.String(),
+				"endGroup", sum.EndGroup,
+				"subscriberPriority", sum.SubscriberPriority)
 
 			// Handle subscription update using publisher manager
 			err := h.publisherMgr.HandleSubscribeUpdate(sum, subscribeWriter)
@@ -333,4 +342,25 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
 		return
 	}
+}
+
+// serveQUICConn serves HTTP/3 connections
+func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
+	err := wt.ServeQUICConn(conn)
+	if err != nil {
+		slog.Error("failed to serve QUIC connection", "error", err)
+	}
+}
+
+// tupleEqual compares two string slices for equality
+func tupleEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, t := range a {
+		if t != b[i] {
+			return false
+		}
+	}
+	return true
 }
