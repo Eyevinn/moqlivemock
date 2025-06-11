@@ -238,14 +238,14 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				slog.Error("failed to type assert SubscribeMessage")
 				return
 			}
-			
+
 			slog.Info("received subscribe message",
 				"requestID", sm.RequestID(),
 				"track", sm.Track,
 				"namespace", sm.Namespace,
 				"filterType", sm.FilterType,
 				"subscriberPriority", sm.SubscriberPriority)
-			
+
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,
@@ -283,27 +283,31 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				return
 			}
 
-			slog.Info("handled subscription", "track", sm.Track)
 		case moqtransport.MessageSubscribeUpdate:
 			sum, ok := r.(*moqtransport.SubscribeUpdateMessage)
 			if !ok {
 				slog.Error("failed to type assert SubscribeUpdateMessage")
 				return
 			}
-			
+
 			slog.Info("received subscribe update message",
 				"requestID", sum.RequestID(),
 				"endGroup", sum.EndGroup,
 				"subscriberPriority", sum.SubscriberPriority)
-			
+
+			// Cast to SubscribeResponseWriter to get session information
+			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
+			if !ok {
+				slog.Error("response writer is not a SubscribeResponseWriter for subscribe update")
+				return
+			}
+
 			// Handle subscription update using publisher manager
-			err := h.publisherMgr.HandleSubscribeUpdate(sum)
+			err := h.publisherMgr.HandleSubscribeUpdate(sum, subscribeWriter)
 			if err != nil {
 				slog.Error("failed to handle subscription update", "requestID", sum.RequestID(), "error", err)
 				return
 			}
-			
-			slog.Info("handled subscription update", "requestID", sum.RequestID())
 		}
 	})
 }
