@@ -17,7 +17,7 @@ type PublisherManager struct {
 	catalog       *Catalog
 	mediaSyncer   *MediaSyncer
 	trackPubs     map[string]*ConcreteTrackPublisher
-	subscriptions map[uint64]*Subscription
+	subscriptions map[SubscriptionID]*Subscription
 }
 
 // NewPublisherManager creates a new publisher manager
@@ -27,7 +27,7 @@ func NewPublisherManager(asset *Asset, catalog *Catalog) *PublisherManager {
 		catalog:       catalog,
 		mediaSyncer:   NewMediaSyncer(),
 		trackPubs:     make(map[string]*ConcreteTrackPublisher),
-		subscriptions: make(map[uint64]*Subscription),
+		subscriptions: make(map[SubscriptionID]*Subscription),
 	}
 }
 
@@ -35,19 +35,19 @@ func NewPublisherManager(asset *Asset, catalog *Catalog) *PublisherManager {
 func (pm *PublisherManager) Start(ctx context.Context) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	
+
 	// Create track publishers for each track in the catalog
 	for _, track := range pm.catalog.Tracks {
 		if track.Name == "catalog" {
 			continue // Skip catalog track
 		}
-		
+
 		ct := pm.asset.GetTrackByName(track.Name)
 		if ct == nil {
 			slog.Warn("track not found in asset", "track", track.Name)
 			continue
 		}
-		
+
 		// Determine media type and get appropriate group generator
 		var groupGen *GroupGenerator
 		switch ct.ContentType {
@@ -59,30 +59,30 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 			slog.Warn("unsupported content type", "track", track.Name, "type", ct.ContentType)
 			continue
 		}
-		
+
 		// Create track publisher
 		trackPub, err := NewTrackPublisher(pm.asset, ct, groupGen)
 		if err != nil {
 			return fmt.Errorf("failed to create track publisher for %s: %w", track.Name, err)
 		}
-		
+
 		pm.trackPubs[track.Name] = trackPub
-		
+
 		// Register with media syncer
 		err = pm.mediaSyncer.RegisterTrack(track.Name, trackPub)
 		if err != nil {
 			return fmt.Errorf("failed to register track %s: %w", track.Name, err)
 		}
-		
+
 		slog.Info("created track publisher", "track", track.Name, "type", ct.ContentType)
 	}
-	
+
 	// Start media syncer (this starts the group generators)
 	err := pm.mediaSyncer.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to start media syncer: %w", err)
 	}
-	
+
 	// Start all track publishers
 	for trackName, trackPub := range pm.trackPubs {
 		err := trackPub.Start(ctx)
@@ -91,7 +91,7 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 			// Continue with other tracks
 		}
 	}
-	
+
 	slog.Info("publisher manager started", "tracks", len(pm.trackPubs))
 	return nil
 }
@@ -100,9 +100,9 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 func (pm *PublisherManager) Stop() error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	
+
 	var lastErr error
-	
+
 	// Stop all track publishers
 	for trackName, trackPub := range pm.trackPubs {
 		err := trackPub.Stop()
@@ -111,68 +111,78 @@ func (pm *PublisherManager) Stop() error {
 			lastErr = err
 		}
 	}
-	
+
 	// Stop media syncer
 	err := pm.mediaSyncer.Stop()
 	if err != nil {
 		lastErr = err
 	}
-	
+
 	slog.Info("publisher manager stopped")
 	return lastErr
 }
 
 // HandleSubscribe handles a subscribe message using the new architecture
-func (pm *PublisherManager) HandleSubscribe(sm *moqtransport.SubscribeMessage, w moqtransport.SubscribeResponseWriter) error {
+func (pm *PublisherManager) HandleSubscribe(
+	sm *moqtransport.SubscribeMessage,
+	w moqtransport.SubscribeResponseWriter,
+) error {
+	subID := SubscriptionID{
+		Session:   w.Session(),
+		RequestID: sm.RequestID(),
+	}
+
 	trackName := sm.Track
-	
+
 	// Check if this is a catalog subscription
 	if trackName == "catalog" {
 		return pm.handleCatalogSubscription(w)
 	}
-	
+
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	
+
 	// Find the track publisher
 	trackPub, exists := pm.trackPubs[trackName]
 	if !exists {
 		return fmt.Errorf("track not found: %s", trackName)
 	}
-	
+
 	// Only support FilterTypeNextGroupStart for track subscriptions
 	if sm.FilterType != moqtransport.FilterTypeNextGroupStart {
 		return fmt.Errorf("track %s only supports FilterTypeNextGroupStart, got %d", trackName, sm.FilterType)
 	}
-	
+
 	// Get largest location from track publisher
 	largestGroup, largestObject := trackPub.GetLargestLocation()
-	
+
 	// Create SubscribeOkOptions with LargestLocation
 	opts := moqtransport.DefaultSubscribeOkOptions()
 	opts.LargestLocation = &moqtransport.Location{
 		Group:  largestGroup,
 		Object: largestObject,
 	}
-	
+
 	// Accept the subscription
 	err := w.AcceptWithOptions(opts)
 	if err != nil {
 		return fmt.Errorf("failed to accept subscription: %w", err)
 	}
-	
+
 	// Get publisher interface from response writer
 	publisher, ok := w.(moqtransport.Publisher)
 	if !ok {
 		return fmt.Errorf("subscription response writer does not implement publisher")
 	}
-	
+
 	// Create subscription using client-provided request ID
 	requestID := sm.RequestID()
-	
+	session := w.Session()
+
 	currentGroup := trackPub.GetCurrentGroup()
-	
+
 	subscription := &Subscription{
+		Session:     session,
 		RequestID:   requestID,
 		TrackName:   trackName,
 		StartGroup:  currentGroup + 1, // Start at next group
@@ -182,23 +192,22 @@ func (pm *PublisherManager) HandleSubscribe(sm *moqtransport.SubscribeMessage, w
 		UpdateChan:  make(chan SubscriptionUpdate, 10),
 		Done:        make(chan struct{}),
 	}
-	
-	pm.subscriptions[requestID] = subscription
-	
+	pm.subscriptions[subID] = subscription
+
 	// Add subscription to track publisher
 	err = trackPub.AddSubscription(subscription)
 	if err != nil {
-		delete(pm.subscriptions, requestID)
+		delete(pm.subscriptions, subID)
 		return fmt.Errorf("failed to add subscription to track publisher: %w", err)
 	}
-	
-	slog.Info("created subscription", 
-		"track", trackName, 
-		"requestID", requestID,
+
+	slog.Info("created subscription",
+		"subscriptionID", subID.String(),
+		"track", trackName,
 		"startGroup", subscription.StartGroup,
 		"largestGroup", largestGroup,
 		"largestObject", largestObject)
-	
+
 	return nil
 }
 
@@ -208,32 +217,80 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 	if err != nil {
 		return fmt.Errorf("failed to accept catalog subscription: %w", err)
 	}
-	
+
 	publisher, ok := w.(moqtransport.Publisher)
 	if !ok {
 		return fmt.Errorf("subscription response writer does not implement publisher")
 	}
-	
+
 	sg, err := publisher.OpenSubgroup(0, 0, 0)
 	if err != nil {
 		return fmt.Errorf("failed to open subgroup: %w", err)
 	}
-	
+
 	catalogJSON, err := json.Marshal(pm.catalog)
 	if err != nil {
 		return fmt.Errorf("failed to marshal catalog: %w", err)
 	}
-	
+
 	_, err = sg.WriteObject(0, catalogJSON)
 	if err != nil {
 		return fmt.Errorf("failed to write catalog: %w", err)
 	}
-	
+
 	err = sg.Close()
 	if err != nil {
 		return fmt.Errorf("failed to close subgroup: %w", err)
 	}
-	
+
+	return nil
+}
+
+// HandleSubscribeUpdate handles a subscribe update message
+func (pm *PublisherManager) HandleSubscribeUpdate(
+	sum *moqtransport.SubscribeUpdateMessage,
+	w moqtransport.SubscribeResponseWriter,
+) error {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	requestID := sum.RequestID()
+	session := w.Session()
+
+	// Find subscription by both RequestID and Session
+	subID := SubscriptionID{
+		Session:   session,
+		RequestID: requestID,
+	}
+	subscription, exists := pm.subscriptions[subID]
+	if !exists {
+		return fmt.Errorf("subscription not found for request ID: %d in session", requestID)
+	}
+
+	slog.Info("updating subscription",
+		"subscriptionID", subID.String(),
+		"track", subscription.TrackName,
+		"endGroup", sum.EndGroup,
+		"subscriberPriority", sum.SubscriberPriority)
+
+	// Find the track publisher
+	trackPub, exists := pm.trackPubs[subscription.TrackName]
+	if !exists {
+		return fmt.Errorf("track publisher not found for track: %s", subscription.TrackName)
+	}
+
+	// Create subscription update
+	update := SubscriptionUpdate{
+		EndGroup: &sum.EndGroup,
+		Priority: &sum.SubscriberPriority,
+	}
+
+	// Update the subscription via track publisher
+	err := trackPub.UpdateSubscription(subID, update)
+	if err != nil {
+		return fmt.Errorf("failed to update subscription: %w", err)
+	}
+
 	return nil
 }
 
@@ -241,7 +298,7 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 func (pm *PublisherManager) GetTrackPublisher(trackName string) (*ConcreteTrackPublisher, bool) {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	
+
 	trackPub, exists := pm.trackPubs[trackName]
 	return trackPub, exists
 }
@@ -250,7 +307,7 @@ func (pm *PublisherManager) GetTrackPublisher(trackName string) (*ConcreteTrackP
 func (pm *PublisherManager) GetTrackStatus() map[string]TrackStatus {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	
+
 	status := make(map[string]TrackStatus)
 	for trackName, trackPub := range pm.trackPubs {
 		status[trackName] = trackPub.GetTrackStatus()

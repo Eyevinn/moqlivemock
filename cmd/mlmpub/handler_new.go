@@ -36,7 +36,15 @@ type moqHandlerNew struct {
 }
 
 // newMoqHandler creates a new handler with the PublisherManager architecture
-func newMoqHandler(addr string, tlsConfig *tls.Config, namespace []string, asset *internal.Asset, catalog *internal.Catalog, logfh io.Writer, fingerprintPort int) *moqHandlerNew {
+func newMoqHandler(
+	addr string,
+	tlsConfig *tls.Config,
+	namespace []string,
+	asset *internal.Asset,
+	catalog *internal.Catalog,
+	logfh io.Writer,
+	fingerprintPort int,
+) *moqHandlerNew {
 	publisherMgr := internal.NewPublisherManager(asset, catalog)
 
 	return &moqHandlerNew{
@@ -57,7 +65,11 @@ func (h *moqHandlerNew) runServer(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to start publisher manager: %w", err)
 	}
-	defer h.publisherMgr.Stop()
+	defer func() {
+		if err := h.publisherMgr.Stop(); err != nil {
+			slog.Error("failed to stop publisher manager", "error", err)
+		}
+	}()
 
 	// Start HTTP server for fingerprint if port is specified
 	if h.fingerprintPort > 0 {
@@ -226,14 +238,7 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				slog.Error("failed to type assert SubscribeMessage")
 				return
 			}
-			
-			slog.Info("received subscribe message",
-				"requestID", sm.RequestID(),
-				"track", sm.Track,
-				"namespace", sm.Namespace,
-				"filterType", sm.FilterType,
-				"subscriberPriority", sm.SubscriberPriority)
-			
+
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				slog.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,
@@ -256,11 +261,23 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				return
 			}
 
+			subID := internal.SubscriptionID{
+				Session:   subscribeWriter.Session(),
+				RequestID: sm.RequestID(),
+			}
+
+			slog.Info("received subscribe message",
+				"subscriptionID", subID.String(),
+				"track", sm.Track,
+				"namespace", sm.Namespace,
+				"filterType", sm.FilterType,
+				"subscriberPriority", sm.SubscriberPriority)
+
 			// Handle subscription using publisher manager
 			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter)
 			if err != nil {
 				slog.Error("failed to handle subscription", "track", sm.Track, "error", err)
-				var errorCode uint64 = moqtransport.ErrorCodeInternal
+				errorCode := moqtransport.ErrorCodeInternal
 				if err.Error() == "track not found: "+sm.Track {
 					errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
 				}
@@ -271,7 +288,35 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				return
 			}
 
-			slog.Info("handled subscription", "track", sm.Track)
+		case moqtransport.MessageSubscribeUpdate:
+			sum, ok := r.(*moqtransport.SubscribeUpdateMessage)
+			if !ok {
+				slog.Error("failed to type assert SubscribeUpdateMessage")
+				return
+			}
+
+			// Cast to SubscribeResponseWriter to get session information
+			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
+			if !ok {
+				slog.Error("response writer is not a SubscribeResponseWriter for subscribe update")
+				return
+			}
+
+			subID := internal.SubscriptionID{
+				Session:   subscribeWriter.Session(),
+				RequestID: sum.RequestID(),
+			}
+			slog.Info("received subscribe update message",
+				"subscriptionID", subID.String(),
+				"endGroup", sum.EndGroup,
+				"subscriberPriority", sum.SubscriberPriority)
+
+			// Handle subscription update using publisher manager
+			err := h.publisherMgr.HandleSubscribeUpdate(sum, subscribeWriter)
+			if err != nil {
+				slog.Error("failed to handle subscription update", "requestID", sum.RequestID(), "error", err)
+				return
+			}
 		}
 	})
 }
@@ -297,4 +342,25 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
 		return
 	}
+}
+
+// serveQUICConn serves HTTP/3 connections
+func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
+	err := wt.ServeQUICConn(conn)
+	if err != nil {
+		slog.Error("failed to serve QUIC connection", "error", err)
+	}
+}
+
+// tupleEqual compares two string slices for equality
+func tupleEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, t := range a {
+		if t != b[i] {
+			return false
+		}
+	}
+	return true
 }

@@ -22,7 +22,7 @@ type ObjectWriter func(objectID uint64, data []byte) (n int, err error)
 // start at Epoch (1970-01-01T00:00:00Z).
 
 type MoQGroup struct {
-	id         uint32
+	groupNr    uint64
 	startTime  uint64
 	endTime    uint64
 	startNr    uint64
@@ -40,7 +40,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 	startTime := startNr * uint64(track.SampleDur)
 	endTime := endNr * uint64(track.SampleDur)
 	mq := &MoQGroup{
-		id:         uint32(groupNr),
+		groupNr:    groupNr,
 		startTime:  startTime,
 		endTime:    endTime,
 		startNr:    startNr,
@@ -79,7 +79,7 @@ func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr
 func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uint64 {
 	// Calculate object duration in milliseconds
 	objectDurMS := float64(track.SampleDur*uint32(track.SampleBatch)) * 1000.0 / float64(track.TimeScale)
-	
+
 	// Calculate sample offset based on content type
 	var sampleOffsetMS float64
 	if track.ContentType == "audio" {
@@ -90,19 +90,19 @@ func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uin
 		// Video has no sample offset
 		sampleOffsetMS = 0
 	}
-	
+
 	// The effective start time for groups is shifted by sampleOffset + objectDuration
 	// Group 0 first object becomes available at: sampleOffset + objectDuration
 	// Group 1 first object becomes available at: 1000 + sampleOffset + objectDuration
 	// So group G starts effectively at: G * constantDurMS + sampleOffset + objectDuration
-	
+
 	groupStartOffset := sampleOffsetMS + objectDurMS
-	
+
 	// If we're before the first group starts, we're in group 0
 	if float64(nowMS) < groupStartOffset {
 		return 0
 	}
-	
+
 	// Calculate which group we're in based on the effective start time
 	adjustedTime := float64(nowMS) - groupStartOffset
 	return uint64(adjustedTime / float64(constantDurMS))
@@ -118,7 +118,7 @@ func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uin
 // - Video has sampleOffset = 0
 // - Audio has sampleOffset = minimal time later than video given audio sample duration
 func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow ObjectWriter) error {
-	groupNr := uint64(moq.id)
+	groupNr := moq.groupNr
 
 	// Calculate object duration in milliseconds
 	objectDurMS := float64(track.SampleDur*uint32(track.SampleBatch)) * 1000.0 / float64(track.TimeScale)
