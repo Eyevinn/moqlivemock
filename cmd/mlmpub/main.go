@@ -143,7 +143,9 @@ func runServer(opts *options) error {
 		defer fh.Close()
 	}
 
-	h := newMoqHandler(logger, opts.addr, tlsConfig, []string{internal.Namespace}, asset, catalog, logfh, opts.fingerprintPort)
+	h := newMoqHandler(
+		logger, opts.addr, tlsConfig, []string{internal.Namespace},
+		asset, catalog, logfh, opts.fingerprintPort)
 	return h.runServer(context.TODO())
 }
 

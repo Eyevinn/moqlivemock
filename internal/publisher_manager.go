@@ -127,11 +127,12 @@ func (pm *PublisherManager) Stop() error {
 // HandleSubscribe handles a subscribe message using the new architecture
 func (pm *PublisherManager) HandleSubscribe(
 	sm *moqtransport.SubscribeMessage,
-	w moqtransport.SubscribeResponseWriter,
+	w *moqtransport.SubscribeResponseWriter,
+	sessionID uint64,
 ) error {
 	subID := SubscriptionID{
-		Session:   w.Session(),
-		RequestID: sm.RequestID(),
+		SessionID: sessionID,
+		RequestID: sm.RequestID,
 	}
 
 	trackName := sm.Track
@@ -172,19 +173,17 @@ func (pm *PublisherManager) HandleSubscribe(
 	}
 
 	// Get publisher interface from response writer
-	publisher, ok := w.(moqtransport.Publisher)
-	if !ok {
-		return fmt.Errorf("subscription response writer does not implement publisher")
-	}
+	// Use SubscribeResponseWriter directly (it's already a pointer)
+	publisher := w
 
 	// Create subscription using client-provided request ID
-	requestID := sm.RequestID()
-	session := w.Session()
+	requestID := sm.RequestID
 
 	currentGroup := trackPub.GetCurrentGroup()
 
 	subscription := &Subscription{
-		Session:     session,
+		SessionID:   sessionID,
+		Session:     nil, // Not accessible from SubscribeResponseWriter
 		RequestID:   requestID,
 		TrackName:   trackName,
 		StartGroup:  currentGroup + 1, // Start at next group
@@ -204,6 +203,7 @@ func (pm *PublisherManager) HandleSubscribe(
 	}
 
 	pm.logger.Info("created subscription",
+		"sessionID", sessionID,
 		"subscriptionID", subID.String(),
 		"track", trackName,
 		"startGroup", subscription.StartGroup,
@@ -213,17 +213,16 @@ func (pm *PublisherManager) HandleSubscribe(
 	return nil
 }
 
-// handleCatalogSubscription handles catalog subscriptions (unchanged from original)
-func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeResponseWriter) error {
-	err := w.Accept()
+// handleCatalogSubscription handles catalog subscriptions
+func (pm *PublisherManager) handleCatalogSubscription(w *moqtransport.SubscribeResponseWriter) error {
+	opts := moqtransport.DefaultSubscribeOkOptions()
+	err := w.AcceptWithOptions(opts)
 	if err != nil {
 		return fmt.Errorf("failed to accept catalog subscription: %w", err)
 	}
 
-	publisher, ok := w.(moqtransport.Publisher)
-	if !ok {
-		return fmt.Errorf("subscription response writer does not implement publisher")
-	}
+	// Use SubscribeResponseWriter directly (it's already a pointer)
+	publisher := w
 
 	sg, err := publisher.OpenSubgroup(0, 0, 0)
 	if err != nil {
@@ -251,20 +250,20 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 // HandleSubscribeUpdate handles a subscribe update message
 func (pm *PublisherManager) HandleSubscribeUpdate(
 	sum *moqtransport.SubscribeUpdateMessage,
-	session *moqtransport.Session) error {
+	sessionID uint64) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	requestID := sum.RequestID()
+	requestID := sum.RequestID
 
-	// Find subscription by both RequestID and Session
+	// Find subscription by both RequestID and SessionID
 	subID := SubscriptionID{
-		Session:   session,
+		SessionID: sessionID,
 		RequestID: requestID,
 	}
 	subscription, exists := pm.subscriptions[subID]
 	if !exists {
-		return fmt.Errorf("subscription not found for request ID: %d in session", requestID)
+		return fmt.Errorf("subscription not found for sessionID: %d, requestID: %d", sessionID, requestID)
 	}
 
 	pm.logger.Info("updating subscription",
