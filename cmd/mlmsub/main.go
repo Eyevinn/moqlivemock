@@ -81,6 +81,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track (default use first)")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.testNew, "test-new", false, "Test new refactored architecture (experimental)")
+	fs.BoolVar(&opts.switchTracks, "test-switching", false, "Test track switching with new architecture (requires --test-new)")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -187,6 +188,9 @@ func runClient(ctx context.Context, opts *options) error {
 
 	// Use new architecture if test flag is set
 	if opts.testNew {
+		if opts.switchTracks {
+			return runTrackSwitchingTest(ctx, useWebTransport, opts.addr, outs)
+		}
 		return runNewArchitectureTest(ctx, useWebTransport, opts.addr, outs)
 	}
 	
@@ -276,4 +280,63 @@ func runNewArchitectureTest(ctx context.Context, useWebTransport bool, addr stri
 	
 	// Run simple playback test
 	return client.RunSimplePlayback(ctx, session)
+}
+
+// runTrackSwitchingTest tests the new architecture with track switching
+func runTrackSwitchingTest(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
+	slog.Info("testing new architecture with track switching")
+	
+	// Establish connection
+	var conn moqtransport.Connection
+	var err error
+	if useWebTransport {
+		conn, err = dialWebTransport(ctx, addr)
+	} else {
+		conn, err = dialQUIC(ctx, addr)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to dial: %w", err)
+	}
+	defer func() {
+		err := conn.CloseWithError(0, "session completed")
+		if err != nil {
+			slog.Error("failed to close connection", "error", err)
+		}
+	}()
+	
+	// Create MoQ session and transport
+	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
+	
+	// Create a minimal handler for announcements
+	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
+		switch r.Method() {
+		case moqtransport.MessageAnnounce:
+			// Accept all announcements
+			err := w.Accept()
+			if err != nil {
+				slog.Error("failed to accept announcement", "error", err)
+			}
+		default:
+			slog.Debug("received message", "method", r.Method())
+		}
+	})
+	
+	transport := &moqtransport.Transport{
+		Conn:    conn,
+		Handler: handler,
+		Session: session,
+	}
+	
+	// Initialize the transport
+	err = transport.Run()
+	if err != nil {
+		return fmt.Errorf("failed to initialize MoQ transport: %w", err)
+	}
+	
+	// Create switching client with new architecture
+	namespace := []string{internal.Namespace}
+	client := NewSwitchingClient(namespace, outs["mux"], outs["video"], outs["audio"])
+	
+	// Run track switching test
+	return client.RunTrackSwitching(ctx, session)
 }

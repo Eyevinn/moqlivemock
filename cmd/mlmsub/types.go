@@ -38,6 +38,7 @@ type Subscription struct {
 type SubscriptionManager interface {
 	Subscribe(ctx context.Context, trackName string, filter string) (*Subscription, error)
 	UpdateSubscription(sub *Subscription, endGroup uint64) error
+	FindSubscriptionByTrackName(trackName string) *Subscription
 	Close()
 }
 
@@ -46,6 +47,7 @@ type MediaRouter interface {
 	RouteObject(obj MediaObject)
 	RegisterPipeline(mediaType string, pipeline MediaPipeline)
 	SetActiveTrack(mediaType string, trackName string)
+	SetTrackSwitcher(switcher TrackSwitcher)
 	Close()
 }
 

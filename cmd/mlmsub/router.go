@@ -16,6 +16,9 @@ type mediaRouter struct {
 	// Duplicate detection
 	groupTracks map[uint64]map[string]time.Time // groupID -> (trackName -> timestamp)
 	
+	// Track switching
+	trackSwitcher TrackSwitcher
+	
 	logger *slog.Logger
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -62,13 +65,43 @@ func (mr *mediaRouter) SetActiveTrack(mediaType string, trackName string) {
 	mr.logger.Info("set active track", "mediaType", mediaType, "trackName", trackName)
 }
 
+// SetTrackSwitcher sets the track switcher for handling switching logic
+func (mr *mediaRouter) SetTrackSwitcher(switcher TrackSwitcher) {
+	mr.mu.Lock()
+	defer mr.mu.Unlock()
+	
+	mr.trackSwitcher = switcher
+	mr.logger.Info("track switcher registered")
+}
+
 // RouteObject routes a media object to the appropriate pipeline
 func (mr *mediaRouter) RouteObject(obj MediaObject) {
 	mr.mu.RLock()
 	defer mr.mu.RUnlock()
 	
-	// Check for duplicate groups
-	if mr.hasDuplicateGroup(obj) {
+	// Handle track switching if switcher is available
+	if mr.trackSwitcher != nil {
+		action := mr.trackSwitcher.HandleGroupTransition(obj)
+		switch action {
+		case EndOldTrack:
+			mr.logger.Debug("dropping object from old track due to switch",
+				"trackName", obj.TrackName,
+				"groupID", obj.GroupID,
+				"objectID", obj.ObjectID)
+			return
+		case PreferNewTrack:
+			mr.logger.Debug("preferring object from new track",
+				"trackName", obj.TrackName,
+				"groupID", obj.GroupID,
+				"objectID", obj.ObjectID)
+			// Continue processing this object
+		case ContinueReading:
+			// Normal processing - fall through to duplicate detection
+		}
+	}
+	
+	// Check for duplicate groups (only if not handled by switcher)
+	if mr.trackSwitcher == nil && mr.hasDuplicateGroup(obj) {
 		mr.logger.Warn("multiple tracks for same group",
 			"mediaType", obj.MediaType,
 			"groupID", obj.GroupID,

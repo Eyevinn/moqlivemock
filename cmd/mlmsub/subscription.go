@@ -17,6 +17,7 @@ type subscriptionManager struct {
 	mediaChannel MediaChannel
 	logger       *slog.Logger
 	subscriptions map[uint64]*Subscription // trackAlias -> subscription
+	trackNameMap  map[string]*Subscription // trackName -> subscription (for lookup)
 }
 
 // NewSubscriptionManager creates a new subscription manager
@@ -27,6 +28,7 @@ func NewSubscriptionManager(session *moqtransport.Session, namespace string, med
 		mediaChannel:  mediaChannel,
 		logger:        slog.Default(),
 		subscriptions: make(map[uint64]*Subscription),
+		trackNameMap:  make(map[string]*Subscription),
 	}
 }
 
@@ -64,8 +66,9 @@ func (sm *subscriptionManager) Subscribe(ctx context.Context, trackName string, 
 		Cancel:      cancel,
 	}
 	
-	// Store subscription using RequestID
+	// Store subscription using RequestID and track name
 	sm.subscriptions[requestID] = sub
+	sm.trackNameMap[trackName] = sub
 	
 	// Start reading objects in background
 	go sm.readObjectsToChannel(sub)
@@ -101,6 +104,11 @@ func (sm *subscriptionManager) UpdateSubscription(sub *Subscription, endGroup ui
 	return nil
 }
 
+// FindSubscriptionByTrackName finds a subscription by track name
+func (sm *subscriptionManager) FindSubscriptionByTrackName(trackName string) *Subscription {
+	return sm.trackNameMap[trackName]
+}
+
 // Close closes all subscriptions and stops the manager
 func (sm *subscriptionManager) Close() {
 	sm.logger.Info("closing subscription manager")
@@ -114,6 +122,7 @@ func (sm *subscriptionManager) Close() {
 	
 	// Clear subscriptions
 	sm.subscriptions = make(map[uint64]*Subscription)
+	sm.trackNameMap = make(map[string]*Subscription)
 }
 
 // readObjectsToChannel reads objects from a subscription and sends them to the media channel
