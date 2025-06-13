@@ -101,23 +101,6 @@ func main() {
 	}
 }
 
-// parseLogLevel converts a string log level to slog.Level
-func parseLogLevel(level string) slog.Level {
-	switch strings.ToLower(level) {
-	case "debug":
-		return slog.LevelDebug
-	case "info":
-		return slog.LevelInfo
-	case "warning", "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown log level: %s, using 'info'\n", level)
-		return slog.LevelInfo
-	}
-}
-
 func runWithOptions(opts *options) error {
 	if opts.version {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
@@ -125,7 +108,7 @@ func runWithOptions(opts *options) error {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: parseLogLevel(opts.loglevel),
+		Level: internal.ParseLogLevel(opts.loglevel),
 	}))
 	slog.SetDefault(logger)
 

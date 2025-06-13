@@ -13,6 +13,7 @@ import (
 // PublisherManager manages all track publishers and coordinates media-type synchronization
 type PublisherManager struct {
 	mu            sync.RWMutex
+	logger        *slog.Logger // Logger for the publisher manager
 	asset         *Asset
 	catalog       *Catalog
 	mediaSyncer   *MediaSyncer
@@ -21,8 +22,9 @@ type PublisherManager struct {
 }
 
 // NewPublisherManager creates a new publisher manager
-func NewPublisherManager(asset *Asset, catalog *Catalog) *PublisherManager {
+func NewPublisherManager(logger *slog.Logger, asset *Asset, catalog *Catalog) *PublisherManager {
 	return &PublisherManager{
+		logger:        logger,
 		asset:         asset,
 		catalog:       catalog,
 		mediaSyncer:   NewMediaSyncer(),
@@ -44,7 +46,7 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 
 		ct := pm.asset.GetTrackByName(track.Name)
 		if ct == nil {
-			slog.Warn("track not found in asset", "track", track.Name)
+			pm.logger.Warn("track not found in asset", "track", track.Name)
 			continue
 		}
 
@@ -56,12 +58,12 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 		case "audio":
 			groupGen = pm.mediaSyncer.audioGroupGen
 		default:
-			slog.Warn("unsupported content type", "track", track.Name, "type", ct.ContentType)
+			pm.logger.Warn("unsupported content type", "track", track.Name, "type", ct.ContentType)
 			continue
 		}
 
 		// Create track publisher
-		trackPub, err := NewTrackPublisher(pm.asset, ct, groupGen)
+		trackPub, err := NewTrackPublisher(pm.logger, pm.asset, ct, groupGen)
 		if err != nil {
 			return fmt.Errorf("failed to create track publisher for %s: %w", track.Name, err)
 		}
@@ -74,7 +76,7 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 			return fmt.Errorf("failed to register track %s: %w", track.Name, err)
 		}
 
-		slog.Info("created track publisher", "track", track.Name, "type", ct.ContentType)
+		pm.logger.Info("created track publisher", "track", track.Name, "type", ct.ContentType)
 	}
 
 	// Start media syncer (this starts the group generators)
@@ -87,12 +89,12 @@ func (pm *PublisherManager) Start(ctx context.Context) error {
 	for trackName, trackPub := range pm.trackPubs {
 		err := trackPub.Start(ctx)
 		if err != nil {
-			slog.Error("failed to start track publisher", "track", trackName, "error", err)
+			pm.logger.Error("failed to start track publisher", "track", trackName, "error", err)
 			// Continue with other tracks
 		}
 	}
 
-	slog.Info("publisher manager started", "tracks", len(pm.trackPubs))
+	pm.logger.Info("publisher manager started", "nrTracks", len(pm.trackPubs))
 	return nil
 }
 
@@ -107,7 +109,7 @@ func (pm *PublisherManager) Stop() error {
 	for trackName, trackPub := range pm.trackPubs {
 		err := trackPub.Stop()
 		if err != nil {
-			slog.Error("failed to stop track publisher", "track", trackName, "error", err)
+			pm.logger.Error("failed to stop track publisher", "track", trackName, "error", err)
 			lastErr = err
 		}
 	}
@@ -118,7 +120,7 @@ func (pm *PublisherManager) Stop() error {
 		lastErr = err
 	}
 
-	slog.Info("publisher manager stopped")
+	pm.logger.Info("publisher manager stopped")
 	return lastErr
 }
 
@@ -201,7 +203,7 @@ func (pm *PublisherManager) HandleSubscribe(
 		return fmt.Errorf("failed to add subscription to track publisher: %w", err)
 	}
 
-	slog.Info("created subscription",
+	pm.logger.Info("created subscription",
 		"subscriptionID", subID.String(),
 		"track", trackName,
 		"startGroup", subscription.StartGroup,
@@ -249,13 +251,11 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 // HandleSubscribeUpdate handles a subscribe update message
 func (pm *PublisherManager) HandleSubscribeUpdate(
 	sum *moqtransport.SubscribeUpdateMessage,
-	w moqtransport.SubscribeResponseWriter,
-) error {
+	session *moqtransport.Session) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	requestID := sum.RequestID()
-	session := w.Session()
 
 	// Find subscription by both RequestID and Session
 	subID := SubscriptionID{
@@ -267,7 +267,7 @@ func (pm *PublisherManager) HandleSubscribeUpdate(
 		return fmt.Errorf("subscription not found for request ID: %d in session", requestID)
 	}
 
-	slog.Info("updating subscription",
+	pm.logger.Info("updating subscription",
 		"subscriptionID", subID.String(),
 		"track", subscription.TrackName,
 		"endGroup", sum.EndGroup,
