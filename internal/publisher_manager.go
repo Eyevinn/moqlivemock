@@ -128,9 +128,10 @@ func (pm *PublisherManager) Stop() error {
 func (pm *PublisherManager) HandleSubscribe(
 	sm *moqtransport.SubscribeMessage,
 	w moqtransport.SubscribeResponseWriter,
+	sessionID uint64,
 ) error {
 	subID := SubscriptionID{
-		Session:   w.Session(),
+		SessionID: sessionID,
 		RequestID: sm.RequestID(),
 	}
 
@@ -184,6 +185,7 @@ func (pm *PublisherManager) HandleSubscribe(
 	currentGroup := trackPub.GetCurrentGroup()
 
 	subscription := &Subscription{
+		SessionID:   sessionID,
 		Session:     session,
 		RequestID:   requestID,
 		TrackName:   trackName,
@@ -204,6 +206,7 @@ func (pm *PublisherManager) HandleSubscribe(
 	}
 
 	pm.logger.Info("created subscription",
+		"sessionID", sessionID,
 		"subscriptionID", subID.String(),
 		"track", trackName,
 		"startGroup", subscription.StartGroup,
@@ -251,20 +254,20 @@ func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeRe
 // HandleSubscribeUpdate handles a subscribe update message
 func (pm *PublisherManager) HandleSubscribeUpdate(
 	sum *moqtransport.SubscribeUpdateMessage,
-	session *moqtransport.Session) error {
+	sessionID uint64) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	requestID := sum.RequestID()
 
-	// Find subscription by both RequestID and Session
+	// Find subscription by both RequestID and SessionID
 	subID := SubscriptionID{
-		Session:   session,
+		SessionID: sessionID,
 		RequestID: requestID,
 	}
 	subscription, exists := pm.subscriptions[subID]
 	if !exists {
-		return fmt.Errorf("subscription not found for request ID: %d in session", requestID)
+		return fmt.Errorf("subscription not found for sessionID: %d, requestID: %d", sessionID, requestID)
 	}
 
 	pm.logger.Info("updating subscription",

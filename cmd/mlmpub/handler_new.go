@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -34,6 +35,7 @@ type moqHandlerNew struct {
 	publisherMgr    *internal.PublisherManager
 	logfh           io.Writer
 	fingerprintPort int
+	nextSessionID   atomic.Uint64
 }
 
 // newMoqHandler creates a new handler with the PublisherManager architecture
@@ -220,35 +222,36 @@ func (h *moqHandlerNew) validateCertificateForWebTransport() error {
 	return nil
 }
 
-func (h *moqHandlerNew) getHandler() moqtransport.Handler {
+func (h *moqHandlerNew) getHandler(sessionID uint64) moqtransport.Handler {
 	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
 		switch r.Method() {
 		case moqtransport.MessageAnnounce:
 			am, ok := r.(*moqtransport.AnnounceMessage)
 			if !ok {
-				h.logger.Error("failed to type assert AnnounceMessage")
+				h.logger.Error("failed to type assert AnnounceMessage", "sessionID", sessionID)
 				return
 			}
-			h.logger.Warn("got unexpected announcement", "namespace", am.Namespace)
+			h.logger.Warn("got unexpected announcement", "sessionID", sessionID, "namespace", am.Namespace)
 			err := w.Reject(0, fmt.Sprintf("%s doesn't take announcements", appName))
 			if err != nil {
-				h.logger.Error("failed to reject announcement", "error", err)
+				h.logger.Error("failed to reject announcement", "sessionID", sessionID, "error", err)
 			}
 			return
 		case moqtransport.MessageSubscribe:
 			sm, ok := r.(*moqtransport.SubscribeMessage)
 			if !ok {
-				h.logger.Error("failed to type assert SubscribeMessage")
+				h.logger.Error("failed to type assert SubscribeMessage", "sessionID", sessionID)
 				return
 			}
 
 			if !tupleEqual(sm.Namespace, h.namespace) {
 				h.logger.Warn("got unexpected subscription namespace",
+					"sessionID", sessionID,
 					"received", sm.Namespace,
 					"expected", h.namespace)
 				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
 				if err != nil {
-					h.logger.Error("failed to reject subscription", "error", err)
+					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", err)
 				}
 				return
 			}
@@ -256,20 +259,21 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 			// Cast to SubscribeResponseWriter to use the new publisher manager
 			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
 			if !ok {
-				h.logger.Error("response writer is not a SubscribeResponseWriter")
+				h.logger.Error("response writer is not a SubscribeResponseWriter", "sessionID", sessionID)
 				err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
 				if err != nil {
-					h.logger.Error("failed to reject subscription", "error", err)
+					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", err)
 				}
 				return
 			}
 
 			subID := internal.SubscriptionID{
-				Session:   subscribeWriter.Session(),
+				SessionID: sessionID,
 				RequestID: sm.RequestID(),
 			}
 
 			h.logger.Info("received subscribe message",
+				"sessionID", sessionID,
 				"subscriptionID", subID.String(),
 				"track", sm.Track,
 				"namespace", sm.Namespace,
@@ -277,16 +281,16 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				"subscriberPriority", sm.SubscriberPriority)
 
 			// Handle subscription using publisher manager
-			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter)
+			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter, sessionID)
 			if err != nil {
-				h.logger.Error("failed to handle subscription", "track", sm.Track, "error", err)
+				h.logger.Error("failed to handle subscription", "sessionID", sessionID, "track", sm.Track, "error", err)
 				errorCode := moqtransport.ErrorCodeInternal
 				if err.Error() == "track not found: "+sm.Track {
 					errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
 				}
 				rejErr := subscribeWriter.Reject(errorCode, err.Error())
 				if rejErr != nil {
-					h.logger.Error("failed to reject subscription", "error", rejErr)
+					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", rejErr)
 				}
 				return
 			}
@@ -294,25 +298,27 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 		case moqtransport.MessageSubscribeUpdate:
 			sum, ok := r.(*moqtransport.SubscribeUpdateMessage)
 			if !ok {
-				h.logger.Error("failed to type assert SubscribeUpdateMessage")
+				h.logger.Error("failed to type assert SubscribeUpdateMessage", "sessionID", sessionID)
 				return
 			}
 
-			var session *moqtransport.Session // TODO: Get session from somewhere
-
 			subID := internal.SubscriptionID{
-				Session:   session,
+				SessionID: sessionID,
 				RequestID: sum.RequestID(),
 			}
 			h.logger.Info("received subscribe update message",
+				"sessionID", sessionID,
 				"subscriptionID", subID.String(),
 				"endGroup", sum.EndGroup,
 				"subscriberPriority", sum.SubscriberPriority)
 
 			// Handle subscription update using publisher manager
-			err := h.publisherMgr.HandleSubscribeUpdate(sum, session)
+			err := h.publisherMgr.HandleSubscribeUpdate(sum, sessionID)
 			if err != nil {
-				h.logger.Error("failed to handle subscription update", "suscriptionID", subID.String(), "error", err)
+				h.logger.Error("failed to handle subscription update",
+					"sessionID", sessionID,
+					"subscriptionID", subID.String(),
+					"error", err)
 				return
 			}
 		}
@@ -320,24 +326,25 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 }
 
 func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
+	id := h.nextSessionID.Add(1)
 	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
 	transport := &moqtransport.Transport{
 		Conn:    conn,
-		Handler: h.getHandler(),
+		Handler: h.getHandler(id),
 		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 		Session: session,
 	}
 	err := transport.Run()
 	if err != nil {
-		h.logger.Error("MoQ Session initialization failed", "error", err)
+		h.logger.Error("MoQ Session initialization failed", "sessionID", id, "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
 		if err != nil {
-			h.logger.Error("failed to close connection", "error", err)
+			h.logger.Error("failed to close connection", "sessionID", id, "error", err)
 		}
 		return
 	}
 	if err := session.Announce(context.Background(), h.namespace); err != nil {
-		h.logger.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
+		h.logger.Error("failed to announce namespace", "sessionID", id, "namespace", h.namespace, "error", err)
 		return
 	}
 }
