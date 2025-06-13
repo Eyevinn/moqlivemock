@@ -29,7 +29,12 @@ type ConcreteTrackPublisher struct {
 }
 
 // NewTrackPublisher creates a new track publisher for the given content track
-func NewTrackPublisher(logger *slog.Logger, asset *Asset, track *ContentTrack, groupGen *GroupGenerator) (*ConcreteTrackPublisher, error) {
+func NewTrackPublisher(
+	logger *slog.Logger,
+	asset *Asset,
+	track *ContentTrack,
+	groupGen *GroupGenerator,
+) (*ConcreteTrackPublisher, error) {
 	var mediaType MediaType
 	switch track.ContentType {
 	case "video":
@@ -111,11 +116,12 @@ func (tp *ConcreteTrackPublisher) AddSubscription(sub *Subscription) error {
 	defer tp.mu.Unlock()
 
 	subID := SubscriptionID{
-		Session:   sub.Session,
+		SessionID: sub.SessionID,
 		RequestID: sub.RequestID,
 	}
 	tp.subscriptions[subID] = sub
 	tp.logger.Info("added subscription",
+		"sessionID", sub.SessionID,
 		"subscriptionID", subID.String(),
 		"totalSubscribers", len(tp.subscriptions))
 	return nil
@@ -136,6 +142,7 @@ func (tp *ConcreteTrackPublisher) RemoveSubscription(subID SubscriptionID) error
 	tp.failedSubs[subID] = true
 	close(sub.Done)
 	tp.logger.Info("removed subscription",
+		"sessionID", sub.SessionID,
 		"subscriptionID", subID.String(),
 		"totalSubscribers", len(tp.subscriptions))
 
@@ -161,6 +168,7 @@ func (tp *ConcreteTrackPublisher) UpdateSubscription(subID SubscriptionID, updat
 	if update.EndGroup != nil {
 		sub.EndGroup = update.EndGroup
 		tp.logger.Info("updated subscription end group",
+			"sessionID", sub.SessionID,
 			"subscriptionID", subID.String(),
 			"endGroup", *update.EndGroup)
 	}
@@ -169,6 +177,7 @@ func (tp *ConcreteTrackPublisher) UpdateSubscription(subID SubscriptionID, updat
 	if update.Priority != nil {
 		sub.Priority = *update.Priority
 		tp.logger.Info("updated subscription priority",
+			"sessionID", sub.SessionID,
 			"subscriptionID", subID.String(),
 			"priority", *update.Priority)
 	}
@@ -363,7 +372,7 @@ func (tp *ConcreteTrackPublisher) publishGroup(groupNr uint64) {
 // publishGroupToSubscription publishes a group to a specific subscription
 func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, mg *MoQGroup) {
 	// Quick check if subscription has already failed or been removed
-	subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
+	subID := SubscriptionID{SessionID: sub.SessionID, RequestID: sub.RequestID}
 	tp.mu.RLock()
 	if tp.failedSubs[subID] {
 		tp.mu.RUnlock()
@@ -418,7 +427,8 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 	tp.mu.RUnlock()
 
 	// Generate and write MoQ group
-	err = WriteMoQGroup(tp.ctx, tp.logger, tp.track, mg, sg.WriteObject)
+	logger := tp.logger.With("sessionID", sub.SessionID)
+	err = WriteMoQGroup(tp.ctx, logger, tp.track, mg, sg.WriteObject)
 	if err != nil {
 		// Only log if this is the first error for this subscription
 		tp.mu.RLock()
@@ -426,8 +436,7 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 		tp.mu.RUnlock()
 
 		if !alreadyFailed {
-			tp.logger.Error("failed to write MoQ group - subscriber may have vanished",
-				"subscriptionID", subID.String(),
+			logger.Error("failed to write MoQ group - subscriber may have vanished",
 				"error", err)
 		}
 		// Try to close subgroup before removing subscription
@@ -483,8 +492,9 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 
 // sendSubscribeDone sends a SUBSCRIBE_DONE message and cleans up the subscription
 func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
-	subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
+	subID := SubscriptionID{SessionID: sub.SessionID, RequestID: sub.RequestID}
 	tp.logger.Info("subscription ended normally",
+		"sessionID", sub.SessionID,
 		"subscriptionID", subID.String(),
 		"finalGroup", sub.LastGroupSent)
 
@@ -506,7 +516,7 @@ func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
 
 // handleSubscriberError handles errors that indicate a subscriber has vanished
 func (tp *ConcreteTrackPublisher) handleSubscriberError(sub *Subscription, operation string, err error) {
-	subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
+	subID := SubscriptionID{SessionID: sub.SessionID, RequestID: sub.RequestID}
 	tp.mu.Lock()
 	// Check if we've already marked this subscription as failed
 	if tp.failedSubs[subID] {
@@ -523,12 +533,13 @@ func (tp *ConcreteTrackPublisher) handleSubscriberError(sub *Subscription, opera
 
 	if stillExists {
 		tp.logger.Warn("subscriber appears to have vanished - removing subscription",
+			"sessionID", sub.SessionID,
 			"subscriptionID", subID.String(),
 			"operation", operation,
 			"error", err)
 
-		// Remove the problematic subscription
-		subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
+		// Remove the problematic subscription (reuse existing subID variable)
+		// subID already defined above
 		if err := tp.RemoveSubscription(subID); err != nil {
 			tp.logger.Error("failed to remove problematic subscription",
 				"subscriptionID", subID.String(),

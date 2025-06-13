@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-	"unsafe"
 
 	"github.com/mengelbart/moqtransport"
 )
@@ -38,17 +37,15 @@ type TrackStatus struct {
 	IsLive          bool
 }
 
-// SubscriptionID uniquely identifies a subscription by session and request ID
+// SubscriptionID uniquely identifies a subscription by session ID and request ID
 type SubscriptionID struct {
-	Session   *moqtransport.Session
+	SessionID uint64
 	RequestID uint64
 }
 
 // String returns a string representation of the SubscriptionID
 func (s SubscriptionID) String() string {
-	// Use pointer address as a short unique identifier for the session
-	sessionID := fmt.Sprintf("%08x", uintptr(unsafe.Pointer(s.Session))&0xffffffff)
-	return fmt.Sprintf("s:%s:r:%d", sessionID, s.RequestID)
+	return fmt.Sprintf("s:%d:r:%d", s.SessionID, s.RequestID)
 }
 
 // SubscriptionUpdate represents changes to a subscription
@@ -60,6 +57,7 @@ type SubscriptionUpdate struct {
 // Subscription represents an active subscription to a track
 type Subscription struct {
 	// Identity
+	SessionID  uint64
 	Session    *moqtransport.Session
 	RequestID  uint64
 	TrackAlias uint64
