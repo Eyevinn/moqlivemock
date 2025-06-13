@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"log/slog"
 	"time"
 )
 
@@ -117,7 +118,7 @@ func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uin
 // - Object (G, N) is available N*objectDuration later
 // - Video has sampleOffset = 0
 // - Audio has sampleOffset = minimal time later than video given audio sample duration
-func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow ObjectWriter) error {
+func WriteMoQGroup(ctx context.Context, logger *slog.Logger, track *ContentTrack, moq *MoQGroup, ow ObjectWriter) error {
 	groupNr := moq.groupNr
 
 	// Calculate object duration in milliseconds
@@ -150,6 +151,7 @@ func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow O
 		waitTime := int64(objAvailabilityMS) - now
 
 		if waitTime <= 0 {
+			logger.Info("write MoQ object", "group", groupNr, "object", objNr)
 			_, err := ow(uint64(objNr), moqObj)
 			if err != nil {
 				return err
@@ -161,6 +163,7 @@ func WriteMoQGroup(ctx context.Context, track *ContentTrack, moq *MoQGroup, ow O
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(time.Duration(waitTime) * time.Millisecond):
+			logger.Info("write MoQ object", "group", groupNr, "object", objNr)
 			_, err := ow(uint64(objNr), moqObj)
 			if err != nil {
 				return err
