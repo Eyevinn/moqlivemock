@@ -25,6 +25,7 @@ import (
 
 // moqHandlerNew is the new handler that uses the TrackPublisher architecture
 type moqHandlerNew struct {
+	logger          *slog.Logger
 	addr            string
 	tlsConfig       *tls.Config
 	namespace       []string
@@ -37,6 +38,7 @@ type moqHandlerNew struct {
 
 // newMoqHandler creates a new handler with the PublisherManager architecture
 func newMoqHandler(
+	logger *slog.Logger,
 	addr string,
 	tlsConfig *tls.Config,
 	namespace []string,
@@ -45,9 +47,10 @@ func newMoqHandler(
 	logfh io.Writer,
 	fingerprintPort int,
 ) *moqHandlerNew {
-	publisherMgr := internal.NewPublisherManager(asset, catalog)
+	publisherMgr := internal.NewPublisherManager(logger, asset, catalog)
 
 	return &moqHandlerNew{
+		logger:          logger,
 		addr:            addr,
 		tlsConfig:       tlsConfig,
 		namespace:       namespace,
@@ -67,7 +70,7 @@ func (h *moqHandlerNew) runServer(ctx context.Context) error {
 	}
 	defer func() {
 		if err := h.publisherMgr.Stop(); err != nil {
-			slog.Error("failed to stop publisher manager", "error", err)
+			h.logger.Error("failed to stop publisher manager", "error", err)
 		}
 	}()
 
@@ -94,7 +97,7 @@ func (h *moqHandlerNew) runServer(ctx context.Context) error {
 	http.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
 		session, err := wt.Upgrade(w, r)
 		if err != nil {
-			slog.Error("upgrading to webtransport failed", "error", err)
+			h.logger.Error("upgrading to webtransport failed", "error", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -106,7 +109,7 @@ func (h *moqHandlerNew) runServer(ctx context.Context) error {
 			return err
 		}
 		if conn.ConnectionState().TLS.NegotiatedProtocol == "h3" {
-			go serveQUICConn(&wt, conn)
+			go serveQUICConn(h.logger, &wt, conn)
 		}
 		if conn.ConnectionState().TLS.NegotiatedProtocol == "moq-00" {
 			go h.handle(quicmoq.NewServer(conn))
@@ -117,13 +120,13 @@ func (h *moqHandlerNew) runServer(ctx context.Context) error {
 func (h *moqHandlerNew) startFingerprintServer() {
 	// Validate certificate for WebTransport requirements
 	if err := h.validateCertificateForWebTransport(); err != nil {
-		slog.Warn("Certificate does not meet WebTransport fingerprint requirements", "error", err)
-		slog.Warn("Fingerprint server may not work properly with WebTransport")
+		h.logger.Warn("Certificate does not meet WebTransport fingerprint requirements", "error", err)
+		h.logger.Warn("Fingerprint server may not work properly with WebTransport")
 	}
 
 	fingerprint := h.getCertificateFingerprint()
 	if fingerprint == "" {
-		slog.Error("failed to get certificate fingerprint")
+		h.logger.Error("failed to get certificate fingerprint")
 		return
 	}
 
@@ -141,13 +144,13 @@ func (h *moqHandlerNew) startFingerprintServer() {
 		}
 
 		fmt.Fprint(w, fingerprint)
-		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
+		h.logger.Debug("Served fingerprint", "fingerprint", fingerprint)
 	})
 
 	addr := fmt.Sprintf(":%d", h.fingerprintPort)
-	slog.Info("Starting fingerprint HTTP server", "addr", addr)
+	h.logger.Info("Starting fingerprint HTTP server", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("fingerprint server failed", "error", err)
+		h.logger.Error("fingerprint server failed", "error", err)
 	}
 }
 
@@ -164,7 +167,7 @@ func (h *moqHandlerNew) getCertificateFingerprint() string {
 	// Parse the certificate
 	x509Cert, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		slog.Error("failed to parse certificate", "error", err)
+		h.logger.Error("failed to parse certificate", "error", err)
 		return ""
 	}
 
@@ -209,7 +212,7 @@ func (h *moqHandlerNew) validateCertificateForWebTransport() error {
 		return fmt.Errorf("certificate validity exceeds 14 days (valid for %.1f days)", validityDays)
 	}
 
-	slog.Info("Certificate meets WebTransport fingerprint requirements",
+	h.logger.Info("Certificate meets WebTransport fingerprint requirements",
 		"algorithm", x509Cert.PublicKeyAlgorithm.String(),
 		"validity_days", validityDuration.Hours()/24,
 		"self_signed", true)
@@ -223,29 +226,29 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 		case moqtransport.MessageAnnounce:
 			am, ok := r.(*moqtransport.AnnounceMessage)
 			if !ok {
-				slog.Error("failed to type assert AnnounceMessage")
+				h.logger.Error("failed to type assert AnnounceMessage")
 				return
 			}
-			slog.Warn("got unexpected announcement", "namespace", am.Namespace)
+			h.logger.Warn("got unexpected announcement", "namespace", am.Namespace)
 			err := w.Reject(0, fmt.Sprintf("%s doesn't take announcements", appName))
 			if err != nil {
-				slog.Error("failed to reject announcement", "error", err)
+				h.logger.Error("failed to reject announcement", "error", err)
 			}
 			return
 		case moqtransport.MessageSubscribe:
 			sm, ok := r.(*moqtransport.SubscribeMessage)
 			if !ok {
-				slog.Error("failed to type assert SubscribeMessage")
+				h.logger.Error("failed to type assert SubscribeMessage")
 				return
 			}
 
 			if !tupleEqual(sm.Namespace, h.namespace) {
-				slog.Warn("got unexpected subscription namespace",
+				h.logger.Warn("got unexpected subscription namespace",
 					"received", sm.Namespace,
 					"expected", h.namespace)
 				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
 				if err != nil {
-					slog.Error("failed to reject subscription", "error", err)
+					h.logger.Error("failed to reject subscription", "error", err)
 				}
 				return
 			}
@@ -253,10 +256,10 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 			// Cast to SubscribeResponseWriter to use the new publisher manager
 			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
 			if !ok {
-				slog.Error("response writer is not a SubscribeResponseWriter")
+				h.logger.Error("response writer is not a SubscribeResponseWriter")
 				err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
 				if err != nil {
-					slog.Error("failed to reject subscription", "error", err)
+					h.logger.Error("failed to reject subscription", "error", err)
 				}
 				return
 			}
@@ -266,7 +269,7 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 				RequestID: sm.RequestID(),
 			}
 
-			slog.Info("received subscribe message",
+			h.logger.Info("received subscribe message",
 				"subscriptionID", subID.String(),
 				"track", sm.Track,
 				"namespace", sm.Namespace,
@@ -276,14 +279,14 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 			// Handle subscription using publisher manager
 			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter)
 			if err != nil {
-				slog.Error("failed to handle subscription", "track", sm.Track, "error", err)
+				h.logger.Error("failed to handle subscription", "track", sm.Track, "error", err)
 				errorCode := moqtransport.ErrorCodeInternal
 				if err.Error() == "track not found: "+sm.Track {
 					errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
 				}
 				rejErr := subscribeWriter.Reject(errorCode, err.Error())
 				if rejErr != nil {
-					slog.Error("failed to reject subscription", "error", rejErr)
+					h.logger.Error("failed to reject subscription", "error", rejErr)
 				}
 				return
 			}
@@ -291,30 +294,25 @@ func (h *moqHandlerNew) getHandler() moqtransport.Handler {
 		case moqtransport.MessageSubscribeUpdate:
 			sum, ok := r.(*moqtransport.SubscribeUpdateMessage)
 			if !ok {
-				slog.Error("failed to type assert SubscribeUpdateMessage")
+				h.logger.Error("failed to type assert SubscribeUpdateMessage")
 				return
 			}
 
-			// Cast to SubscribeResponseWriter to get session information
-			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
-			if !ok {
-				slog.Error("response writer is not a SubscribeResponseWriter for subscribe update")
-				return
-			}
+			var session *moqtransport.Session // TODO: Get session from somewhere
 
 			subID := internal.SubscriptionID{
-				Session:   subscribeWriter.Session(),
+				Session:   session,
 				RequestID: sum.RequestID(),
 			}
-			slog.Info("received subscribe update message",
+			h.logger.Info("received subscribe update message",
 				"subscriptionID", subID.String(),
 				"endGroup", sum.EndGroup,
 				"subscriberPriority", sum.SubscriberPriority)
 
 			// Handle subscription update using publisher manager
-			err := h.publisherMgr.HandleSubscribeUpdate(sum, subscribeWriter)
+			err := h.publisherMgr.HandleSubscribeUpdate(sum, session)
 			if err != nil {
-				slog.Error("failed to handle subscription update", "requestID", sum.RequestID(), "error", err)
+				h.logger.Error("failed to handle subscription update", "suscriptionID", subID.String(), "error", err)
 				return
 			}
 		}
@@ -331,24 +329,24 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 	}
 	err := transport.Run()
 	if err != nil {
-		slog.Error("MoQ Session initialization failed", "error", err)
+		h.logger.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
 		if err != nil {
-			slog.Error("failed to close connection", "error", err)
+			h.logger.Error("failed to close connection", "error", err)
 		}
 		return
 	}
 	if err := session.Announce(context.Background(), h.namespace); err != nil {
-		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
+		h.logger.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
 		return
 	}
 }
 
 // serveQUICConn serves HTTP/3 connections
-func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
+func serveQUICConn(logger *slog.Logger, wt *webtransport.Server, conn quic.Connection) {
 	err := wt.ServeQUICConn(conn)
 	if err != nil {
-		slog.Error("failed to serve QUIC connection", "error", err)
+		logger.Error("failed to serve QUIC connection", "error", err)
 	}
 }
 

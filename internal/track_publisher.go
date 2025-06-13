@@ -11,6 +11,7 @@ import (
 // ConcreteTrackPublisher implements TrackPublisher for content tracks
 type ConcreteTrackPublisher struct {
 	mu            sync.RWMutex
+	logger        *slog.Logger
 	track         *ContentTrack
 	asset         *Asset
 	mediaType     MediaType
@@ -28,7 +29,7 @@ type ConcreteTrackPublisher struct {
 }
 
 // NewTrackPublisher creates a new track publisher for the given content track
-func NewTrackPublisher(asset *Asset, track *ContentTrack, groupGen *GroupGenerator) (*ConcreteTrackPublisher, error) {
+func NewTrackPublisher(logger *slog.Logger, asset *Asset, track *ContentTrack, groupGen *GroupGenerator) (*ConcreteTrackPublisher, error) {
 	var mediaType MediaType
 	switch track.ContentType {
 	case "video":
@@ -38,14 +39,16 @@ func NewTrackPublisher(asset *Asset, track *ContentTrack, groupGen *GroupGenerat
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", track.ContentType)
 	}
+	logger = logger.With("track", track.Name, "asset", asset.Name)
 
 	return &ConcreteTrackPublisher{
+		logger:        logger,
 		track:         track,
 		asset:         asset,
 		mediaType:     mediaType,
 		subscriptions: make(map[SubscriptionID]*Subscription),
 		groupGen:      groupGen,
-		groupCh:       make(chan uint64, 10), // Buffered channel for group notifications
+		groupCh:       make(chan uint64, 10),         // Buffered channel for group notifications
 		failedSubs:    make(map[SubscriptionID]bool), // Track failed subscriptions
 	}, nil
 }
@@ -112,8 +115,7 @@ func (tp *ConcreteTrackPublisher) AddSubscription(sub *Subscription) error {
 		RequestID: sub.RequestID,
 	}
 	tp.subscriptions[subID] = sub
-	slog.Info("added subscription",
-		"track", tp.track.Name,
+	tp.logger.Info("added subscription",
 		"subscriptionID", subID.String(),
 		"totalSubscribers", len(tp.subscriptions))
 	return nil
@@ -133,14 +135,13 @@ func (tp *ConcreteTrackPublisher) RemoveSubscription(subID SubscriptionID) error
 	// Immediately mark as failed to suppress any ongoing goroutine error logging
 	tp.failedSubs[subID] = true
 	close(sub.Done)
-	slog.Info("removed subscription",
-		"track", tp.track.Name,
+	tp.logger.Info("removed subscription",
 		"subscriptionID", subID.String(),
 		"totalSubscribers", len(tp.subscriptions))
 
 	// Log when track has no more subscribers
 	if len(tp.subscriptions) == 0 {
-		slog.Warn("track has no remaining subscribers", "track", tp.track.Name)
+		tp.logger.Info("track has no remaining subscribers")
 	}
 
 	return nil
@@ -159,8 +160,7 @@ func (tp *ConcreteTrackPublisher) UpdateSubscription(subID SubscriptionID, updat
 	// Update end group if specified
 	if update.EndGroup != nil {
 		sub.EndGroup = update.EndGroup
-		slog.Info("updated subscription end group",
-			"track", tp.track.Name,
+		tp.logger.Info("updated subscription end group",
 			"subscriptionID", subID.String(),
 			"endGroup", *update.EndGroup)
 	}
@@ -168,8 +168,7 @@ func (tp *ConcreteTrackPublisher) UpdateSubscription(subID SubscriptionID, updat
 	// Update priority if specified
 	if update.Priority != nil {
 		sub.Priority = *update.Priority
-		slog.Info("updated subscription priority",
-			"track", tp.track.Name,
+		tp.logger.Info("updated subscription priority",
 			"subscriptionID", subID.String(),
 			"priority", *update.Priority)
 	}
@@ -217,8 +216,7 @@ func (tp *ConcreteTrackPublisher) LogSubscriberStats() {
 	defer tp.mu.RUnlock()
 
 	if len(tp.subscriptions) == 0 {
-		slog.Info("track status",
-			"track", tp.track.Name,
+		tp.logger.Info("track status",
 			"subscribers", 0,
 			"status", "no_subscribers")
 		return
@@ -237,8 +235,7 @@ func (tp *ConcreteTrackPublisher) LogSubscriberStats() {
 		}
 	}
 
-	slog.Info("track status",
-		"track", tp.track.Name,
+	tp.logger.Info("track status",
 		"totalSubscribers", len(tp.subscriptions),
 		"activeSubscribers", activeCount,
 		"staleSubscribers", staleCount,
@@ -246,9 +243,7 @@ func (tp *ConcreteTrackPublisher) LogSubscriberStats() {
 		"bitrate", tp.track.SampleBitrate)
 
 	if staleCount > 0 {
-		slog.Warn("detected stale subscribers",
-			"track", tp.track.Name,
-			"staleCount", staleCount)
+		tp.logger.Warn("detected stale subscribers", "staleCount", staleCount)
 	}
 }
 
@@ -274,8 +269,7 @@ func (tp *ConcreteTrackPublisher) CleanupStaleSubscribers() {
 		tp.failedSubs[subID] = true // Mark as failed to prevent further error logging
 		close(sub.Done)
 
-		slog.Warn("removed stale subscription",
-			"track", tp.track.Name,
+		tp.logger.Warn("removed stale subscription",
 			"subscriptionID", subID.String(),
 			"lastGroupSent", sub.LastGroupSent,
 			"currentGroup", tp.currentGroup,
@@ -283,8 +277,7 @@ func (tp *ConcreteTrackPublisher) CleanupStaleSubscribers() {
 	}
 
 	if len(staleIDs) > 0 {
-		slog.Info("cleanup complete",
-			"track", tp.track.Name,
+		tp.logger.Info("cleanup complete",
 			"removedStaleSubscribers", len(staleIDs),
 			"remainingSubscribers", len(tp.subscriptions))
 	}
@@ -319,8 +312,7 @@ func (tp *ConcreteTrackPublisher) onNewGroup(groupNr uint64) {
 		// Successfully queued group for publishing
 	default:
 		// Channel full, skip this group (shouldn't happen with buffered channel)
-		slog.Warn("dropped group notification, channel full",
-			"track", tp.track.Name,
+		tp.logger.Warn("dropped group notification, channel full",
 			"group", groupNr)
 	}
 }
@@ -397,10 +389,9 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 		tp.mu.RUnlock()
 
 		if !alreadyFailed {
-			slog.Error("failed to open subgroup - subscriber may have vanished",
-				"track", tp.track.Name,
+			tp.logger.Error("failed to open subgroup - subscriber may have vanished",
 				"group", mg.groupNr,
-				"requestID", sub.RequestID,
+				"subscriptionID", subID.String(),
 				"error", err)
 		}
 		// Remove the problematic subscription
@@ -427,7 +418,7 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 	tp.mu.RUnlock()
 
 	// Generate and write MoQ group
-	err = WriteMoQGroup(tp.ctx, tp.track, mg, sg.WriteObject)
+	err = WriteMoQGroup(tp.ctx, tp.logger, tp.track, mg, sg.WriteObject)
 	if err != nil {
 		// Only log if this is the first error for this subscription
 		tp.mu.RLock()
@@ -435,10 +426,8 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 		tp.mu.RUnlock()
 
 		if !alreadyFailed {
-			slog.Error("failed to write MoQ group - subscriber may have vanished",
-				"track", tp.track.Name,
-				"group", mg.groupNr,
-				"requestID", sub.RequestID,
+			tp.logger.Error("failed to write MoQ group - subscriber may have vanished",
+				"subscriptionID", subID.String(),
 				"error", err)
 		}
 		// Try to close subgroup before removing subscription
@@ -473,10 +462,9 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 		tp.mu.RUnlock()
 
 		if !alreadyFailed {
-			slog.Error("failed to close subgroup - subscriber may have vanished",
-				"track", tp.track.Name,
+			tp.logger.Error("failed to close subgroup - subscriber may have vanished",
 				"group", mg.groupNr,
-				"requestID", sub.RequestID,
+				"subscriptionID", subID.String(),
 				"error", err)
 		}
 		tp.handleSubscriberError(sub, "failed to close subgroup", err)
@@ -488,33 +476,29 @@ func (tp *ConcreteTrackPublisher) publishGroupToSubscription(sub *Subscription, 
 	sub.LastObjectSent = uint64(len(mg.MoQObjects) - 1)
 	tp.mu.Unlock()
 
-	slog.Debug("published group to subscription",
-		"track", tp.track.Name,
+	tp.logger.Debug("published group to subscription",
 		"group", mg.groupNr,
-		"requestID", sub.RequestID)
+		"subscriptionID", subID.String())
 }
 
 // sendSubscribeDone sends a SUBSCRIBE_DONE message and cleans up the subscription
 func (tp *ConcreteTrackPublisher) sendSubscribeDone(sub *Subscription) {
-	slog.Info("subscription ended normally",
-		"track", tp.track.Name,
-		"requestID", sub.RequestID,
+	subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
+	tp.logger.Info("subscription ended normally",
+		"subscriptionID", subID.String(),
 		"finalGroup", sub.LastGroupSent)
 
 	// Send SUBSCRIBE_DONE with success status
 	err := sub.Publisher.CloseWithError(0, "Subscription completed successfully")
 	if err != nil {
-		slog.Error("failed to send SUBSCRIBE_DONE",
-			"track", tp.track.Name,
-			"requestID", sub.RequestID,
+		tp.logger.Error("failed to send SUBSCRIBE_DONE",
+			"subscriptionID", subID.String(),
 			"error", err)
 	}
 
 	// Remove subscription
-	subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
 	if err := tp.RemoveSubscription(subID); err != nil {
-		slog.Error("failed to remove subscription after SUBSCRIBE_DONE",
-			"track", tp.track.Name,
+		tp.logger.Error("failed to remove subscription after SUBSCRIBE_DONE",
 			"subscriptionID", subID.String(),
 			"error", err)
 	}
@@ -538,17 +522,15 @@ func (tp *ConcreteTrackPublisher) handleSubscriberError(sub *Subscription, opera
 	tp.mu.Unlock()
 
 	if stillExists {
-		slog.Warn("subscriber appears to have vanished - removing subscription",
-			"track", tp.track.Name,
-			"requestID", sub.RequestID,
+		tp.logger.Warn("subscriber appears to have vanished - removing subscription",
+			"subscriptionID", subID.String(),
 			"operation", operation,
 			"error", err)
 
 		// Remove the problematic subscription
 		subID := SubscriptionID{Session: sub.Session, RequestID: sub.RequestID}
 		if err := tp.RemoveSubscription(subID); err != nil {
-			slog.Error("failed to remove problematic subscription",
-				"track", tp.track.Name,
+			tp.logger.Error("failed to remove problematic subscription",
 				"subscriptionID", subID.String(),
 				"error", err)
 		}
