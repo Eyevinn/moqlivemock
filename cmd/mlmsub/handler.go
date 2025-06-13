@@ -374,10 +374,9 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 					}
 				}
 
-				// Check if we've reached the target end group and should send SUBSCRIBE_UPDATE
-				if targetEndGroup != nil && !updateSent && o.GroupID >= *targetEndGroup {
-					updateSent = true
-					endGroupToSend := *targetEndGroup + 1 // Send end_group + 1 as specified
+				// Send SUBSCRIBE_UPDATE if targetEndGroup is set and not yet sent
+				if targetEndGroup != nil && !updateSent {
+					endGroupToSend := *targetEndGroup //
 
 					slog.Info("reached target end group, sending SUBSCRIBE_UPDATE",
 						"track", trackname,
@@ -386,6 +385,7 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 						"endGroupToSend", endGroupToSend)
 
 					go h.sendSubscribeUpdate(ctx, s, rs, trackname, endGroupToSend)
+					updateSent = true
 				}
 			} else {
 				slog.Debug("object",
@@ -573,11 +573,11 @@ func (h *moqHandler) runTrackSwitching(ctx context.Context, session *moqtranspor
 	}
 
 	// Wait a bit to receive some initial content
-	slog.Info("waiting 5 seconds to receive initial content from both tracks")
+	slog.Info("waiting 3 seconds to receive initial content from both tracks")
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(5 * time.Second):
+	case <-time.After(3 * time.Second):
 		// Continue to switching
 	}
 
@@ -594,11 +594,11 @@ func (h *moqHandler) runTrackSwitching(ctx context.Context, session *moqtranspor
 
 		// Wait 5 seconds before switching to next track (except for the last one)
 		if i < len(videoTracks)-1 {
-			slog.Info("waiting 5 seconds before next video switch", "currentTrack", track.Name)
+			slog.Info("waiting 3 seconds before next video switch", "currentTrack", track.Name)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(5 * time.Second):
+			case <-time.After(3 * time.Second):
 				// Continue to next track
 			}
 		}
@@ -688,7 +688,7 @@ func (h *moqHandler) readTrackWithSwitching(ctx context.Context, rs *moqtranspor
 				firstGroup = &o.GroupID
 				slog.Info("recorded first group for new track", "track", trackName, "groupID", o.GroupID)
 
-				// If we have an old subscription, end it at this group + 1
+				// If we have an old subscription, end it at this group + 1 since end group is exclusive
 				if oldSub != nil && !shouldEndOldSub {
 					shouldEndOldSub = true
 					endGroupID := o.GroupID + 1
