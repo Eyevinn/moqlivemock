@@ -25,6 +25,7 @@ import (
 const (
 	appName             = "mlmsub"
 	defaultQlogFileName = "mlmsub.log"
+	initialMaxRequestID = 64
 )
 
 var usg = `%s acts as a MoQ client and subscriber for WARP.
@@ -54,7 +55,6 @@ type options struct {
 	audioname    string
 	loglevel     string
 	version      bool
-	testNew      bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -72,7 +72,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.endAfter, "end-after", 0,
 		"Send SUBSCRIBE_UPDATE to end subscriptions after X groups from first group (0 means no limit)")
 	fs.BoolVar(&opts.switchTracks, "switch-tracks", false,
-		"Start with video+audio, then switch video tracks (400kbps→600kbps→900kbps), then audio tracks (monotonic→scale)")
+		"Enable track switching - Start with video+audio, then switch video tracks, then audio tracks")
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
@@ -80,8 +80,6 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track (default use first)")
 	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track (default use first)")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
-	fs.BoolVar(&opts.testNew, "test-new", false, "Test new refactored architecture (experimental)")
-	fs.BoolVar(&opts.switchTracks, "test-switching", false, "Test track switching with new architecture (requires --test-new)")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -136,31 +134,8 @@ func runWithOptions(opts *options) error {
 }
 
 func runClient(ctx context.Context, opts *options) error {
-	var logfh io.Writer
-	if opts.qlogfile == "-" {
-		logfh = os.Stderr
-	} else {
-		fh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			slog.Error("failed to open log file", "error", err)
-		}
-		logfh = fh
-		defer fh.Close()
-	}
-
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
-
-	h := &moqHandler{
-		quic:         !useWebTransport,
-		addr:         opts.addr,
-		namespace:    []string{internal.Namespace},
-		logfh:        logfh,
-		videoname:    opts.videoname,
-		audioname:    opts.audioname,
-		endAfter:     opts.endAfter,
-		switchTracks: opts.switchTracks,
-	}
 
 	outs := make(map[string]io.Writer)
 
@@ -186,15 +161,11 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	// Use new architecture if test flag is set
-	if opts.testNew {
-		if opts.switchTracks {
-			return runTrackSwitchingTest(ctx, useWebTransport, opts.addr, outs)
-		}
-		return runNewArchitectureTest(ctx, useWebTransport, opts.addr, outs)
+	// Use new architecture by default
+	if opts.switchTracks {
+		return runWithTrackSwitching(ctx, useWebTransport, opts.addr, outs)
 	}
-	
-	return h.runClient(ctx, useWebTransport, outs)
+	return runSimplePlayback(ctx, useWebTransport, opts.addr, outs)
 }
 
 func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
@@ -223,9 +194,9 @@ func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection
 	return webtransportmoq.NewClient(session), nil
 }
 
-// runNewArchitectureTest tests the new refactored architecture
-func runNewArchitectureTest(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
-	slog.Info("testing new refactored architecture")
+// runSimplePlayback runs simple playback using the new architecture
+func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
+	slog.Info("starting simple playback with new architecture")
 	
 	// Establish connection
 	var conn moqtransport.Connection
@@ -278,9 +249,9 @@ func runNewArchitectureTest(ctx context.Context, useWebTransport bool, addr stri
 	return client.RunSimplePlayback(ctx, session)
 }
 
-// runTrackSwitchingTest tests the new architecture with track switching
-func runTrackSwitchingTest(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
-	slog.Info("testing new architecture with track switching")
+// runWithTrackSwitching runs playback with track switching using the new architecture
+func runWithTrackSwitching(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
+	slog.Info("starting playback with track switching")
 	
 	// Establish connection
 	var conn moqtransport.Connection

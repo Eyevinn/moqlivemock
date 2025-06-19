@@ -213,7 +213,7 @@ func (pm *PublisherManager) HandleSubscribe(
 	return nil
 }
 
-// handleCatalogSubscription handles catalog subscriptions (unchanged from original)
+// handleCatalogSubscription handles catalog subscriptions
 func (pm *PublisherManager) handleCatalogSubscription(w *moqtransport.SubscribeResponseWriter) error {
 	opts := moqtransport.DefaultSubscribeOkOptions()
 	err := w.AcceptWithOptions(opts)

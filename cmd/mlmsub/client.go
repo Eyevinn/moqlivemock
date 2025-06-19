@@ -12,7 +12,7 @@ import (
 	"github.com/mengelbart/moqtransport"
 )
 
-// SimpleClient represents a basic MoQ client for testing the new architecture
+// SimpleClient represents a basic MoQ client using the modular architecture
 type SimpleClient struct {
 	namespace        []string
 	subscriptionMgr  SubscriptionManager
@@ -30,7 +30,7 @@ type SimpleClient struct {
 	cmafMux   *cmafMux
 }
 
-// NewSimpleClient creates a new simple client for testing
+// NewSimpleClient creates a new simple client
 func NewSimpleClient(namespace []string, muxout, videoout, audioout io.Writer) *SimpleClient {
 	return &SimpleClient{
 		namespace:    namespace,
@@ -42,9 +42,9 @@ func NewSimpleClient(namespace []string, muxout, videoout, audioout io.Writer) *
 	}
 }
 
-// RunSimplePlayback runs basic playback without switching for testing
+// RunSimplePlayback runs basic playback without switching
 func (c *SimpleClient) RunSimplePlayback(ctx context.Context, session *moqtransport.Session) error {
-	c.logger.Info("starting simple playback test")
+	c.logger.Info("starting simple playback")
 	
 	// Initialize components
 	if err := c.initializeComponents(session); err != nil {

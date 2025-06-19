@@ -390,28 +390,62 @@ func (sc *SwitchingClient) RunTrackSwitching(ctx context.Context, session *moqtr
 	return ctx.Err()
 }
 
-// initializeForSwitching initializes mux with first track init data for seamless switching
+// initializeForSwitching initializes output files with init segments for seamless switching
 func (sc *SwitchingClient) initializeForSwitching(videoTracks, audioTracks []*internal.Track) error {
-	// Use first track init data for seamless switching (all tracks of same type share init segment)
-	if len(videoTracks) > 0 {
-		if err := sc.addInitToMux(videoTracks[0].InitData, "video"); err != nil {
-			return fmt.Errorf("failed to add video init for switching: %w", err)
+	// Write init segments to separate output files first (video and audio)
+	if len(videoTracks) > 0 && sc.videoout != nil {
+		if err := sc.writeInitToOutput(videoTracks[0].InitData, "video", sc.videoout); err != nil {
+			return fmt.Errorf("failed to write video init to separate output: %w", err)
 		}
-		sc.logger.Info("added video init data for seamless switching",
+		sc.logger.Info("wrote video init segment to separate output",
 			"sourceTrack", videoTracks[0].Name,
 			"note", "all video tracks will use this same init segment")
 	}
 	
-	if len(audioTracks) > 0 {
-		if err := sc.addInitToMux(audioTracks[0].InitData, "audio"); err != nil {
-			return fmt.Errorf("failed to add audio init for switching: %w", err)
+	if len(audioTracks) > 0 && sc.audioout != nil {
+		if err := sc.writeInitToOutput(audioTracks[0].InitData, "audio", sc.audioout); err != nil {
+			return fmt.Errorf("failed to write audio init to separate output: %w", err)
 		}
-		sc.logger.Info("added audio init data for seamless switching",
+		sc.logger.Info("wrote audio init segment to separate output",
 			"sourceTrack", audioTracks[0].Name,
 			"note", "all audio tracks will use this same init segment")
 	}
 	
+	// Initialize CMAF mux with combined init segments (video + audio)
+	if sc.cmafMux != nil {
+		if len(videoTracks) > 0 {
+			if err := sc.addInitToMux(videoTracks[0].InitData, "video"); err != nil {
+				return fmt.Errorf("failed to add video init to mux: %w", err)
+			}
+		}
+		
+		if len(audioTracks) > 0 {
+			if err := sc.addInitToMux(audioTracks[0].InitData, "audio"); err != nil {
+				return fmt.Errorf("failed to add audio init to mux: %w", err)
+			}
+		}
+		
+		sc.logger.Info("initialized CMAF mux with combined init segments",
+			"videoTrack", func() string { if len(videoTracks) > 0 { return videoTracks[0].Name } else { return "none" } }(),
+			"audioTrack", func() string { if len(audioTracks) > 0 { return audioTracks[0].Name } else { return "none" } }(),
+			"note", "mux contains combined video+audio init at start")
+	}
+	
 	return nil
+}
+
+// writeInitToOutput writes an init segment to an output writer
+func (sc *SwitchingClient) writeInitToOutput(initData string, mediaType string, writer io.Writer) error {
+	if initData == "" {
+		sc.logger.Warn("no init data to write", "mediaType", mediaType)
+		return nil
+	}
+	
+	sc.logger.Info("writing init segment to output",
+		"mediaType", mediaType,
+		"initDataLength", len(initData))
+	
+	return unpackWrite(initData, writer)
 }
 
 // startInitialTracks starts the initial video and audio tracks
