@@ -127,12 +127,12 @@ func (pm *PublisherManager) Stop() error {
 // HandleSubscribe handles a subscribe message using the new architecture
 func (pm *PublisherManager) HandleSubscribe(
 	sm *moqtransport.SubscribeMessage,
-	w moqtransport.SubscribeResponseWriter,
+	w *moqtransport.SubscribeResponseWriter,
 	sessionID uint64,
 ) error {
 	subID := SubscriptionID{
 		SessionID: sessionID,
-		RequestID: sm.RequestID(),
+		RequestID: sm.RequestID,
 	}
 
 	trackName := sm.Track
@@ -173,20 +173,17 @@ func (pm *PublisherManager) HandleSubscribe(
 	}
 
 	// Get publisher interface from response writer
-	publisher, ok := w.(moqtransport.Publisher)
-	if !ok {
-		return fmt.Errorf("subscription response writer does not implement publisher")
-	}
+	// Use SubscribeResponseWriter directly (it's already a pointer)
+	publisher := w
 
 	// Create subscription using client-provided request ID
-	requestID := sm.RequestID()
-	session := w.Session()
+	requestID := sm.RequestID
 
 	currentGroup := trackPub.GetCurrentGroup()
 
 	subscription := &Subscription{
 		SessionID:   sessionID,
-		Session:     session,
+		Session:     nil, // Not accessible from SubscribeResponseWriter
 		RequestID:   requestID,
 		TrackName:   trackName,
 		StartGroup:  currentGroup + 1, // Start at next group
@@ -217,16 +214,15 @@ func (pm *PublisherManager) HandleSubscribe(
 }
 
 // handleCatalogSubscription handles catalog subscriptions (unchanged from original)
-func (pm *PublisherManager) handleCatalogSubscription(w moqtransport.SubscribeResponseWriter) error {
-	err := w.Accept()
+func (pm *PublisherManager) handleCatalogSubscription(w *moqtransport.SubscribeResponseWriter) error {
+	opts := moqtransport.DefaultSubscribeOkOptions()
+	err := w.AcceptWithOptions(opts)
 	if err != nil {
 		return fmt.Errorf("failed to accept catalog subscription: %w", err)
 	}
 
-	publisher, ok := w.(moqtransport.Publisher)
-	if !ok {
-		return fmt.Errorf("subscription response writer does not implement publisher")
-	}
+	// Use SubscribeResponseWriter directly (it's already a pointer)
+	publisher := w
 
 	sg, err := publisher.OpenSubgroup(0, 0, 0)
 	if err != nil {
@@ -258,7 +254,7 @@ func (pm *PublisherManager) HandleSubscribeUpdate(
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	requestID := sum.RequestID()
+	requestID := sum.RequestID
 
 	// Find subscription by both RequestID and SessionID
 	subID := SubscriptionID{

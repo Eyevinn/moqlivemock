@@ -177,8 +177,12 @@ func (sm *subscriptionManager) readObjectsToChannel(sub *Subscription) {
 
 // extractStartGroup extracts the start group from subscription response
 func (sm *subscriptionManager) extractStartGroup(rs *moqtransport.RemoteTrack) uint64 {
-	// TODO: Extract from SUBSCRIBE_RESPONSE message when available in moqtransport
-	// For now, return 0 as default
+	// Use LargestLocation from SUBSCRIBE_OK if available
+	if largestLoc := rs.LargestLocation(); largestLoc != nil {
+		// Start from the next group after the largest available
+		return largestLoc.Group + 1
+	}
+	// For now, return 0 as default if no largest location is available
 	return 0
 }
 

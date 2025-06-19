@@ -66,17 +66,12 @@ func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.
 }
 
 func (h *moqHandler) getHandler() moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
-		switch r.Method() {
+	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
 		case moqtransport.MessageAnnounce:
-			am, ok := r.(*moqtransport.AnnounceMessage)
-			if !ok {
-				slog.Error("failed to type assert AnnounceMessage")
-				return
-			}
-			if !tupleEqual(am.Namespace, h.namespace) {
+			if !tupleEqual(r.Namespace, h.namespace) {
 				slog.Warn("got unexpected announcement namespace",
-					"received", am.Namespace,
+					"received", r.Namespace,
 					"expected", h.namespace)
 				err := w.Reject(0, "non-matching namespace")
 				if err != nil {
@@ -89,39 +84,39 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				slog.Error("failed to accept announcement", "error", err)
 				return
 			}
-		case moqtransport.MessageSubscribe:
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
-			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
-			}
-			return
+		}
+	})
+}
+
+func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
+	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+		err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
+		if err != nil {
+			slog.Error("failed to reject subscription", "error", err)
 		}
 	})
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection, cancel context.CancelFunc) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: h.getHandler(),
-		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
-		Session: session,
+	session := &moqtransport.Session{
+		Handler:             h.getHandler(),
+		SubscribeHandler:    h.getSubscribeHandler(),
+		InitialMaxRequestID: initialMaxRequestID,
+		Qlogger:             qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := transport.Run()
-	if err != nil {
+	if err := session.Run(conn); err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
-		err = conn.CloseWithError(0, "session initialization error")
-		if err != nil {
-			slog.Error("failed to close connection", "error", err)
+		closeErr := conn.CloseWithError(0, "session initialization error")
+		if closeErr != nil {
+			slog.Error("failed to close connection", "error", closeErr)
 		}
 		return
 	}
-	err = h.subscribeToCatalog(ctx, session, h.namespace)
-	if err != nil {
+	if err := h.subscribeToCatalog(ctx, session, h.namespace); err != nil {
 		slog.Error("failed to subscribe to catalog", "error", err)
-		err = conn.CloseWithError(0, "internal error")
-		if err != nil {
-			slog.Error("failed to close connection", "error", err)
+		closeErr := conn.CloseWithError(0, "internal error")
+		if closeErr != nil {
+			slog.Error("failed to close connection", "error", closeErr)
 		}
 		return
 	}
@@ -160,14 +155,12 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection, c
 				// Initialize video track if it's the selected one
 				if videoTrack == track.Name {
 					if h.outs["video"] != nil {
-						err = unpackWrite(track.InitData, h.outs["video"])
-						if err != nil {
+						if err := unpackWrite(track.InitData, h.outs["video"]); err != nil {
 							slog.Error("failed to write init data", "error", err)
 						}
 					}
 					if h.mux != nil {
-						err = h.mux.addInit(track.InitData, "video")
-						if err != nil {
+						if err := h.mux.addInit(track.InitData, "video"); err != nil {
 							slog.Error("failed to add init data", "error", err)
 						}
 					}
@@ -190,14 +183,12 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection, c
 				// Initialize audio track if it's the selected one
 				if audioTrack == track.Name {
 					if h.outs["audio"] != nil {
-						err = unpackWrite(track.InitData, h.outs["audio"])
-						if err != nil {
+						if err := unpackWrite(track.InitData, h.outs["audio"]); err != nil {
 							slog.Error("failed to write init data", "error", err)
 						}
 					}
 					if h.mux != nil {
-						err = h.mux.addInit(track.InitData, "audio")
-						if err != nil {
+						if err := h.mux.addInit(track.InitData, "audio"); err != nil {
 							slog.Error("failed to add init data", "error", err)
 						}
 					}
@@ -228,9 +219,8 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection, c
 		}
 		if audioTrack == "" && videoTrack == "" {
 			slog.Error("no matching tracks found")
-			err = conn.CloseWithError(0, "no matching tracks found")
-			if err != nil {
-				slog.Error("failed to close connection", "error", err)
+			if closeErr := conn.CloseWithError(0, "no matching tracks found"); closeErr != nil {
+				slog.Error("failed to close connection", "error", closeErr)
 			}
 			return
 		}

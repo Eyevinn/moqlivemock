@@ -246,32 +246,28 @@ func runNewArchitectureTest(ctx context.Context, useWebTransport bool, addr stri
 	}()
 	
 	// Create MoQ session and transport
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
+	// Create MoQ session with new API
+	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
 	
 	// Create a minimal handler for announcements
-	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
-		switch r.Method() {
+	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
 		case moqtransport.MessageAnnounce:
 			// Accept all announcements
-			err := w.Accept()
-			if err != nil {
+			if err := w.Accept(); err != nil {
 				slog.Error("failed to accept announcement", "error", err)
 			}
 		default:
-			slog.Debug("received message", "method", r.Method())
+			slog.Debug("received message", "method", r.Method)
 		}
 	})
 	
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: handler,
-		Session: session,
-	}
+	// Add handler to session
+	session.Handler = handler
 	
-	// Initialize the transport
-	err = transport.Run()
-	if err != nil {
-		return fmt.Errorf("failed to initialize MoQ transport: %w", err)
+	// Initialize the session
+	if err := session.Run(conn); err != nil {
+		return fmt.Errorf("failed to initialize MoQ session: %w", err)
 	}
 	
 	// Create simple client with new architecture
@@ -305,32 +301,28 @@ func runTrackSwitchingTest(ctx context.Context, useWebTransport bool, addr strin
 	}()
 	
 	// Create MoQ session and transport
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
+	// Create MoQ session with new API
+	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
 	
 	// Create a minimal handler for announcements
-	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
-		switch r.Method() {
+	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
 		case moqtransport.MessageAnnounce:
 			// Accept all announcements
-			err := w.Accept()
-			if err != nil {
+			if err := w.Accept(); err != nil {
 				slog.Error("failed to accept announcement", "error", err)
 			}
 		default:
-			slog.Debug("received message", "method", r.Method())
+			slog.Debug("received message", "method", r.Method)
 		}
 	})
 	
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: handler,
-		Session: session,
-	}
+	// Add handler to session
+	session.Handler = handler
 	
-	// Initialize the transport
-	err = transport.Run()
-	if err != nil {
-		return fmt.Errorf("failed to initialize MoQ transport: %w", err)
+	// Initialize the session
+	if err := session.Run(conn); err != nil {
+		return fmt.Errorf("failed to initialize MoQ session: %w", err)
 	}
 	
 	// Create switching client with new architecture

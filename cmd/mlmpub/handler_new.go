@@ -223,119 +223,97 @@ func (h *moqHandlerNew) validateCertificateForWebTransport() error {
 }
 
 func (h *moqHandlerNew) getHandler(sessionID uint64) moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r moqtransport.Message) {
-		switch r.Method() {
+	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
 		case moqtransport.MessageAnnounce:
-			am, ok := r.(*moqtransport.AnnounceMessage)
-			if !ok {
-				h.logger.Error("failed to type assert AnnounceMessage", "sessionID", sessionID)
-				return
-			}
-			h.logger.Warn("got unexpected announcement", "sessionID", sessionID, "namespace", am.Namespace)
+			h.logger.Warn("got unexpected announcement", "sessionID", sessionID, "namespace", r.Namespace)
 			err := w.Reject(0, fmt.Sprintf("%s doesn't take announcements", appName))
 			if err != nil {
 				h.logger.Error("failed to reject announcement", "sessionID", sessionID, "error", err)
 			}
 			return
-		case moqtransport.MessageSubscribe:
-			sm, ok := r.(*moqtransport.SubscribeMessage)
-			if !ok {
-				h.logger.Error("failed to type assert SubscribeMessage", "sessionID", sessionID)
-				return
-			}
+		}
+	})
+}
 
-			if !tupleEqual(sm.Namespace, h.namespace) {
-				h.logger.Warn("got unexpected subscription namespace",
-					"sessionID", sessionID,
-					"received", sm.Namespace,
-					"expected", h.namespace)
-				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
-				if err != nil {
-					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", err)
-				}
-				return
+func (h *moqHandlerNew) getSubscribeHandler(sessionID uint64) moqtransport.SubscribeHandler {
+	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+		if !tupleEqual(m.Namespace, h.namespace) {
+			h.logger.Warn("got unexpected subscription namespace",
+				"sessionID", sessionID,
+				"received", m.Namespace,
+				"expected", h.namespace)
+			err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
+			if err != nil {
+				h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", err)
 			}
+			return
+		}
 
-			// Cast to SubscribeResponseWriter to use the new publisher manager
-			subscribeWriter, ok := w.(moqtransport.SubscribeResponseWriter)
-			if !ok {
-				h.logger.Error("response writer is not a SubscribeResponseWriter", "sessionID", sessionID)
-				err := w.Reject(moqtransport.ErrorCodeInternal, "internal error")
-				if err != nil {
-					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", err)
-				}
-				return
+		subID := internal.SubscriptionID{
+			SessionID: sessionID,
+			RequestID: m.RequestID,
+		}
+
+		h.logger.Info("received subscribe message",
+			"sessionID", sessionID,
+			"subscriptionID", subID.String(),
+			"track", m.Track,
+			"namespace", m.Namespace,
+			"filterType", m.FilterType,
+			"subscriberPriority", m.SubscriberPriority)
+
+		// Handle subscription using publisher manager
+		err := h.publisherMgr.HandleSubscribe(m, w, sessionID)
+		if err != nil {
+			h.logger.Error("failed to handle subscription", "sessionID", sessionID, "track", m.Track, "error", err)
+			errorCode := moqtransport.ErrorCodeInternal
+			if err.Error() == "track not found: "+m.Track {
+				errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
 			}
-
-			subID := internal.SubscriptionID{
-				SessionID: sessionID,
-				RequestID: sm.RequestID(),
+			rejErr := w.Reject(errorCode, err.Error())
+			if rejErr != nil {
+				h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", rejErr)
 			}
+			return
+		}
+	})
+}
 
-			h.logger.Info("received subscribe message",
+func (h *moqHandlerNew) getSubscribeUpdateHandler(sessionID uint64) moqtransport.SubscribeUpdateHandler {
+	return moqtransport.SubscribeUpdateHandlerFunc(func(m *moqtransport.SubscribeUpdateMessage) {
+		subID := internal.SubscriptionID{
+			SessionID: sessionID,
+			RequestID: m.RequestID,
+		}
+		h.logger.Info("received subscribe update message",
+			"sessionID", sessionID,
+			"subscriptionID", subID.String(),
+			"endGroup", m.EndGroup,
+			"subscriberPriority", m.SubscriberPriority)
+
+		// Handle subscription update using publisher manager
+		err := h.publisherMgr.HandleSubscribeUpdate(m, sessionID)
+		if err != nil {
+			h.logger.Error("failed to handle subscription update",
 				"sessionID", sessionID,
 				"subscriptionID", subID.String(),
-				"track", sm.Track,
-				"namespace", sm.Namespace,
-				"filterType", sm.FilterType,
-				"subscriberPriority", sm.SubscriberPriority)
-
-			// Handle subscription using publisher manager
-			err := h.publisherMgr.HandleSubscribe(sm, subscribeWriter, sessionID)
-			if err != nil {
-				h.logger.Error("failed to handle subscription", "sessionID", sessionID, "track", sm.Track, "error", err)
-				errorCode := moqtransport.ErrorCodeInternal
-				if err.Error() == "track not found: "+sm.Track {
-					errorCode = moqtransport.ErrorCodeSubscribeTrackDoesNotExist
-				}
-				rejErr := subscribeWriter.Reject(errorCode, err.Error())
-				if rejErr != nil {
-					h.logger.Error("failed to reject subscription", "sessionID", sessionID, "error", rejErr)
-				}
-				return
-			}
-
-		case moqtransport.MessageSubscribeUpdate:
-			sum, ok := r.(*moqtransport.SubscribeUpdateMessage)
-			if !ok {
-				h.logger.Error("failed to type assert SubscribeUpdateMessage", "sessionID", sessionID)
-				return
-			}
-
-			subID := internal.SubscriptionID{
-				SessionID: sessionID,
-				RequestID: sum.RequestID(),
-			}
-			h.logger.Info("received subscribe update message",
-				"sessionID", sessionID,
-				"subscriptionID", subID.String(),
-				"endGroup", sum.EndGroup,
-				"subscriberPriority", sum.SubscriberPriority)
-
-			// Handle subscription update using publisher manager
-			err := h.publisherMgr.HandleSubscribeUpdate(sum, sessionID)
-			if err != nil {
-				h.logger.Error("failed to handle subscription update",
-					"sessionID", sessionID,
-					"subscriptionID", subID.String(),
-					"error", err)
-				return
-			}
+				"error", err)
+			return
 		}
 	})
 }
 
 func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 	id := h.nextSessionID.Add(1)
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: h.getHandler(id),
-		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
-		Session: session,
+	session := &moqtransport.Session{
+		Handler:                h.getHandler(id),
+		SubscribeHandler:       h.getSubscribeHandler(id),
+		SubscribeUpdateHandler: h.getSubscribeUpdateHandler(id),
+		InitialMaxRequestID:    100,
+		Qlogger:                qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := transport.Run()
-	if err != nil {
+	if err := session.Run(conn); err != nil {
 		h.logger.Error("MoQ Session initialization failed", "sessionID", id, "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
 		if err != nil {
