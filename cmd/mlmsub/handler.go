@@ -88,19 +88,10 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 	})
 }
 
-func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
-	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-		err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
-		if err != nil {
-			slog.Error("failed to reject subscription", "error", err)
-		}
-	})
-}
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection, cancel context.CancelFunc) {
 	session := &moqtransport.Session{
 		Handler:             h.getHandler(),
-		SubscribeHandler:    h.getSubscribeHandler(),
 		InitialMaxRequestID: initialMaxRequestID,
 		Qlogger:             qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
@@ -296,7 +287,14 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 
 func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string,
 	trackname, mediaType string) (close func() error, err error) {
-	rs, err := s.Subscribe(ctx, namespace, trackname, "")
+	// Create subscription options with NextGroupStart filter for video and audio
+	opts := moqtransport.DefaultSubscribeOptions()
+	if mediaType == "video" || mediaType == "audio" {
+		opts.FilterType = moqtransport.FilterTypeNextGroupStart
+		slog.Info("using FilterTypeNextGroupStart for media track", "trackname", trackname, "mediaType", mediaType)
+	}
+	
+	rs, err := s.SubscribeWithOptions(ctx, namespace, trackname, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -636,7 +634,15 @@ func (h *moqHandler) switchToTrack(ctx context.Context, session *moqtransport.Se
 
 	// 1. Subscribe to new track with "next group" filter
 	slog.Info("subscribing to new track", "track", trackName, "mediaType", mediaType)
-	newSub, err := session.Subscribe(ctx, h.namespace, trackName, "")
+	
+	// Create subscription options with NextGroupStart filter for video and audio
+	opts := moqtransport.DefaultSubscribeOptions()
+	if mediaType == "video" || mediaType == "audio" {
+		opts.FilterType = moqtransport.FilterTypeNextGroupStart
+		slog.Info("using FilterTypeNextGroupStart for track switching", "track", trackName, "mediaType", mediaType)
+	}
+	
+	newSub, err := session.SubscribeWithOptions(ctx, h.namespace, trackName, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe to track %s: %w", trackName, err)
 	}

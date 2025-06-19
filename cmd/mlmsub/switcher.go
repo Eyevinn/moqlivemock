@@ -102,17 +102,27 @@ func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType str
 		return fmt.Errorf("failed to subscribe to new track %s: %w", toTrack, err)
 	}
 	
-	// Send SUBSCRIBE_UPDATE immediately if we have largest location from SUBSCRIBE_OK
-	if largestLoc := newSub.RemoteTrack.LargestLocation(); largestLoc != nil {
+	// Send SUBSCRIBE_UPDATE immediately if we have subscription info from SUBSCRIBE_OK
+	if info := newSub.RemoteTrack.SubscriptionInfo(); info != nil && info.ContentExists {
+		largestGroup := uint64(0)
+		largestObject := uint64(0)
+		if info.LargestLocation != nil {
+			largestGroup = info.LargestLocation.Group
+			largestObject = info.LargestLocation.Object
+		}
 		// largestGroup+1 is the first group that will be received from new track
-		firstNewGroup := largestLoc.Group + 1
+		firstNewGroup := largestGroup + 1
 		
-		ts.logger.Info("using largest location for immediate SUBSCRIBE_UPDATE",
+		ts.logger.Info("using subscription info for immediate SUBSCRIBE_UPDATE",
 			"fromTrack", fromTrack,
 			"toTrack", toTrack,
 			"mediaType", mediaType,
-			"largestGroup", largestLoc.Group,
-			"firstNewGroup", firstNewGroup)
+			"hasContent", info.ContentExists,
+			"groupOrder", info.GroupOrder.String(),
+			"largestGroup", largestGroup,
+			"largestObject", largestObject,
+			"firstNewGroup", firstNewGroup,
+			"expires", info.Expires)
 			
 		// Record the switch state
 		switchObj.FirstGroup = &firstNewGroup

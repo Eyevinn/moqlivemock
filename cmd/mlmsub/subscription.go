@@ -38,16 +38,24 @@ func (sm *subscriptionManager) Subscribe(ctx context.Context, trackName string, 
 	
 	// Convert namespace string to []string
 	namespaceSlice := strings.Split(sm.namespace, "/")
-	rs, err := sm.session.Subscribe(ctx, namespaceSlice, trackName, filter)
+	
+	// Determine media type to set appropriate filter
+	mediaType := determineMediaType(trackName)
+	
+	// Create subscription options with NextGroupStart filter for video and audio
+	opts := moqtransport.DefaultSubscribeOptions()
+	if mediaType == "video" || mediaType == "audio" {
+		opts.FilterType = moqtransport.FilterTypeNextGroupStart
+		sm.logger.Info("using FilterTypeNextGroupStart for media track", "trackName", trackName, "mediaType", mediaType)
+	}
+	
+	rs, err := sm.session.SubscribeWithOptions(ctx, namespaceSlice, trackName, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to subscribe to track %s: %w", trackName, err)
 	}
 
 	// Create subscription context for cancellation
 	subCtx, cancel := context.WithCancel(ctx)
-	
-	// Determine media type from track name
-	mediaType := determineMediaType(trackName)
 	
 	// Extract start group from subscription response
 	startGroup := sm.extractStartGroup(rs)
@@ -177,12 +185,27 @@ func (sm *subscriptionManager) readObjectsToChannel(sub *Subscription) {
 
 // extractStartGroup extracts the start group from subscription response
 func (sm *subscriptionManager) extractStartGroup(rs *moqtransport.RemoteTrack) uint64 {
-	// Use LargestLocation from SUBSCRIBE_OK if available
-	if largestLoc := rs.LargestLocation(); largestLoc != nil {
-		// Start from the next group after the largest available
-		return largestLoc.Group + 1
+	// Use SubscriptionInfo from SUBSCRIBE_OK if available
+	if info := rs.SubscriptionInfo(); info != nil {
+		largestGroup := uint64(0)
+		largestObject := uint64(0)
+		if info.LargestLocation != nil {
+			largestGroup = info.LargestLocation.Group
+			largestObject = info.LargestLocation.Object
+		}
+		sm.logger.Debug("subscription info received",
+			"hasContent", info.ContentExists,
+			"groupOrder", info.GroupOrder.String(),
+			"expires", info.Expires,
+			"largestGroup", largestGroup,
+			"largestObject", largestObject)
+		
+		if info.ContentExists && info.LargestLocation != nil {
+			// Start from the next group after the largest available
+			return info.LargestLocation.Group + 1
+		}
 	}
-	// For now, return 0 as default if no largest location is available
+	// Return 0 as default if no subscription info or content is available
 	return 0
 }
 

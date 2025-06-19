@@ -237,7 +237,10 @@ func (h *moqHandlerNew) getHandler(sessionID uint64) moqtransport.Handler {
 }
 
 func (h *moqHandlerNew) getSubscribeHandler(sessionID uint64) moqtransport.SubscribeHandler {
-	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+	return moqtransport.SubscribeHandlerFunc(func(
+		w *moqtransport.SubscribeResponseWriter, 
+		m *moqtransport.SubscribeMessage,
+	) {
 		if !tupleEqual(m.Namespace, h.namespace) {
 			h.logger.Warn("got unexpected subscription namespace",
 				"sessionID", sessionID,
@@ -311,7 +314,10 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 		SubscribeHandler:       h.getSubscribeHandler(id),
 		SubscribeUpdateHandler: h.getSubscribeUpdateHandler(id),
 		InitialMaxRequestID:    100,
-		Qlogger:                qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+		Qlogger: qlog.NewQLOGHandler(
+			h.logfh, "MoQ QLOG", "MoQ QLOG", 
+			conn.Perspective().String(), moqt.Schema,
+		),
 	}
 	if err := session.Run(conn); err != nil {
 		h.logger.Error("MoQ Session initialization failed", "sessionID", id, "error", err)
