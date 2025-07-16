@@ -14,22 +14,22 @@ import (
 
 // Switch represents an active track switch
 type Switch struct {
-	FromTrack    string
-	ToTrack      string
-	MediaType    string
-	StartTime    time.Time
-	FirstGroup   *uint64 // First group received from new track
-	OldEndGroup  *uint64 // End group sent to old track
-	State        SwitchState
+	FromTrack   string
+	ToTrack     string
+	MediaType   string
+	StartTime   time.Time
+	FirstGroup  *uint64 // First group received from new track
+	OldEndGroup *uint64 // End group sent to old track
+	State       SwitchState
 }
 
 // SwitchState represents the state of a track switch
 type SwitchState int
 
 const (
-	SwitchPending SwitchState = iota  // Switch initiated, waiting for new track's first group
-	SwitchActive                      // New track first group received, old track being ended
-	SwitchCompleted                   // Switch completed successfully
+	SwitchPending   SwitchState = iota // Switch initiated, waiting for new track's first group
+	SwitchActive                       // New track first group received, old track being ended
+	SwitchCompleted                    // Switch completed successfully
 )
 
 // trackSwitcher implements TrackSwitcher interface
@@ -53,12 +53,12 @@ func NewTrackSwitcher(subscriptionMgr SubscriptionManager) TrackSwitcher {
 func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType string) error {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	
+
 	ts.logger.Info("initiating track switch",
 		"fromTrack", fromTrack,
 		"toTrack", toTrack,
 		"mediaType", mediaType)
-	
+
 	// Log current switch state for debugging
 	if existingSwitch, exists := ts.activeSwitches[mediaType]; exists {
 		ts.logger.Debug("existing switch found",
@@ -68,7 +68,7 @@ func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType str
 			"existingState", existingSwitch.State,
 			"existingDuration", time.Since(existingSwitch.StartTime))
 	}
-	
+
 	// Check if there's already an active switch for this media type
 	if existingSwitch, exists := ts.activeSwitches[mediaType]; exists {
 		if existingSwitch.State != SwitchCompleted {
@@ -83,7 +83,7 @@ func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType str
 			existingSwitch.State = SwitchCompleted
 		}
 	}
-	
+
 	// Create new switch
 	switchObj := &Switch{
 		FromTrack: fromTrack,
@@ -92,52 +92,48 @@ func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType str
 		StartTime: time.Now(),
 		State:     SwitchPending,
 	}
-	
+
 	ts.activeSwitches[mediaType] = switchObj
-	
+
 	// Subscribe to new track
 	newSub, err := ts.subscriptionMgr.Subscribe(context.Background(), toTrack, "")
 	if err != nil {
 		delete(ts.activeSwitches, mediaType)
 		return fmt.Errorf("failed to subscribe to new track %s: %w", toTrack, err)
 	}
-	
+
 	// Send SUBSCRIBE_UPDATE immediately if we have subscription info from SUBSCRIBE_OK
-	if info := newSub.RemoteTrack.SubscriptionInfo(); info != nil && info.ContentExists {
-		largestGroup := uint64(0)
-		largestObject := uint64(0)
-		if info.LargestLocation != nil {
-			largestGroup = info.LargestLocation.Group
-			largestObject = info.LargestLocation.Object
-		}
+	if largestLocation, ok := newSub.RemoteTrack.LargestLocation(); ok {
+		largestGroup := largestLocation.Group
+		largestObject := largestLocation.Object
 		// largestGroup+1 is the first group that will be received from new track
 		firstNewGroup := largestGroup + 1
-		
+
 		ts.logger.Info("using subscription info for immediate SUBSCRIBE_UPDATE",
 			"fromTrack", fromTrack,
 			"toTrack", toTrack,
 			"mediaType", mediaType,
-			"hasContent", info.ContentExists,
-			"groupOrder", info.GroupOrder.String(),
+			"hasContent", true,
+			"groupOrder", newSub.RemoteTrack.GroupOrder().String(),
 			"largestGroup", largestGroup,
 			"largestObject", largestObject,
 			"firstNewGroup", firstNewGroup,
-			"expires", info.Expires)
-			
+			"expires", newSub.RemoteTrack.Expires())
+
 		// Record the switch state
 		switchObj.FirstGroup = &firstNewGroup
 		switchObj.State = SwitchActive
 		switchObj.OldEndGroup = &firstNewGroup // Use same value since end group is exclusive
-		
+
 		// Send SUBSCRIBE_UPDATE to end old track at firstNewGroup (end group is exclusive)
 		go ts.endOldTrack(switchObj, firstNewGroup)
 	}
-	
+
 	ts.logger.Info("track switch initiated successfully",
 		"fromTrack", fromTrack,
 		"toTrack", toTrack,
 		"mediaType", mediaType)
-	
+
 	return nil
 }
 
@@ -145,24 +141,24 @@ func (ts *trackSwitcher) InitiateSwitch(fromTrack, toTrack string, mediaType str
 func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	
+
 	// Only process group starts (ObjectID == 0)
 	if !obj.IsNewGroup {
 		return ContinueReading
 	}
-	
+
 	// Check if there's an active switch for this media type
 	switchObj, exists := ts.activeSwitches[obj.MediaType]
 	if !exists {
 		return ContinueReading // No active switch
 	}
-	
+
 	ts.logger.Debug("handling group transition during switch",
 		"trackName", obj.TrackName,
 		"mediaType", obj.MediaType,
 		"groupID", obj.GroupID,
 		"switchState", switchObj.State)
-	
+
 	// Handle based on switch state and track
 	switch switchObj.State {
 	case SwitchPending:
@@ -170,7 +166,7 @@ func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 		if obj.TrackName == switchObj.ToTrack {
 			return ts.handleNewTrackFirstGroup(switchObj, obj)
 		}
-		
+
 	case SwitchActive:
 		// Switch is active, handle ongoing objects
 		if obj.TrackName == switchObj.ToTrack {
@@ -192,12 +188,12 @@ func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 					"toTrack", switchObj.ToTrack,
 					"mediaType", obj.MediaType,
 					"endGroup", *switchObj.OldEndGroup)
-				
+
 				switchObj.State = SwitchCompleted
 				return EndOldTrack
 			}
 		}
-		
+
 	case SwitchCompleted:
 		// Switch completed, only accept new track
 		if obj.TrackName == switchObj.ToTrack {
@@ -206,7 +202,7 @@ func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 			return EndOldTrack // Drop old track objects
 		}
 	}
-	
+
 	return ContinueReading
 }
 
@@ -217,18 +213,18 @@ func (ts *trackSwitcher) handleNewTrackFirstGroup(switchObj *Switch, obj MediaOb
 		"toTrack", switchObj.ToTrack,
 		"mediaType", obj.MediaType,
 		"firstGroupID", obj.GroupID)
-	
+
 	// Record first group
 	switchObj.FirstGroup = &obj.GroupID
 	switchObj.State = SwitchActive
-	
+
 	// Calculate end group for old track (first group + 1, since end group is exclusive)
 	endGroup := obj.GroupID + 1
 	switchObj.OldEndGroup = &endGroup
-	
+
 	// Send SUBSCRIBE_UPDATE to end old track
 	go ts.endOldTrack(switchObj, endGroup)
-	
+
 	return PreferNewTrack
 }
 
@@ -239,7 +235,7 @@ func (ts *trackSwitcher) endOldTrack(switchObj *Switch, endGroup uint64) {
 		"toTrack", switchObj.ToTrack,
 		"mediaType", switchObj.MediaType,
 		"endGroup", endGroup)
-	
+
 	// Find the old track subscription by track name
 	oldSub := ts.subscriptionMgr.FindSubscriptionByTrackName(switchObj.FromTrack)
 	if oldSub == nil {
@@ -247,7 +243,7 @@ func (ts *trackSwitcher) endOldTrack(switchObj *Switch, endGroup uint64) {
 			"trackName", switchObj.FromTrack)
 		return
 	}
-	
+
 	// Send SUBSCRIBE_UPDATE to end the old track
 	err := ts.subscriptionMgr.UpdateSubscription(oldSub, endGroup)
 	if err != nil {
@@ -257,13 +253,13 @@ func (ts *trackSwitcher) endOldTrack(switchObj *Switch, endGroup uint64) {
 			"error", err)
 		return
 	}
-	
+
 	ts.logger.Info("sent SUBSCRIBE_UPDATE to end old track",
 		"fromTrack", switchObj.FromTrack,
 		"toTrack", switchObj.ToTrack,
 		"mediaType", switchObj.MediaType,
 		"endGroup", endGroup)
-	
+
 	// Mark switch as completed since SUBSCRIBE_UPDATE was sent successfully
 	// The old track will end naturally, but we can start new switches now
 	ts.mu.Lock()
@@ -281,9 +277,9 @@ func (ts *trackSwitcher) endOldTrack(switchObj *Switch, endGroup uint64) {
 func (ts *trackSwitcher) Close() {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	
+
 	ts.logger.Info("closing track switcher")
-	
+
 	// Mark all switches as completed
 	for mediaType, switchObj := range ts.activeSwitches {
 		if switchObj.State != SwitchCompleted {
@@ -300,7 +296,7 @@ func (ts *trackSwitcher) Close() {
 func (ts *trackSwitcher) GetActiveSwitch(mediaType string) *Switch {
 	ts.mu.RLock()
 	defer ts.mu.RUnlock()
-	
+
 	return ts.activeSwitches[mediaType]
 }
 
@@ -314,7 +310,7 @@ type SwitchingClient struct {
 // NewSwitchingClient creates a client with track switching capabilities
 func NewSwitchingClient(namespace []string, muxout, videoout, audioout io.Writer) *SwitchingClient {
 	simpleClient := NewSimpleClient(namespace, muxout, videoout, audioout)
-	
+
 	return &SwitchingClient{
 		SimpleClient: simpleClient,
 	}
@@ -323,27 +319,27 @@ func NewSwitchingClient(namespace []string, muxout, videoout, audioout io.Writer
 // RunTrackSwitching runs the track switching scenario
 func (sc *SwitchingClient) RunTrackSwitching(ctx context.Context, session *moqtransport.Session) error {
 	sc.logger.Info("starting track switching test")
-	
+
 	// Initialize components
 	if err := sc.initializeComponents(session); err != nil {
 		return fmt.Errorf("failed to initialize components: %w", err)
 	}
 	defer sc.cleanup()
-	
+
 	// Create track switcher and integrate with router
 	sc.trackSwitcher = NewTrackSwitcher(sc.subscriptionMgr)
 	defer sc.trackSwitcher.Close()
-	
+
 	// Register track switcher with media router
 	sc.mediaRouter.SetTrackSwitcher(sc.trackSwitcher)
-	
+
 	// Subscribe to catalog and discover tracks
 	catalog, err := sc.subscribeToCatalog(ctx, session)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to catalog: %w", err)
 	}
 	sc.catalog = catalog
-	
+
 	// Discover available tracks
 	var videoTracks, audioTracks []*internal.Track
 	for _, track := range catalog.Tracks {
@@ -353,25 +349,25 @@ func (sc *SwitchingClient) RunTrackSwitching(ctx context.Context, session *moqtr
 			audioTracks = append(audioTracks, &track)
 		}
 	}
-	
+
 	sc.logger.Info("discovered tracks for switching",
 		"videoTracks", len(videoTracks),
 		"audioTracks", len(audioTracks))
-	
+
 	if len(videoTracks) == 0 && len(audioTracks) == 0 {
 		return fmt.Errorf("no video or audio tracks found for switching")
 	}
-	
+
 	// Initialize mux with first track init data (for seamless switching)
 	if err := sc.initializeForSwitching(videoTracks, audioTracks); err != nil {
 		return fmt.Errorf("failed to initialize for switching: %w", err)
 	}
-	
+
 	// Start initial tracks
 	if err := sc.startInitialTracks(ctx, videoTracks, audioTracks); err != nil {
 		return fmt.Errorf("failed to start initial tracks: %w", err)
 	}
-	
+
 	// Wait for initial content
 	sc.logger.Info("waiting 1 seconds for initial content")
 	select {
@@ -379,12 +375,12 @@ func (sc *SwitchingClient) RunTrackSwitching(ctx context.Context, session *moqtr
 		return ctx.Err()
 	case <-time.After(1 * time.Second):
 	}
-	
+
 	// Execute switching sequence
 	if err := sc.executeSwitchingSequence(ctx, videoTracks, audioTracks); err != nil {
 		return fmt.Errorf("switching sequence failed: %w", err)
 	}
-	
+
 	// Wait for context cancellation
 	<-ctx.Done()
 	return ctx.Err()
@@ -401,7 +397,7 @@ func (sc *SwitchingClient) initializeForSwitching(videoTracks, audioTracks []*in
 			"sourceTrack", videoTracks[0].Name,
 			"note", "all video tracks will use this same init segment")
 	}
-	
+
 	if len(audioTracks) > 0 && sc.audioout != nil {
 		if err := sc.writeInitToOutput(audioTracks[0].InitData, "audio", sc.audioout); err != nil {
 			return fmt.Errorf("failed to write audio init to separate output: %w", err)
@@ -410,7 +406,7 @@ func (sc *SwitchingClient) initializeForSwitching(videoTracks, audioTracks []*in
 			"sourceTrack", audioTracks[0].Name,
 			"note", "all audio tracks will use this same init segment")
 	}
-	
+
 	// Initialize CMAF mux with combined init segments (video + audio)
 	if sc.cmafMux != nil {
 		if len(videoTracks) > 0 {
@@ -418,19 +414,31 @@ func (sc *SwitchingClient) initializeForSwitching(videoTracks, audioTracks []*in
 				return fmt.Errorf("failed to add video init to mux: %w", err)
 			}
 		}
-		
+
 		if len(audioTracks) > 0 {
 			if err := sc.addInitToMux(audioTracks[0].InitData, "audio"); err != nil {
 				return fmt.Errorf("failed to add audio init to mux: %w", err)
 			}
 		}
-		
+
 		sc.logger.Info("initialized CMAF mux with combined init segments",
-			"videoTrack", func() string { if len(videoTracks) > 0 { return videoTracks[0].Name } else { return "none" } }(),
-			"audioTrack", func() string { if len(audioTracks) > 0 { return audioTracks[0].Name } else { return "none" } }(),
+			"videoTrack", func() string {
+				if len(videoTracks) > 0 {
+					return videoTracks[0].Name
+				} else {
+					return "none"
+				}
+			}(),
+			"audioTrack", func() string {
+				if len(audioTracks) > 0 {
+					return audioTracks[0].Name
+				} else {
+					return "none"
+				}
+			}(),
 			"note", "mux contains combined video+audio init at start")
 	}
-	
+
 	return nil
 }
 
@@ -440,11 +448,11 @@ func (sc *SwitchingClient) writeInitToOutput(initData string, mediaType string, 
 		sc.logger.Warn("no init data to write", "mediaType", mediaType)
 		return nil
 	}
-	
+
 	sc.logger.Info("writing init segment to output",
 		"mediaType", mediaType,
 		"initDataLength", len(initData))
-	
+
 	return unpackWrite(initData, writer)
 }
 
@@ -458,7 +466,7 @@ func (sc *SwitchingClient) startInitialTracks(ctx context.Context, videoTracks, 
 			return fmt.Errorf("failed to start initial video track: %w", err)
 		}
 	}
-	
+
 	// Start initial audio track
 	if len(audioTracks) > 0 {
 		sc.logger.Info("starting initial audio track", "track", audioTracks[0].Name)
@@ -467,7 +475,7 @@ func (sc *SwitchingClient) startInitialTracks(ctx context.Context, videoTracks, 
 			return fmt.Errorf("failed to start initial audio track: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -480,22 +488,22 @@ func (sc *SwitchingClient) executeSwitchingSequence(ctx context.Context, videoTr
 			return ctx.Err()
 		case <-time.After(2 * time.Second): // Wait between switches
 		}
-		
+
 		fromTrack := videoTracks[i-1].Name
 		toTrack := videoTracks[i].Name
-		
+
 		sc.logger.Info("switching video track",
 			"from", fromTrack,
 			"to", toTrack,
 			"step", i+1, "of", len(videoTracks))
-		
+
 		err := sc.trackSwitcher.InitiateSwitch(fromTrack, toTrack, "video")
 		if err != nil {
 			sc.logger.Error("failed to switch video track", "error", err)
 			continue
 		}
 	}
-	
+
 	// Audio track switching (skip first track since it's already active)
 	for i := 1; i < len(audioTracks); i++ {
 		select {
@@ -503,22 +511,22 @@ func (sc *SwitchingClient) executeSwitchingSequence(ctx context.Context, videoTr
 			return ctx.Err()
 		case <-time.After(5 * time.Second): // Wait between switches
 		}
-		
+
 		fromTrack := audioTracks[i-1].Name
 		toTrack := audioTracks[i].Name
-		
+
 		sc.logger.Info("switching audio track",
 			"from", fromTrack,
 			"to", toTrack,
 			"step", i+1, "of", len(audioTracks))
-		
+
 		err := sc.trackSwitcher.InitiateSwitch(fromTrack, toTrack, "audio")
 		if err != nil {
 			sc.logger.Error("failed to switch audio track", "error", err)
 			continue
 		}
 	}
-	
+
 	sc.logger.Info("switching sequence completed successfully")
 	return nil
 }
