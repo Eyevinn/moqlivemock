@@ -161,6 +161,7 @@ func (mr *mediaRouter) routingLoop() {
 	}
 }
 
+/* Unused
 // hasDuplicateGroup checks if this group has been seen from multiple tracks
 func (mr *mediaRouter) hasDuplicateGroup(obj MediaObject) bool {
 	tracks, exists := mr.groupTracks[obj.GroupID]
@@ -196,6 +197,8 @@ func (mr *mediaRouter) shouldPreferNewTrack(obj MediaObject) bool {
 	return true // This track is newer or equal
 }
 
+*/
+
 // recordObjectTrack records the track and timestamp for this object's group
 func (mr *mediaRouter) recordObjectTrack(obj MediaObject) {
 	if _, exists := mr.groupTracks[obj.GroupID]; !exists {
@@ -211,6 +214,7 @@ func (mr *mediaRouter) recordObjectTrack(obj MediaObject) {
 	}
 }
 
+/* Unused
 // getTracksForGroup returns the list of tracks for a given group
 func (mr *mediaRouter) getTracksForGroup(groupID uint64) []string {
 	tracks, exists := mr.groupTracks[groupID]
@@ -225,6 +229,7 @@ func (mr *mediaRouter) getTracksForGroup(groupID uint64) []string {
 
 	return result
 }
+*/
 
 // cleanupOldGroups removes old group tracking data
 func (mr *mediaRouter) cleanupOldGroups() {

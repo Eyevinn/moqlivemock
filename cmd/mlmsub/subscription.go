@@ -21,7 +21,8 @@ type subscriptionManager struct {
 }
 
 // NewSubscriptionManager creates a new subscription manager
-func NewSubscriptionManager(session *moqtransport.Session, namespace string, mediaChannel MediaChannel) SubscriptionManager {
+func NewSubscriptionManager(session *moqtransport.Session, namespace string,
+	mediaChannel MediaChannel) SubscriptionManager {
 	return &subscriptionManager{
 		session:       session,
 		namespace:     namespace,
@@ -33,7 +34,8 @@ func NewSubscriptionManager(session *moqtransport.Session, namespace string, med
 }
 
 // Subscribe creates a new subscription to a track
-func (sm *subscriptionManager) Subscribe(ctx context.Context, trackName string, filter string) (*Subscription, error) {
+func (sm *subscriptionManager) Subscribe(ctx context.Context, trackName string, filter string) (
+	*Subscription, error) {
 	sm.logger.Info("subscribing to track", "trackName", trackName, "filter", filter)
 
 	// Convert namespace string to []string
@@ -126,7 +128,7 @@ func (sm *subscriptionManager) Close() {
 	sm.trackNameMap = make(map[string]*Subscription)
 }
 
-// readObjectsToChannel reads objects from a subscription and sends them to the media channel
+// readObjectsToChannel reads objects from subscription and sends them to the media channel
 func (sm *subscriptionManager) readObjectsToChannel(sub *Subscription) {
 	defer sm.logger.Info("stopped reading objects", "trackName", sub.TrackName)
 

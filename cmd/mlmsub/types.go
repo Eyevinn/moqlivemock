@@ -9,14 +9,14 @@ import (
 
 // MediaObject represents a media object received from a MoQ track
 type MediaObject struct {
-	TrackName   string
-	TrackAlias  uint64
-	GroupID     uint64
-	ObjectID    uint64
-	MediaType   string // "video" or "audio"
-	Payload     []byte
-	Timestamp   time.Time
-	IsNewGroup  bool // true when ObjectID == 0
+	TrackName  string
+	TrackAlias uint64
+	GroupID    uint64
+	ObjectID   uint64
+	MediaType  string // "video" or "audio"
+	Payload    []byte
+	Timestamp  time.Time
+	IsNewGroup bool // true when ObjectID == 0
 }
 
 // MediaChannel is used for passing media objects between components

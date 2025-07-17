@@ -53,3 +53,24 @@ update:
 .PHONY: check-licenses
 check-licenses: prepare
 	wwhrd check
+
+.PHONY: venv
+venv: .venv/bin/activate
+
+.venv/bin/activate:
+	python3 -m venv .venv
+	.venv/bin/pip install --upgrade pip
+	.venv/bin/pip install pre-commit==4.2.0
+	touch .venv/bin/activate
+
+.PHONY: pre-commit-install
+pre-commit-install: venv
+	.venv/bin/pre-commit install
+
+.PHONY: pre-commit
+pre-commit: venv
+	.venv/bin/pre-commit run --all-files
+
+.PHONY: check
+check: prepare pre-commit
+	golangci-lint run

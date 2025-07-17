@@ -118,7 +118,8 @@ func CurrMoQGroupNr(track *ContentTrack, nowMS uint64, constantDurMS uint32) uin
 // - Object (G, N) is available N*objectDuration later
 // - Video has sampleOffset = 0
 // - Audio has sampleOffset = minimal time later than video given audio sample duration
-func WriteMoQGroup(ctx context.Context, logger *slog.Logger, track *ContentTrack, moq *MoQGroup, ow ObjectWriter) error {
+func WriteMoQGroup(ctx context.Context, logger *slog.Logger, track *ContentTrack,
+	moq *MoQGroup, ow ObjectWriter) error {
 	groupNr := moq.groupNr
 
 	// Calculate object duration in milliseconds

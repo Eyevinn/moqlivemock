@@ -169,7 +169,8 @@ func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 
 	case SwitchActive:
 		// Switch is active, handle ongoing objects
-		if obj.TrackName == switchObj.ToTrack {
+		switch obj.TrackName {
+		case switchObj.ToTrack:
 			// Check if enough time has passed to consider switch completed
 			if time.Since(switchObj.StartTime) > 10*time.Second {
 				ts.logger.Info("completing switch due to timeout",
@@ -180,7 +181,7 @@ func (ts *trackSwitcher) HandleGroupTransition(obj MediaObject) SwitchAction {
 				switchObj.State = SwitchCompleted
 			}
 			return PreferNewTrack // Always prefer new track
-		} else if obj.TrackName == switchObj.FromTrack {
+		case switchObj.FromTrack:
 			// Check if old track should be ended
 			if switchObj.OldEndGroup != nil && obj.GroupID >= *switchObj.OldEndGroup {
 				ts.logger.Info("old track reached end group, completing switch",
@@ -480,7 +481,8 @@ func (sc *SwitchingClient) startInitialTracks(ctx context.Context, videoTracks, 
 }
 
 // executeSwitchingSequence executes the track switching sequence
-func (sc *SwitchingClient) executeSwitchingSequence(ctx context.Context, videoTracks, audioTracks []*internal.Track) error {
+func (sc *SwitchingClient) executeSwitchingSequence(ctx context.Context,
+	videoTracks, audioTracks []*internal.Track) error {
 	// Video track switching (skip first track since it's already active)
 	for i := 1; i < len(videoTracks); i++ {
 		select {

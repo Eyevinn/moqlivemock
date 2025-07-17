@@ -165,7 +165,8 @@ func (c *SimpleClient) cleanup() {
 }
 
 // subscribeToCatalog subscribes to the catalog and returns parsed catalog
-func (c *SimpleClient) subscribeToCatalog(ctx context.Context, session *moqtransport.Session) (*internal.Catalog, error) {
+func (c *SimpleClient) subscribeToCatalog(ctx context.Context, session *moqtransport.Session) (
+	*internal.Catalog, error) {
 	c.logger.Info("subscribing to catalog", "namespace", c.namespace)
 
 	rs, err := session.Subscribe(ctx, c.namespace, "catalog")
@@ -193,7 +194,8 @@ func (c *SimpleClient) subscribeToCatalog(ctx context.Context, session *moqtrans
 	var catalog internal.Catalog
 	err = json.Unmarshal(obj.Payload, &catalog)
 	if err != nil {
-		c.logger.Error("failed to parse catalog JSON", "error", err, "payload", string(obj.Payload[:min(100, len(obj.Payload))]))
+		c.logger.Error("failed to parse catalog JSON", "error", err, "payload",
+			string(obj.Payload[:min(100, len(obj.Payload))]))
 		return nil, fmt.Errorf("failed to parse catalog: %w", err)
 	}
 
