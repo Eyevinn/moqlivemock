@@ -1,9 +1,5 @@
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Genreated binaries
+out/
 
 # Test binary, built with `go test -c`
 *.test
@@ -11,8 +7,13 @@
 # Output of the make coverage target
 coverage.*
 
+# Output from video generation
+utils/videogen/output*
+utils/videogen/results
+utils/videogen/logs
+
 # Dependency directories (remove the comment below to include it)
 vendor/
 
-# Configuration from VSCode
-*.DS_Store
+# Claude internal files
+.claude
