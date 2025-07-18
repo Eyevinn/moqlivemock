@@ -25,33 +25,36 @@ import (
 const (
 	appName             = "mlmsub"
 	defaultQlogFileName = "mlmsub.log"
+	initialMaxRequestID = 64
 )
 
 var usg = `%s acts as a MoQ client and subscriber for WARP.
-Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
+Should first subscribe to catalog. When receiving a catalog, it should choose one video and
 one audio track and subscribe to these.
 
 When receiving the media, it can write out to concatenated CMAF tracks but also multiplex
 the tracks into a single CMAF file. By muxing the tracks and choosing muxout to "-" (stdout),
 it is possible to pipe the stream to ffplay get synchronized playback of video and audio.
 
-mlmsub -muxout - | ffplay - 
+mlmsub -muxout - | ffplay -
 
 Usage of %s:
 `
 
 type options struct {
-	addr      string
-	trackname string
-	duration  int
-	muxout    string
-	videoOut  string
-	audioOut  string
-	qlogfile  string
-	videoname string
-	audioname string
-	loglevel  string
-	version   bool
+	addr         string
+	trackname    string
+	duration     int
+	endAfter     int
+	switchTracks bool
+	muxout       string
+	videoOut     string
+	audioOut     string
+	qlogfile     string
+	videoname    string
+	audioname    string
+	loglevel     string
+	version      bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -66,6 +69,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
+	fs.IntVar(&opts.endAfter, "end-after", 0,
+		"Send SUBSCRIBE_UPDATE to end subscriptions after X groups from first group (0 means no limit)")
+	fs.BoolVar(&opts.switchTracks, "switch-tracks", false,
+		"Enable track switching - Start with video+audio, then switch video tracks, then audio tracks")
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
@@ -95,23 +102,6 @@ func main() {
 	}
 }
 
-// parseLogLevel converts a string log level to slog.Level
-func parseLogLevel(level string) slog.Level {
-	switch strings.ToLower(level) {
-	case "debug":
-		return slog.LevelDebug
-	case "info":
-		return slog.LevelInfo
-	case "warning", "warn":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown log level: %s, using 'info'\n", level)
-		return slog.LevelInfo
-	}
-}
-
 func runWithOptions(opts *options) error {
 	if opts.version {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
@@ -119,7 +109,7 @@ func runWithOptions(opts *options) error {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: parseLogLevel(opts.loglevel),
+		Level: internal.ParseLogLevel(opts.loglevel),
 	}))
 	slog.SetDefault(logger)
 
@@ -144,29 +134,8 @@ func runWithOptions(opts *options) error {
 }
 
 func runClient(ctx context.Context, opts *options) error {
-	var logfh io.Writer
-	if opts.qlogfile == "-" {
-		logfh = os.Stderr
-	} else {
-		fh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-		if err != nil {
-			slog.Error("failed to open log file", "error", err)
-		}
-		logfh = fh
-		defer fh.Close()
-	}
-
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
-
-	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
-	}
 
 	outs := make(map[string]io.Writer)
 
@@ -192,7 +161,11 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	return h.runClient(ctx, useWebTransport, outs)
+	// Use new architecture by default
+	if opts.switchTracks {
+		return runWithTrackSwitching(ctx, useWebTransport, opts.addr, outs)
+	}
+	return runSimplePlayback(ctx, useWebTransport, opts.addr, outs)
 }
 
 func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
@@ -219,4 +192,114 @@ func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection
 		return nil, err
 	}
 	return webtransportmoq.NewClient(session), nil
+}
+
+// runSimplePlayback runs simple playback using the new architecture
+func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
+	slog.Info("starting simple playback with new architecture")
+
+	// Establish connection
+	var conn moqtransport.Connection
+	var err error
+	if useWebTransport {
+		conn, err = dialWebTransport(ctx, addr)
+	} else {
+		conn, err = dialQUIC(ctx, addr)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to dial: %w", err)
+	}
+	defer func() {
+		err := conn.CloseWithError(0, "session completed")
+		if err != nil {
+			slog.Error("failed to close connection", "error", err)
+		}
+	}()
+
+	// Create MoQ session and transport
+	// Create MoQ session with new API
+	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
+
+	// Create a minimal handler for announcements
+	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
+		case moqtransport.MessageAnnounce:
+			// Accept all announcements
+			if err := w.Accept(); err != nil {
+				slog.Error("failed to accept announcement", "error", err)
+			}
+		default:
+			slog.Debug("received message", "method", r.Method)
+		}
+	})
+
+	// Add handler to session
+	session.Handler = handler
+
+	// Initialize the session
+	if err := session.Run(conn); err != nil {
+		return fmt.Errorf("failed to initialize MoQ session: %w", err)
+	}
+
+	// Create simple client with new architecture
+	namespace := []string{internal.Namespace}
+	client := NewSimpleClient(namespace, outs["mux"], outs["video"], outs["audio"])
+
+	// Run simple playback test
+	return client.RunSimplePlayback(ctx, session)
+}
+
+// runWithTrackSwitching runs playback with track switching using the new architecture
+func runWithTrackSwitching(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
+	slog.Info("starting playback with track switching")
+
+	// Establish connection
+	var conn moqtransport.Connection
+	var err error
+	if useWebTransport {
+		conn, err = dialWebTransport(ctx, addr)
+	} else {
+		conn, err = dialQUIC(ctx, addr)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to dial: %w", err)
+	}
+	defer func() {
+		err := conn.CloseWithError(0, "session completed")
+		if err != nil {
+			slog.Error("failed to close connection", "error", err)
+		}
+	}()
+
+	// Create MoQ session and transport
+	// Create MoQ session with new API
+	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
+
+	// Create a minimal handler for announcements
+	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+		switch r.Method {
+		case moqtransport.MessageAnnounce:
+			// Accept all announcements
+			if err := w.Accept(); err != nil {
+				slog.Error("failed to accept announcement", "error", err)
+			}
+		default:
+			slog.Debug("received message", "method", r.Method)
+		}
+	})
+
+	// Add handler to session
+	session.Handler = handler
+
+	// Initialize the session
+	if err := session.Run(conn); err != nil {
+		return fmt.Errorf("failed to initialize MoQ session: %w", err)
+	}
+
+	// Create switching client with new architecture
+	namespace := []string{internal.Namespace}
+	client := NewSwitchingClient(namespace, outs["mux"], outs["video"], outs["audio"])
+
+	// Run track switching test
+	return client.RunTrackSwitching(ctx, session)
 }

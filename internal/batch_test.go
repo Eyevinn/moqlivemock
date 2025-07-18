@@ -96,7 +96,7 @@ func TestInitContentTrackWithBatch(t *testing.T) {
 			fh, err := os.Open(tc.filePath)
 			require.NoError(t, err)
 			defer fh.Close()
-			
+
 			ct, err := InitContentTrack(fh, tc.desc, tc.audioSampleBatch, tc.videoSampleBatch)
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedBatch, ct.SampleBatch, "SampleBatch")
@@ -138,10 +138,10 @@ func TestLoadAssetWithBatch(t *testing.T) {
 				for _, track := range group.Tracks {
 					switch track.ContentType {
 					case "audio":
-						require.Equal(t, tc.audioSampleBatch, track.SampleBatch, 
+						require.Equal(t, tc.audioSampleBatch, track.SampleBatch,
 							"Audio track %s should have batch size %d", track.Name, tc.audioSampleBatch)
 					case "video":
-						require.Equal(t, tc.videoSampleBatch, track.SampleBatch, 
+						require.Equal(t, tc.videoSampleBatch, track.SampleBatch,
 							"Video track %s should have batch size %d", track.Name, tc.videoSampleBatch)
 					}
 				}
@@ -175,9 +175,9 @@ func TestLoadAssetWithBatch(t *testing.T) {
 				// Calculate expected bitrate
 				frameRate := float64(contentTrack.TimeScale) / float64(contentTrack.SampleDur)
 				expectedBitrate := calcCmafBitrate(contentTrack.SampleBitrate, frameRate, contentTrack.SampleBatch)
-				
-				require.Equal(t, expectedBitrate, *track.Bitrate, 
-					"Track %s should have bitrate calculated with batch size %d", 
+
+				require.Equal(t, expectedBitrate, *track.Bitrate,
+					"Track %s should have bitrate calculated with batch size %d",
 					track.Name, contentTrack.SampleBatch)
 			}
 		})
@@ -219,26 +219,26 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 				for _, track := range group.Tracks {
 					// Test with different batch sizes
 					batchSize := track.SampleBatch
-					
+
 					// Generate a chunk with the configured batch size
 					chunk, err := track.GenCMAFChunk(0, 0, uint64(batchSize))
 					require.NoError(t, err)
 					require.NotNil(t, chunk)
-					
+
 					// For video tracks with batch > 1, the chunk should be larger than a single sample chunk
 					if track.ContentType == "video" && batchSize > 1 {
 						// Generate a single sample chunk for comparison
 						singleChunk, err := track.GenCMAFChunk(0, 0, 1)
 						require.NoError(t, err)
-						
+
 						// The multi-sample chunk should be larger than the single sample chunk
 						// but not proportionally larger due to overhead sharing
-						require.Greater(t, len(chunk), len(singleChunk), 
+						require.Greater(t, len(chunk), len(singleChunk),
 							"Multi-sample chunk should be larger than single sample chunk")
-						
+
 						// The chunk should be smaller than batchSize * single sample chunks
 						// due to shared overhead
-						require.Less(t, len(chunk), batchSize*len(singleChunk), 
+						require.Less(t, len(chunk), batchSize*len(singleChunk),
 							"Multi-sample chunk should be smaller than batchSize * single sample chunks")
 					}
 				}

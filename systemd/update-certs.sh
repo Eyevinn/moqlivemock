@@ -18,7 +18,7 @@ log_message() {
 }
 
 # Check if running as root
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "This script must be run as root or with sudo"
     exit 1
 fi
@@ -39,13 +39,13 @@ log_message "Copying certificates for ${DOMAIN}..."
 
 if cp "${CADDY_CERT_DIR}/${DOMAIN}.crt" "${MOQLIVE_CERT_DIR}/cert.pem" && \
    cp "${CADDY_CERT_DIR}/${DOMAIN}.key" "${MOQLIVE_CERT_DIR}/key.pem"; then
-    
+
     # Set proper ownership and permissions
     chown ${MOQLIVE_USER}:${MOQLIVE_GROUP} "${MOQLIVE_CERT_DIR}/cert.pem" "${MOQLIVE_CERT_DIR}/key.pem"
     chmod 640 "${MOQLIVE_CERT_DIR}/cert.pem" "${MOQLIVE_CERT_DIR}/key.pem"
-    
+
     log_message "SUCCESS: Certificates copied and permissions set"
-    
+
     # Restart moqlivemock service if it's running
     if systemctl is-active --quiet moqlivemock; then
         log_message "Restarting moqlivemock service..."

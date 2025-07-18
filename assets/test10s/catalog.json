@@ -4,53 +4,71 @@
   "tracks": [
     {
       "name": "video_4mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "",
       "packaging": "cmaf",
       "renderGroup": 1,
+      "altGroup": 1,
       "label": "High Quality Video",
       "codec": "avc1.42001f",
+      "mimeType": "video/mp4",
       "width": 1280,
       "height": 720,
       "framerate": 25,
-      "bitrate": 900000,
-      "altGroup": 1
+      "bitrate": 900000
     },
     {
       "name": "video_2mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "",
       "packaging": "cmaf",
       "renderGroup": 1,
+      "altGroup": 1,
       "label": "Medium Quality Video",
       "codec": "avc1.42001f",
+      "mimeType": "video/mp4",
       "width": 1280,
       "height": 720,
       "framerate": 25,
-      "bitrate": 600000,
-      "altGroup": 1
+      "bitrate": 600000
     },
     {
       "name": "video_1mbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "namespace": "",
       "packaging": "cmaf",
       "renderGroup": 1,
+      "altGroup": 1,
+      "mimeType": "video/mp4",
       "label": "Low Quality Video",
       "codec": "avc1.42001f",
       "width": 1280,
       "height": 720,
       "framerate": 25,
-      "bitrate": 400000,
-      "altGroup": 1
+      "bitrate": 400000
     },
     {
-      "name": "audio_128kbps",
-      "namespace": "moqlivemock.eyevinn.se/media",
+      "name": "audio_monotonic_128kbps",
+      "namespace": "",
       "packaging": "cmaf",
       "renderGroup": 1,
-      "label": "Stereo Audio",
+      "label": "",
       "codec": "mp4a.40.2",
+      "mimeType": "audio/mp4",
       "samplerate": 48000,
       "channelConfig": "2",
-      "bitrate": 170000
+      "bitrate": 170000,
+      "lang": "mon"
+    },
+    {
+      "name": "audio_scale_128kbps",
+      "namespace": "",
+      "packaging": "cmaf",
+      "renderGroup": 1,
+      "label": "Scale",
+      "codec": "mp4a.40.2",
+      "mimeType": "audio/mp4",
+      "samplerate": 48000,
+      "channelConfig": "1",
+      "bitrate": 64000,
+      "lang": "sca"
     }
   ]
 }
