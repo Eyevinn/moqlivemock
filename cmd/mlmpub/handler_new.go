@@ -334,7 +334,7 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 }
 
 // serveQUICConn serves HTTP/3 connections
-func serveQUICConn(logger *slog.Logger, wt *webtransport.Server, conn quic.Connection) {
+func serveQUICConn(logger *slog.Logger, wt *webtransport.Server, conn *quic.Conn) {
 	err := wt.ServeQUICConn(conn)
 	if err != nil {
 		logger.Error("failed to serve QUIC connection", "error", err)
