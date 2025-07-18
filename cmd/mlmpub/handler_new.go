@@ -238,7 +238,7 @@ func (h *moqHandlerNew) getHandler(sessionID uint64) moqtransport.Handler {
 
 func (h *moqHandlerNew) getSubscribeHandler(sessionID uint64) moqtransport.SubscribeHandler {
 	return moqtransport.SubscribeHandlerFunc(func(
-		w *moqtransport.SubscribeResponseWriter, 
+		w *moqtransport.SubscribeResponseWriter,
 		m *moqtransport.SubscribeMessage,
 	) {
 		if !tupleEqual(m.Namespace, h.namespace) {
@@ -315,7 +315,7 @@ func (h *moqHandlerNew) handle(conn moqtransport.Connection) {
 		SubscribeUpdateHandler: h.getSubscribeUpdateHandler(id),
 		InitialMaxRequestID:    100,
 		Qlogger: qlog.NewQLOGHandler(
-			h.logfh, "MoQ QLOG", "MoQ QLOG", 
+			h.logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqt.Schema,
 		),
 	}

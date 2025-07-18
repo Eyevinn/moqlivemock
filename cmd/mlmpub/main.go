@@ -32,7 +32,7 @@ var usg = `%s acts as a MoQ server and publisher using WARP to send
 mocked live video and audio tracks, synchronized with wall-clock time.
 It is intended to be a test-bed for MoQ and WARP.
 
-The qlog logs are currently massive, and written to 
+The qlog logs are currently massive, and written to
 
 Usage of %s:
 `

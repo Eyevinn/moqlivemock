@@ -159,15 +159,11 @@ func (pm *PublisherManager) HandleSubscribe(
 	// Get largest location from track publisher
 	largestGroup, largestObject := trackPub.GetLargestLocation()
 
-	// Create SubscribeOkOptions with LargestLocation
-	opts := moqtransport.DefaultSubscribeOkOptions()
-	opts.LargestLocation = &moqtransport.Location{
+	// Send SubscribeOkOptions with LargestLocation
+	err := w.Accept(moqtransport.WithLargestLocation(&moqtransport.Location{
 		Group:  largestGroup,
 		Object: largestObject,
-	}
-
-	// Accept the subscription
-	err := w.AcceptWithOptions(opts)
+	}))
 	if err != nil {
 		return fmt.Errorf("failed to accept subscription: %w", err)
 	}
@@ -215,8 +211,7 @@ func (pm *PublisherManager) HandleSubscribe(
 
 // handleCatalogSubscription handles catalog subscriptions
 func (pm *PublisherManager) handleCatalogSubscription(w *moqtransport.SubscribeResponseWriter) error {
-	opts := moqtransport.DefaultSubscribeOkOptions()
-	err := w.AcceptWithOptions(opts)
+	err := w.Accept()
 	if err != nil {
 		return fmt.Errorf("failed to accept catalog subscription: %w", err)
 	}
