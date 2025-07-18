@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -21,6 +22,18 @@ const (
 )
 
 func main() {
+	// Parse command line flags
+	codecList := flag.String("codecs", "h264,aac,opus", "Comma-separated list of codecs to generate (h264, aac, opus))")
+	fragmentDuration := flag.Int("fragment-duration", 0, "Fragment duration in milliseconds (0 = one sample/fragment")
+	flag.Parse()
+
+	// Parse the codec list
+	codecs := strings.Split(*codecList, ",")
+	codecMap := make(map[string]bool)
+	for _, codec := range codecs {
+		codecMap[strings.TrimSpace(codec)] = true
+	}
+
 	// Create output directory if it doesn't exist
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		log.Fatalf("Failed to create output directory: %v", err)
@@ -34,19 +47,44 @@ func main() {
 	// Check and prepare required files
 	ensureRequiredFiles()
 
-	// Generate audio file
-	generateAudio()
+	// Generate audio files based on codec selection
+	if codecMap["aac"] {
+		generateAudio("aac", "libfdk_aac", audioBitrate, *fragmentDuration)
+	}
+	if codecMap["opus"] {
+		generateAudio("opus", "libopus", audioBitrate, *fragmentDuration)
+	}
 
-	// Generate video files at different bitrates
-	videoBitrates := []int{400, 600, 900} // kbps
-	for _, bitrate := range videoBitrates {
-		generateVideo(bitrate)
+	type videoSetup struct {
+		codec   string
+		options []string
+	}
+
+	setups := []videoSetup{
+		{"h264", []string{
+			"-c:v", "libx264",
+			"-preset", "medium",
+			"-profile:v", "main",
+			"-x264opts", fmt.Sprintf("keyint=%d:min-keyint=%d:scenecut=0:bframes=0:force-cfr=1", frameRate, frameRate),
+			"-pix_fmt", "yuv420p"},
+		},
+	}
+
+	// Generate video files based on codec selection
+	for _, setup := range setups {
+		if codecMap[setup.codec] {
+			// Generate video files at different bitrates
+			videoBitrates := []int{400, 600, 900} // kbps
+			for _, bitrate := range videoBitrates {
+				generateVideo(setup.codec, setup.options, bitrate, *fragmentDuration)
+			}
+		}
 	}
 
 	fmt.Println("All files generated successfully!")
 
 	// Print average bitrates based on file sizes
-	printActualBitrates()
+	printActualBitrates(codecMap)
 }
 
 func ensureRequiredFiles() {
@@ -57,9 +95,9 @@ func ensureRequiredFiles() {
 	}
 }
 
-func generateAudio() {
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps.mp4", audioBitrate))
-	logFile := filepath.Join(logDir, fmt.Sprintf("audio_%dkbps.log", audioBitrate))
+func generateAudio(codec, codecLib string, bitrateKbps, fragmentDurationMs int) {
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_%s.mp4", bitrateKbps, codec))
+	logFile := filepath.Join(logDir, fmt.Sprintf("audio_%dkbps_%s.log", bitrateKbps, codec))
 	fmt.Printf("Generating audio file: %s\n", outputFile)
 
 	// Create log file
@@ -75,15 +113,38 @@ func generateAudio() {
 		"-y",          // Overwrite output file if it exists
 		"-f", "lavfi", // Use libavfilter virtual input
 		"-i", fmt.Sprintf("sine=frequency=1:beep_factor=880:sample_rate=%d", audioSampleRate), // Audio pattern with beeps
-		"-c:a", "aac", // AAC audio codec
-		"-b:a", fmt.Sprintf("%dk", audioBitrate), // Audio bitrate
+		"-c:a", codecLib,
+		"-b:a", fmt.Sprintf("%dk", bitrateKbps), // Audio bitrate
+	}
+
+	// Add opus-specific options
+	if codecLib == "libopus" {
+		cmdArgs = append(cmdArgs, "-vbr", "off")
+	}
+
+	// Build movflags based on fragment duration
+	var movflags string
+	if fragmentDurationMs == 0 {
+		movflags = "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame"
+	} else {
+		movflags = "cmaf+separate_moof+delay_moov+skip_trailer"
+	}
+
+	cmdArgs = append(cmdArgs, []string{
 		"-ar", fmt.Sprintf("%d", audioSampleRate), // 48kHz sample rate
 		"-ac", "2", // Stereo audio (2 channels)
 		"-metadata:s:a:0", "language=mon", // Set language to 'mon' to indicate monotonic
 		"-t", fmt.Sprintf("%d", duration), // Duration in seconds
-		"-movflags", "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame", // MP4 fragmentation
-		outputFile,
+		"-movflags", movflags, // MP4 fragmentation
+	}...)
+
+	// Add fragment duration if specified
+	if fragmentDurationMs > 0 {
+		fragmentDurationMicros := fragmentDurationMs * 1000 // Convert ms to microseconds
+		cmdArgs = append(cmdArgs, "-frag_duration", fmt.Sprintf("%d", fragmentDurationMicros))
 	}
+
+	cmdArgs = append(cmdArgs, outputFile)
 
 	// Print the ffmpeg command
 	cmdString := "ffmpeg " + strings.Join(cmdArgs, " ")
@@ -101,13 +162,13 @@ func generateAudio() {
 		log.Fatalf("Failed to generate audio file: %v", err)
 	}
 
-	fmt.Printf("Audio generation completed. Log saved to: %s\n", logFile)
+	fmt.Printf("Audio %s generation completed. Log saved to: %s\n", codec, logFile)
 }
 
-func generateVideo(bitrateInKbps int) {
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps.mp4", bitrateInKbps))
-	logFile := filepath.Join(logDir, fmt.Sprintf("video_%dkbps.log", bitrateInKbps))
-	fmt.Printf("Generating video file at %d kbps: %s\n", bitrateInKbps, outputFile)
+func generateVideo(codec string, options []string, bitrateKbps, fragmentDurationMs int) {
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_%s.mp4", bitrateKbps, codec))
+	logFile := filepath.Join(logDir, fmt.Sprintf("video_%dkbps_%s.log", bitrateKbps, codec))
+	fmt.Printf("Generating video file at %d kbps: %s\n", bitrateKbps, outputFile)
 
 	// Create log file
 	logFileHandle, err := os.Create(logFile)
@@ -121,7 +182,7 @@ func generateVideo(bitrateInKbps int) {
 
 	// Select text color based on bitrate
 	var textColor string
-	switch bitrateInKbps {
+	switch bitrateKbps {
 	case 400:
 		textColor = "white"
 	case 600:
@@ -145,11 +206,11 @@ func generateVideo(bitrateInKbps int) {
 			"drawtext=fontfile=%s:text='Time\\: %%{pts\\:hms}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=120,"+
 			"drawtext=fontfile=%s:text='Frame\\: %%{frame_num}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=170",
 		logoScale, rotationExpr,
-		fontFile, bitrateInKbps, textColor, fontFile, videoWidth, videoHeight, textColor, fontFile, textColor, fontFile, textColor,
+		fontFile, bitrateKbps, textColor, fontFile, videoWidth, videoHeight, textColor, fontFile, textColor, fontFile, textColor,
 	)
 
 	// ffmpeg command line args
-	cmdArgs := []string{
+	cmdArgsFirst := []string{
 		"-y",
 		"-f", "lavfi",
 		"-i", fmt.Sprintf("testsrc=size=%dx%d:rate=%d:duration=%d:decimals=3", videoWidth, videoHeight, frameRate, duration),
@@ -157,18 +218,35 @@ func generateVideo(bitrateInKbps int) {
 		"-framerate", fmt.Sprintf("%d", frameRate), // Match video framerate
 		"-i", logoFile,
 		"-filter_complex", videoFilter,
-		"-c:v", "libx264",
-		"-b:v", fmt.Sprintf("%dk", bitrateInKbps),
-		"-preset", "medium",
-		"-profile:v", "main",
-		"-x264opts", fmt.Sprintf("keyint=%d:min-keyint=%d:scenecut=0:bframes=0:force-cfr=1", frameRate, frameRate),
-		"-pix_fmt", "yuv420p",
-		"-an",
-		"-movflags", "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame",
-		outputFile,
 	}
 
+	// Build movflags based on fragment duration
+	var movflags string
+	if fragmentDurationMs == 0 {
+		movflags = "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame"
+	} else {
+		movflags = "cmaf+separate_moof+delay_moov+skip_trailer"
+	}
+
+	cmdArgsLast := []string{
+		"-b:v", fmt.Sprintf("%dk", bitrateKbps),
+		"-an",
+		"-movflags", movflags,
+	}
+
+	// Add fragment duration if specified
+	if fragmentDurationMs > 0 {
+		fragmentDurationMicros := fragmentDurationMs * 1000 // Convert ms to microseconds
+		cmdArgsLast = append(cmdArgsLast, "-frag_duration", fmt.Sprintf("%d", fragmentDurationMicros))
+	}
+
+	cmdArgsLast = append(cmdArgsLast, outputFile)
+
 	// Print the ffmpeg command
+	cmdArgs := make([]string, 0, len(cmdArgsFirst)+len(options)+len(cmdArgsLast))
+	cmdArgs = append(cmdArgs, cmdArgsFirst...)
+	cmdArgs = append(cmdArgs, options...)
+	cmdArgs = append(cmdArgs, cmdArgsLast...)
 	cmdString := "ffmpeg " + strings.Join(cmdArgs, " ")
 	fmt.Println("Executing ffmpeg command:")
 	fmt.Println(cmdString)
@@ -182,25 +260,33 @@ func generateVideo(bitrateInKbps int) {
 	cmd.Stderr = logFileHandle
 
 	if err := cmd.Run(); err != nil {
-		log.Fatalf("Failed to generate video file at %d kbps: %v", bitrateInKbps, err)
+		log.Fatalf("Failed to generate video file at %d kbps: %v", bitrateKbps, err)
 	}
 
 	fmt.Printf("Video generation completed. Log saved to: %s\n", logFile)
 }
 
-func printActualBitrates() {
+func printActualBitrates(codecMap map[string]bool) {
 	fmt.Println("\nActual average bitrates based on file sizes:")
 	fmt.Println("--------------------------------------------")
 
-	// Check audio file
-	audioFile := filepath.Join(outputDir, fmt.Sprintf("audio_%dkbps.mp4", audioBitrate))
-	printFileBitrate(audioFile, duration, true)
+	// Check audio files based on selected codecs
+	if codecMap["aac"] {
+		audioFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_aac.mp4", audioBitrate))
+		printFileBitrate(audioFile, duration, true)
+	}
+	if codecMap["opus"] {
+		audioFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_opus.mp4", audioBitrate))
+		printFileBitrate(audioFile, duration, true)
+	}
 
-	// Check video files
+	// Check video files based on selected codecs
 	videoBitrates := []int{400, 600, 900} // kbps - keep in sync with main()
 	for _, bitrate := range videoBitrates {
-		videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps.mp4", bitrate))
-		printFileBitrate(videoFile, duration, false)
+		if codecMap["h264"] {
+			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_h264.mp4", bitrate))
+			printFileBitrate(videoFile, duration, false)
+		}
 	}
 }
 
