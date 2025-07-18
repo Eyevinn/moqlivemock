@@ -29,14 +29,14 @@ const (
 )
 
 var usg = `%s acts as a MoQ client and subscriber for WARP.
-Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
+Should first subscribe to catalog. When receiving a catalog, it should choose one video and
 one audio track and subscribe to these.
 
 When receiving the media, it can write out to concatenated CMAF tracks but also multiplex
 the tracks into a single CMAF file. By muxing the tracks and choosing muxout to "-" (stdout),
 it is possible to pipe the stream to ffplay get synchronized playback of video and audio.
 
-mlmsub -muxout - | ffplay - 
+mlmsub -muxout - | ffplay -
 
 Usage of %s:
 `
@@ -197,7 +197,7 @@ func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection
 // runSimplePlayback runs simple playback using the new architecture
 func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
 	slog.Info("starting simple playback with new architecture")
-	
+
 	// Establish connection
 	var conn moqtransport.Connection
 	var err error
@@ -215,11 +215,11 @@ func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, o
 			slog.Error("failed to close connection", "error", err)
 		}
 	}()
-	
+
 	// Create MoQ session and transport
 	// Create MoQ session with new API
 	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
-	
+
 	// Create a minimal handler for announcements
 	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
 		switch r.Method {
@@ -232,19 +232,19 @@ func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, o
 			slog.Debug("received message", "method", r.Method)
 		}
 	})
-	
+
 	// Add handler to session
 	session.Handler = handler
-	
+
 	// Initialize the session
 	if err := session.Run(conn); err != nil {
 		return fmt.Errorf("failed to initialize MoQ session: %w", err)
 	}
-	
+
 	// Create simple client with new architecture
 	namespace := []string{internal.Namespace}
 	client := NewSimpleClient(namespace, outs["mux"], outs["video"], outs["audio"])
-	
+
 	// Run simple playback test
 	return client.RunSimplePlayback(ctx, session)
 }
@@ -252,7 +252,7 @@ func runSimplePlayback(ctx context.Context, useWebTransport bool, addr string, o
 // runWithTrackSwitching runs playback with track switching using the new architecture
 func runWithTrackSwitching(ctx context.Context, useWebTransport bool, addr string, outs map[string]io.Writer) error {
 	slog.Info("starting playback with track switching")
-	
+
 	// Establish connection
 	var conn moqtransport.Connection
 	var err error
@@ -270,11 +270,11 @@ func runWithTrackSwitching(ctx context.Context, useWebTransport bool, addr strin
 			slog.Error("failed to close connection", "error", err)
 		}
 	}()
-	
+
 	// Create MoQ session and transport
 	// Create MoQ session with new API
 	session := &moqtransport.Session{InitialMaxRequestID: initialMaxRequestID}
-	
+
 	// Create a minimal handler for announcements
 	handler := moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
 		switch r.Method {
@@ -287,19 +287,19 @@ func runWithTrackSwitching(ctx context.Context, useWebTransport bool, addr strin
 			slog.Debug("received message", "method", r.Method)
 		}
 	})
-	
+
 	// Add handler to session
 	session.Handler = handler
-	
+
 	// Initialize the session
 	if err := session.Run(conn); err != nil {
 		return fmt.Errorf("failed to initialize MoQ session: %w", err)
 	}
-	
+
 	// Create switching client with new architecture
 	namespace := []string{internal.Namespace}
 	client := NewSwitchingClient(namespace, outs["mux"], outs["video"], outs["audio"])
-	
+
 	// Run track switching test
 	return client.RunTrackSwitching(ctx, session)
 }

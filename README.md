@@ -90,7 +90,7 @@ You can also specify options for the publisher:
 ```
 
 In another shell, start the subscriber and choose if the video, the audio,
-or a muxed combination should be output, e.g. 
+or a muxed combination should be output, e.g.
 
 ```shell
 cd cmd/mlmsub
@@ -160,7 +160,7 @@ The warp-player (fingerprint branch) can then connect using:
 - Server URL: `https://localhost:4443/moq` or `https://127.0.0.1:4443/moq`
 - Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
 
-**Notes**: 
+**Notes**:
 - The fingerprint server is disabled by default (`-fingerprintport 0`). Only enable it when using certificates that meet WebTransport's strict requirements.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 

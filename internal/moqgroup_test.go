@@ -192,7 +192,7 @@ func TestGetLargestObject(t *testing.T) {
 			sampleBatch:   1,
 			nowMS:         1000, // Start of second group
 			constantDurMS: 1000,
-			expected:      Location{Group: 0, Object: 23}, // Still in first group since second group's first object not ended yet
+			expected:      Location{Group: 0, Object: 23}, // Still in first group, since 2nd group's first object not ended
 			description:   "At start of second group, first object of group 1 not available yet",
 		},
 		{
