@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Non-robust seamless track switching functionality in mlmsub using `-switch-tracks` option
+- SUBSCRIBE_UPDATE mechanism for optimal track transitions using largest_group_id from SUBSCRIBE_OK
+- Staircase switching pattern for automated testing (video: 400kbps→600kbps→900kbps→600kbps→400kbps, audio: monotonic→scale→monotonic→scale)
+- Duplicate detection and handling during track switching
+- Modular architecture for mlmsub with separate SubscriptionManager, MediaRouter, MediaPipeline, and TrackSwitcher components
+- MediaObject struct-based communication between components via Go channels
+
+### Changed
+
+- Refactored mlmsub handler to modular component-based architecture
+- Improved separation of concerns between control plane, media routing, and output processing
+- Enhanced error handling and logging throughout the subscription pipeline
+- Changed moqtransport version
+
 ### Fixes
 
 - RequestID setting in mlmsub (#19)
