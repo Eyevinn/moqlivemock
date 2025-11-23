@@ -60,7 +60,7 @@ All files are fragmented MP4 files with each frame in an individual fragment, ma
 - Timestamp
 - Frame number
 
-These test files are designed to be used with the MoQ Live Simulator for testing different aspects of media streaming over QUIC, including adaptive bitrate switching, synchronization, and performance testing.
+These test files are designed to be used with the moqlivemock for testing different aspects of media streaming over QUIC, including adaptive bitrate switching, synchronization, and performance testing.
 
 ## Generation
 

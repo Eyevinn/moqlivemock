@@ -33,6 +33,19 @@ or tracks that match the `-videoname` and `-audioname` options.
 It should later be possible to switch bitrate by unsubscribing to one
 track and subscribing to another, with no repeated or lost frames.
 
+## Availability time of groups and objects
+
+The mlmpub pushes objects as soon as they are available.
+The availability time is determined like this
+
+* Object (G, 0) is available G seconds + sampleOffset + objectDuration relative to the Epoch start.
+* Object (G, N) is available N*objectDuration later
+
+The sample offset is zero for video, but for audio
+it is given by the minimal time later than the video
+object given the audio sample duration (e.g. 1024/48000s).
+
+
 ## Requirements
 
 * Go 1.23 or later
@@ -77,7 +90,7 @@ You can also specify options for the publisher:
 ```
 
 In another shell, start the subscriber and choose if the video, the audio,
-or a muxed combination should be output, e.g. 
+or a muxed combination should be output, e.g.
 
 ```shell
 cd cmd/mlmsub
@@ -97,6 +110,37 @@ There are more options to change the loglevel, choose track etc.
 
 The subscriber will connect to the publisher and start receiving
 video and audio frames if some tracks are selected.
+
+### Testing Track Switching
+
+The subscriber now supports seamless track switching using the `-switch-tracks` option:
+
+```shell
+cd cmd/mlmsub
+go run . -switch-tracks -muxout - | ffplay -
+```
+
+This will automatically switch between different video and audio tracks in a staircase pattern:
+- Video tracks: 400kbps → 600kbps → 900kbps → 600kbps → 400kbps → ...
+- Audio tracks: monotonic → scale → monotonic → scale → ...
+
+The switching uses the SUBSCRIBE_UPDATE mechanism with optimal timing based on the largest_group_id from SUBSCRIBE_OK messages, ensuring seamless transitions without duplicates or gaps.
+
+You can also test individual track selection:
+
+```shell
+# Test specific video bitrate
+go run . -videoname 600 -muxout - | ffplay -
+
+# Test specific audio track
+go run . -audioname scale -muxout - | ffplay -
+
+# Separate video and audio outputs
+go run . -videoout video.mp4 -audioout audio.mp4
+
+# Debug track switching with verbose logging
+go run . -switch-tracks -loglevel debug -muxout - | ffplay -
+```
 
 ### WARP browser player
 
@@ -147,7 +191,7 @@ The warp-player (fingerprint branch) can then connect using:
 - Server URL: `https://localhost:4443/moq` or `https://127.0.0.1:4443/moq`
 - Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
 
-**Notes**: 
+**Notes**:
 - The fingerprint server is disabled by default (`-fingerprintport 0`). Only enable it when using certificates that meet WebTransport's strict requirements.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 

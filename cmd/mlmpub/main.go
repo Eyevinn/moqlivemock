@@ -32,7 +32,7 @@ var usg = `%s acts as a MoQ server and publisher using WARP to send
 mocked live video and audio tracks, synchronized with wall-clock time.
 It is intended to be a test-bed for MoQ and WARP.
 
-The qlog logs are currently massive, and written to 
+The qlog logs are currently massive, and written to
 
 Usage of %s:
 `
@@ -50,6 +50,7 @@ type options struct {
 	audioSampleBatch int
 	videoSampleBatch int
 	fingerprintPort  int
+	loglevel         string
 	version          bool
 }
 
@@ -69,6 +70,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
+	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -103,6 +105,12 @@ func runServer(opts *options) error {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
 		return nil
 	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: internal.ParseLogLevel(opts.loglevel),
+	}))
+	slog.SetDefault(logger)
+
 	tlsConfig, err := generateTLSConfigWithCertAndKey(opts.certFile, opts.keyFile)
 	if err != nil {
 		slog.Warn("failed to generate TLS config from cert file and key, generating in memory certs", "error", err)
@@ -116,7 +124,7 @@ func runServer(opts *options) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch,
+	logger.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch,
 		"videoSampleBatch", opts.videoSampleBatch)
 	catalog, err := asset.GenCMAFCatalogEntry()
 	if err != nil {
@@ -134,16 +142,10 @@ func runServer(opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
-	h := &moqHandler{
-		addr:            opts.addr,
-		tlsConfig:       tlsConfig,
-		namespace:       []string{internal.Namespace},
-		asset:           asset,
-		catalog:         catalog,
-		logfh:           logfh,
-		fingerprintPort: opts.fingerprintPort,
-	}
 
+	h := newMoqHandler(
+		logger, opts.addr, tlsConfig, []string{internal.Namespace},
+		asset, catalog, logfh, opts.fingerprintPort)
 	return h.runServer(context.TODO())
 }
 
