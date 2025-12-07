@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded to MoQ Transport draft-14 via [Eyevinn/moqtransport][moqtransport-eyevinn] fork
+- Updated handler pattern to use separate `SubscribeHandler` for subscription handling
+- Session creation now uses struct initialization with `session.Run(conn)`
+
 ### Fixes
 
 - RequestID setting in mlmsub (#19)
@@ -62,5 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
+[moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
 [moqtransport]: https://github.com/mengelbart/moqtransport
+[moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [wp]: https://github.com/Eyevinn/warp-player

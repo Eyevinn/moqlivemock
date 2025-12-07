@@ -17,3 +17,7 @@ vendor/
 
 # Claude internal files
 .claude
+
+# References like draft spec versions and typical AI findings
+references/
+findings/
