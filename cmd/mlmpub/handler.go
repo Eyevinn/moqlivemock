@@ -186,7 +186,7 @@ func (h *moqHandler) validateCertificateForWebTransport() error {
 	return nil
 }
 
-func serveQUICConn(wt *webtransport.Server, conn quic.Connection) {
+func serveQUICConn(wt *webtransport.Server, conn *quic.Conn) {
 	err := wt.ServeQUICConn(conn)
 	if err != nil {
 		slog.Error("failed to serve QUIC connection", "error", err)
@@ -203,77 +203,72 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				slog.Error("failed to reject announcement", "error", err)
 			}
 			return
-		case moqtransport.MessageSubscribe:
-			if !tupleEqual(r.Namespace, h.namespace) {
-				slog.Warn("got unexpected subscription namespace",
-					"received", r.Namespace,
-					"expected", h.namespace)
-				err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
-				if err != nil {
-					slog.Error("failed to reject subscription", "error", err)
-				}
+		}
+	})
+}
+
+func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
+	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+		if !tupleEqual(m.Namespace, h.namespace) {
+			slog.Warn("got unexpected subscription namespace",
+				"received", m.Namespace,
+				"expected", h.namespace)
+			err := w.Reject(0, fmt.Sprintf("%s doesn't take subscriptions", appName))
+			if err != nil {
+				slog.Error("failed to reject subscription", "error", err)
+			}
+			return
+		}
+		if m.Track == "catalog" {
+			err := w.Accept()
+			if err != nil {
+				slog.Error("failed to accept subscription", "error", err)
 				return
 			}
-			if r.Track == "catalog" {
+			sg, err := w.OpenSubgroup(0, 0, 0)
+			if err != nil {
+				slog.Error("failed to open subgroup", "error", err)
+				return
+			}
+			json, err := json.Marshal(h.catalog)
+			if err != nil {
+				slog.Error("failed to marshal catalog", "error", err)
+				return
+			}
+			_, err = sg.WriteObject(0, json)
+			if err != nil {
+				slog.Error("failed to write catalog", "error", err)
+				return
+			}
+			err = sg.Close()
+			if err != nil {
+				slog.Error("failed to close subgroup", "error", err)
+				return
+			}
+			return
+		}
+		for _, track := range h.catalog.Tracks {
+			if m.Track == track.Name {
 				err := w.Accept()
 				if err != nil {
 					slog.Error("failed to accept subscription", "error", err)
 					return
 				}
-				publisher, ok := w.(moqtransport.Publisher)
-				if !ok {
-					slog.Error("subscription response writer does not implement publisher")
-				}
-				sg, err := publisher.OpenSubgroup(0, 0, 0)
-				if err != nil {
-					slog.Error("failed to open subgroup", "error", err)
-					return
-				}
-				json, err := json.Marshal(h.catalog)
-				if err != nil {
-					slog.Error("failed to marshal catalog", "error", err)
-					return
-				}
-				_, err = sg.WriteObject(0, json)
-				if err != nil {
-					slog.Error("failed to write catalog", "error", err)
-					return
-				}
-				err = sg.Close()
-				if err != nil {
-					slog.Error("failed to close subgroup", "error", err)
-					return
-				}
+				slog.Info("got subscription", "track", track.Name)
+				go publishTrack(context.TODO(), w, h.asset, track.Name)
 				return
 			}
-			for _, track := range h.catalog.Tracks {
-				if r.Track == track.Name {
-					err := w.Accept()
-					if err != nil {
-						slog.Error("failed to accept subscription", "error", err)
-						return
-					}
-					publisher, ok := w.(moqtransport.Publisher)
-					if !ok {
-						slog.Error("subscription response writer does not implement publisher")
-					}
-					slog.Info("got subscription", "track", track.Name)
-					go publishTrack(context.TODO(), publisher, h.asset, track.Name)
-					return
-				}
-			}
-			// If we get here, the track was not found
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
-			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
-			}
-			// case moqtransport.MessageUnsubscribe:
-			// Need to handle unsubscribe
-			// For nice switching, it should be possible to unsubscrit to one video track
-			// and subscribe to another, and the publisher should go on until the end
-			// of the current MoQ group, and start the new track on the next MoQ group.
-			// This is not currently implemented.
 		}
+		// If we get here, the track was not found
+		err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
+		if err != nil {
+			slog.Error("failed to reject subscription", "error", err)
+		}
+		// TODO: Handle unsubscribe
+		// For nice switching, it should be possible to unsubscribe to one video track
+		// and subscribe to another, and the publisher should go on until the end
+		// of the current MoQ group, and start the new track on the next MoQ group.
+		// This is not currently implemented.
 	})
 }
 
@@ -314,14 +309,13 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 }
 
 func (h *moqHandler) handle(conn moqtransport.Connection) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), 100)
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: h.getHandler(),
-		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
-		Session: session,
+	session := &moqtransport.Session{
+		Handler:             h.getHandler(),
+		SubscribeHandler:    h.getSubscribeHandler(),
+		InitialMaxRequestID: 100,
+		Qlogger:             qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := transport.Run()
+	err := session.Run(conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")

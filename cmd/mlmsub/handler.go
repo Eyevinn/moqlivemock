@@ -72,25 +72,27 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 				slog.Error("failed to accept announcement", "error", err)
 				return
 			}
-		case moqtransport.MessageSubscribe:
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
-			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
-			}
-			return
+		}
+	})
+}
+
+func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
+	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+		err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
+		if err != nil {
+			slog.Error("failed to reject subscription", "error", err)
 		}
 	})
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
-	session := moqtransport.NewSession(conn.Protocol(), conn.Perspective(), initialMaxRequestID)
-	transport := &moqtransport.Transport{
-		Conn:    conn,
-		Handler: h.getHandler(),
-		Qlogger: qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
-		Session: session,
+	session := &moqtransport.Session{
+		Handler:             h.getHandler(),
+		SubscribeHandler:    h.getSubscribeHandler(),
+		InitialMaxRequestID: initialMaxRequestID,
+		Qlogger:             qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := transport.Run()
+	err := session.Run(conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
@@ -205,7 +207,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 }
 
 func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	rs, err := s.Subscribe(ctx, namespace, "catalog", "")
+	rs, err := s.Subscribe(ctx, namespace, "catalog")
 	if err != nil {
 		return err
 	}
@@ -235,7 +237,7 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 
 func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Session, namespace []string,
 	trackname, mediaType string) (close func() error, err error) {
-	rs, err := s.Subscribe(ctx, namespace, trackname, "")
+	rs, err := s.Subscribe(ctx, namespace, trackname)
 	if err != nil {
 		return nil, err
 	}
