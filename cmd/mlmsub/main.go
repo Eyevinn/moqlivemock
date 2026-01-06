@@ -62,7 +62,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	}
 
 	opts := options{}
-	fs.StringVar(&opts.addr, "addr", "localhost:8080", "connect address (use https:// for WebTransport)")
+	fs.StringVar(&opts.addr, "addr", "localhost:4443", "connect address (use https:// for WebTransport)")
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")

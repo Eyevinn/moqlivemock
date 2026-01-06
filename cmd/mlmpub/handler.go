@@ -44,6 +44,7 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 		go h.startFingerprintServer()
 	}
 
+	slog.Info("Starting MoQ server", "addr", h.addr)
 	listener, err := quic.ListenAddr(h.addr, h.tlsConfig, &quic.Config{
 		EnableDatagrams: true,
 	})
