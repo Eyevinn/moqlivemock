@@ -1,5 +1,5 @@
-github.com/Eyevinn/moqtransport v0.5.1-0.20251208205521-a8d033f018ca h1:8ag21nCh9yKeXq8HzJXXtYDVIeyTS5UpnXp9GlZkxHE=
-github.com/Eyevinn/moqtransport v0.5.1-0.20251208205521-a8d033f018ca/go.mod h1:jewuWhaNRQ+MUoZ1ncaX8cxo4V6zF8/1Vgj0+ld0RxM=
+github.com/Eyevinn/moqtransport v0.5.1-0.20260106133925-94934ef9534a h1:JW921u1yi+LgiOFWGopNjQ0gB0qQ3P1suVhinMwpZ6I=
+github.com/Eyevinn/moqtransport v0.5.1-0.20260106133925-94934ef9534a/go.mod h1:jewuWhaNRQ+MUoZ1ncaX8cxo4V6zF8/1Vgj0+ld0RxM=
 github.com/Eyevinn/mp4ff v0.48.0 h1:PwCeFOHGi07LffijQtFmIeIIY7BRURN2c5I2tnQbwds=
 github.com/Eyevinn/mp4ff v0.48.0/go.mod h1:hJNUUqOBryLAzUW9wpCJyw2HaI+TCd2rUPhafoS5lgg=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
