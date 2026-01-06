@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Nothing yet
+
+## [0.4.0] - 2026-01-09
+
 ### Changed
 
-- Upgraded to MoQ Transport draft-14 via [Eyevinn/moqtransport][moqtransport-eyevinn] fork
+- Upgraded to MoQ Transport [draft-14][moqt-d14] via [Eyevinn/moqtransport][moqtransport-eyevinn] fork
 - Updated handler pattern to use separate `SubscribeHandler` for subscription handling
 - Session creation now uses struct initialization with `session.Run(conn)`
+- Dependencies now use published Eyevinn fork instead of local path
 
-### Fixes
+### Fixed
 
 - RequestID setting in mlmsub (#19)
 - MaxRequestID from server in mlmsub
@@ -61,10 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/mp2ts-tools/releases/tag/v0.3.0...HEAD
-[0.3.0]: https://github.com/Eyevinn/mp2ts-tools/releases/tag/v0.2.0...v0.2.0
-[0.2.0]: https://github.com/Eyevinn/mp2ts-tools/releases/tag/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Eyevinn/mp2ts-tools/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...HEAD
+[0.4.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/

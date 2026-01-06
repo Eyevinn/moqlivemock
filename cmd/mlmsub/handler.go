@@ -77,12 +77,13 @@ func (h *moqHandler) getHandler() moqtransport.Handler {
 }
 
 func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
-	return moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-		err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
-		if err != nil {
-			slog.Error("failed to reject subscription", "error", err)
-		}
-	})
+	return moqtransport.SubscribeHandlerFunc(
+		func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
+			if err != nil {
+				slog.Error("failed to reject subscription", "error", err)
+			}
+		})
 }
 
 func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {

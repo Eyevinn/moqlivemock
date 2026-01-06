@@ -2,7 +2,7 @@ module github.com/Eyevinn/moqlivemock
 
 go 1.23.6
 
-replace github.com/mengelbart/moqtransport => github.com/Eyevinn/moqtransport v0.5.1-0.20251208205521-a8d033f018ca
+replace github.com/mengelbart/moqtransport => github.com/Eyevinn/moqtransport v0.5.1-0.20260106133925-94934ef9534a
 
 require (
 	github.com/Eyevinn/mp4ff v0.48.0
