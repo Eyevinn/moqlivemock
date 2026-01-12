@@ -49,13 +49,12 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 				ad.Spss = appendNewNALU(ad.Spss, nalu)
 			case avc.NALU_PPS:
 				ad.Ppss = appendNewNALU(ad.Ppss, nalu)
-			case avc.NALU_IDR, avc.NALU_NON_IDR:
+			case avc.NALU_IDR, avc.NALU_NON_IDR, avc.NALU_SEI:
 				binary.BigEndian.PutUint32(work, uint32(len(nalu)))
 				samples[i].Data = append(samples[i].Data, work...)
 				samples[i].Data = append(samples[i].Data, nalu...)
 			default:
 				// silently drop other NALU types to make the samples smaller
-				// May want to add avc.NALU_SEI later
 			}
 		}
 	}
