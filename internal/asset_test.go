@@ -79,9 +79,9 @@ func TestLoadAsset(t *testing.T) {
 			trackCounts[track.ContentType]++
 		}
 	}
-	// Expect 2 audio and 3 video tracks
+	// Expect 2 audio and 6 video tracks
 	require.Equal(t, 2, trackCounts["audio"], "should have 2 audio tracks")
-	require.Equal(t, 3, trackCounts["video"], "should have 3 video tracks")
+	require.Equal(t, 6, trackCounts["video"], "should have 6 video tracks")
 
 	// Check that track names match the files
 	var expectedNames = map[string]bool{
@@ -90,6 +90,9 @@ func TestLoadAsset(t *testing.T) {
 		"video_400kbps":           true,
 		"video_600kbps":           true,
 		"video_900kbps":           true,
+		"video_400kbps_hevc":      true,
+		"video_600kbps_hevc":      true,
+		"video_900kbps_hevc":      true,
 	}
 	for _, group := range asset.Groups {
 		for _, track := range group.Tracks {
@@ -140,8 +143,17 @@ func TestLoadAsset(t *testing.T) {
 	cat, err := asset.GenCMAFCatalogEntry()
 	require.NoError(t, err)
 	require.NotNil(t, cat)
-	require.Equal(t, 5, len(cat.Tracks))
-	names := []string{"video_400kbps", "video_600kbps", "video_900kbps", "audio_monotonic_128kbps", "audio_scale_128kbps"}
+	require.Equal(t, 8, len(cat.Tracks))
+	names := []string{
+		"video_400kbps_hevc",
+		"video_400kbps",
+		"video_600kbps_hevc",
+		"video_600kbps",
+		"video_900kbps_hevc",
+		"video_900kbps",
+		"audio_monotonic_128kbps",
+		"audio_scale_128kbps",
+	}
 	for i, track := range cat.Tracks {
 		require.Equal(t, Namespace, track.Namespace)
 		require.Equal(t, names[i], track.Name)

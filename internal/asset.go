@@ -90,7 +90,7 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		return nil, fmt.Errorf("could not get sample description: %w", err)
 	}
 	switch sampleDesc.Type() {
-	case "avc1", "avc3":
+	case "avc1", "avc3", "hvc1", "hev1":
 		ct.ContentType = "video"
 		ct.SampleBatch = videoSampleBatch
 	case "mp4a":
@@ -175,6 +175,11 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		ct.SpecData, err = initAVCData(init, ct.Samples)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize AVC data: %w", err)
+		}
+	case "hvc1", "hev1":
+		ct.SpecData, err = initHEVCData(init, ct.Samples)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize HEVC data: %w", err)
 		}
 	case "mp4a":
 		ct.SpecData, err = initAACData(init)
@@ -332,14 +337,23 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 			// Populate optional fields if available
 			switch ct.ContentType {
 			case "video":
-				sd := ct.SpecData.(*AVCData)
 				track.MimeType = "video/mp4"
 				track.Framerate = Ptr(frameRate)
-				if sd.width != 0 {
-					track.Width = Ptr(int(sd.width))
-				}
-				if sd.height != 0 {
-					track.Height = Ptr(int(sd.height))
+				switch sd := ct.SpecData.(type) {
+				case *AVCData:
+					if sd.width != 0 {
+						track.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						track.Height = Ptr(int(sd.height))
+					}
+				case *HEVCData:
+					if sd.width != 0 {
+						track.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						track.Height = Ptr(int(sd.height))
+					}
 				}
 			case "audio":
 				sd := ct.SpecData.(*AACData)

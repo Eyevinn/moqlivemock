@@ -8,6 +8,7 @@ import (
 	"github.com/Eyevinn/mp4ff/aac"
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/Eyevinn/mp4ff/hevc"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
@@ -116,6 +117,146 @@ func (d *AVCData) GenCMAFInitData() ([]byte, error) {
 }
 
 func (d *AVCData) Codec() string {
+	return d.codec
+}
+
+type HEVCData struct {
+	inInit  *mp4.InitSegment
+	outInit *mp4.InitSegment
+	Vpss    [][]byte
+	Spss    [][]byte
+	Ppss    [][]byte
+	codec   string
+	width   uint32
+	height  uint32
+}
+
+// initHEVCData initializes HEVCData from an init segment and samples.
+func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, error) {
+	hd := &HEVCData{inInit: init}
+
+	trak := init.Moov.Trak
+	hvcX := trak.Mdia.Minf.Stbl.Stsd.HvcX
+	if hvcX == nil || hvcX.HvcC == nil {
+		return nil, fmt.Errorf("no hvcC box found")
+	}
+
+	// Extract VPS / SPS / PPS from hvcC NaluArrays
+	for _, arr := range hvcX.HvcC.NaluArrays {
+		switch arr.NaluType() {
+		case hevc.NALU_VPS:
+			hd.Vpss = append(hd.Vpss, arr.Nalus...)
+		case hevc.NALU_SPS:
+			hd.Spss = append(hd.Spss, arr.Nalus...)
+		case hevc.NALU_PPS:
+			hd.Ppss = append(hd.Ppss, arr.Nalus...)
+		}
+	}
+
+	if len(hd.Spss) == 0 || len(hd.Ppss) == 0 {
+		return nil, fmt.Errorf("missing SPS or PPS in hvcC")
+	}
+
+	work := make([]byte, 4)
+
+	// Rewrite samples: parse length-prefixed NALUs
+	for i := range samples {
+		data := samples[i].Data
+		samples[i].Data = samples[i].Data[:0]
+
+		for len(data) >= 4 {
+			naluLen := binary.BigEndian.Uint32(data[:4])
+			data = data[4:]
+
+			if int(naluLen) > len(data) {
+				return nil, fmt.Errorf("invalid HEVC NALU length")
+			}
+
+			nalu := data[:naluLen]
+			data = data[naluLen:]
+
+			naluType := hevc.GetNaluType(nalu[0])
+
+			switch naluType {
+			case hevc.NALU_VPS:
+				hd.Vpss = appendNewNALU(hd.Vpss, nalu)
+			case hevc.NALU_SPS:
+				hd.Spss = appendNewNALU(hd.Spss, nalu)
+			case hevc.NALU_PPS:
+				hd.Ppss = appendNewNALU(hd.Ppss, nalu)
+			default:
+				binary.BigEndian.PutUint32(work, uint32(len(nalu)))
+				samples[i].Data = append(samples[i].Data, work...)
+				samples[i].Data = append(samples[i].Data, nalu...)
+			}
+		}
+	}
+
+	// Insert VPS/SPS/PPS before IRAP samples (NALU type 16–23)
+	for i := range samples {
+		if len(samples[i].Data) < 5 {
+			continue
+		}
+
+		if hevc.IsRAPSample(samples[i].Data) {
+			newData := make([]byte, 0)
+
+			for _, ps := range [][]byte{
+				hd.Vpss[0],
+				hd.Spss[0],
+				hd.Ppss[0],
+			} {
+				binary.BigEndian.PutUint32(work, uint32(len(ps)))
+				newData = append(newData, work...)
+				newData = append(newData, ps...)
+			}
+
+			newData = append(newData, samples[i].Data...)
+			samples[i].Data = newData
+		}
+	}
+
+	// Create CMAF-compliant init segment (hev1)
+	hd.outInit = mp4.CreateEmptyInit()
+	timeScale := trak.Mdia.Mdhd.Timescale
+	hd.outInit.AddEmptyTrack(timeScale, "video", "und")
+
+	err := hd.outInit.Moov.Trak.SetHEVCDescriptor(
+		"hev1",
+		hd.Vpss,
+		hd.Spss,
+		hd.Ppss,
+		nil,   // DCI
+		false, // includePS
+	)
+	if err != nil {
+		return nil, fmt.Errorf("could not set HEVC descriptor: %w", err)
+	}
+
+	// Parse SPS for codec string and resolution
+	sps, err := hevc.ParseSPSNALUnit(hd.Spss[0])
+	if err != nil {
+		return nil, fmt.Errorf("could not parse HEVC SPS: %w", err)
+	}
+
+	hd.codec = hevc.CodecString("hev1", sps)
+	hd.width = uint32(sps.PicWidthInLumaSamples)
+	hd.height = uint32(sps.PicHeightInLumaSamples)
+
+	return hd, nil
+}
+
+// GenCMAFInitData returns the CMAF init segment.
+func (d *HEVCData) GenCMAFInitData() ([]byte, error) {
+	sw := bits.NewFixedSliceWriter(int(d.outInit.Size()))
+	if err := d.outInit.EncodeSW(sw); err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
+}
+
+// Codec returns the CMAF codec string.
+func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
