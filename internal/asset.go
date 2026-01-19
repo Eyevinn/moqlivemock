@@ -131,7 +131,7 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	case "avc1", "avc3", "hvc1", "hev1":
 		ct.ContentType = "video"
 		ct.SampleBatch = videoSampleBatch
-	case "mp4a", "Opus":
+	case "mp4a", "Opus", "ac-3", "ec-3":
 		ct.ContentType = "audio"
 		ct.SampleBatch = audioSampleBatch
 	default:
@@ -228,6 +228,16 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		ct.SpecData, err = initOpusData(init)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize Opus data: %w", err)
+		}
+	case "ac-3":
+		ct.SpecData, err = initAC3Data(init)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize AC-3 data: %w", err)
+		}
+	case "ec-3":
+		ct.SpecData, err = initEC3Data(init)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize EC-3 data: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
@@ -409,6 +419,13 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 						track.ChannelConfig = sd.channelConfig
 					}
 				case *OpusData:
+					if sd.sampleRate != 0 {
+						track.SampleRate = Ptr(int(sd.sampleRate))
+					}
+					if sd.channelConfig != "" {
+						track.ChannelConfig = sd.channelConfig
+					}
+				case *AC3Data:
 					if sd.sampleRate != 0 {
 						track.SampleRate = Ptr(int(sd.sampleRate))
 					}
