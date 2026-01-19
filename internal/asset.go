@@ -96,6 +96,9 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	case "mp4a":
 		ct.ContentType = "audio"
 		ct.SampleBatch = audioSampleBatch
+	case "stpp", "wvtt":
+		ct.ContentType = "subtitle"
+		ct.SampleBatch = 1 // Subtitles are generally not grouped by batch
 	default:
 		return nil, fmt.Errorf("unsupported sample description type: %s", sampleDesc.Type())
 	}
@@ -186,6 +189,11 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize AAC data: %w", err)
 		}
+	case "stpp", "wvtt":
+		ct.SpecData = &SubtitleData{
+			codec: sampleDesc.Type(),
+			init:  init,
+		}
 	default:
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
 	}
@@ -259,6 +267,15 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 			AltGroupID: groupID,
 			Tracks:     audioTracks,
 		})
+		groupID++
+	}
+
+	// Then subtitle group(s)
+	if subtitleTracks, ok := tracksByType["subtitle"]; ok {
+		groups = append(groups, TrackGroup{
+			AltGroupID: groupID,
+			Tracks:     subtitleTracks,
+		})
 	}
 	asset := &Asset{
 		Name:   filepath.Base(dirPath),
@@ -283,7 +300,7 @@ func (a *Asset) setLoopDuration() error {
 		for tNr, track := range group.Tracks {
 			switch {
 			case gNr == 0:
-				if track.Duration*1000 != loopDurMS*track.TimeScale {
+				if track.Duration*1000 != loopDurMS*track.TimeScale && track.ContentType != "subtitle" {
 					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
 				}
 				group.Tracks[tNr].LoopDur = track.Duration
@@ -293,7 +310,7 @@ func (a *Asset) setLoopDuration() error {
 				}
 				group.Tracks[tNr].LoopDur = loopDurMS * track.TimeScale / 1000
 			default:
-				if track.Duration*1000 != loopDurMS*track.TimeScale {
+				if track.ContentType != "subtitle" && track.Duration*1000 != loopDurMS*track.TimeScale {
 					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
 				}
 				group.Tracks[tNr].LoopDur = track.Duration
@@ -320,8 +337,12 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
 
-			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
-			cmafBitrate := calcCmafBitrate(ct.SampleBitrate, frameRate, ct.SampleBatch)
+			var frameRate float64
+			if ct.ContentType == "video" || ct.ContentType == "audio" {
+				if ct.SampleDur > 0 {
+					frameRate = float64(ct.TimeScale) / float64(ct.SampleDur)
+				}
+			}
 
 			track := Track{
 				Name:        ct.Name,
@@ -330,15 +351,21 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 				AltGroup:    &altGroup,
 				InitData:    initData,
 				Codec:       ct.SpecData.Codec(),
-				Bitrate:     &cmafBitrate,
 				Language:    ct.Language,
+			}
+
+			if ct.ContentType != "subtitle" && frameRate > 0 {
+				cmafBitrate := calcCmafBitrate(ct.SampleBitrate, frameRate, ct.SampleBatch)
+				track.Bitrate = &cmafBitrate
+				if ct.ContentType == "video" {
+					track.Framerate = Ptr(frameRate)
+				}
 			}
 
 			// Populate optional fields if available
 			switch ct.ContentType {
 			case "video":
 				track.MimeType = "video/mp4"
-				track.Framerate = Ptr(frameRate)
 				switch sd := ct.SpecData.(type) {
 				case *AVCData:
 					if sd.width != 0 {
@@ -364,6 +391,8 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 				if sd.channelConfig != "" {
 					track.ChannelConfig = sd.channelConfig
 				}
+			case "subtitle":
+				track.MimeType = "application/mp4"
 			}
 			track.Namespace = Namespace
 			track.Name = ct.Name

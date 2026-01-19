@@ -314,3 +314,24 @@ func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	ad.codec = fmt.Sprintf("mp4a.40.%d", objectType)
 	return ad, nil
 }
+
+type SubtitleData struct {
+    codec string
+    init  *mp4.InitSegment
+}
+
+func (s *SubtitleData) GenCMAFInitData() ([]byte, error) {
+  if s.init == nil {
+    return nil, nil
+  }
+  sw := bits.NewFixedSliceWriter(int(s.init.Size()))
+  if err := s.init.EncodeSW(sw); err != nil {
+      return nil, err
+  }
+  return sw.Bytes(), nil
+}
+
+func (s *SubtitleData) Codec() string {
+    return s.codec
+}
+
