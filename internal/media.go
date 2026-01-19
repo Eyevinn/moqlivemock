@@ -12,6 +12,11 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
+//
+// =======================
+// AVC
+// =======================
+
 type AVCData struct {
 	inInit  *mp4.InitSegment
 	outInit *mp4.InitSegment
@@ -119,6 +124,11 @@ func (d *AVCData) GenCMAFInitData() ([]byte, error) {
 func (d *AVCData) Codec() string {
 	return d.codec
 }
+
+//
+// =======================
+// HEVC
+// =======================
 
 type HEVCData struct {
 	inInit  *mp4.InitSegment
@@ -260,6 +270,11 @@ func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
+//
+// =======================
+// AAC
+// =======================
+
 type AACData struct {
 	inInit        *mp4.InitSegment
 	outInit       *mp4.InitSegment
@@ -314,6 +329,11 @@ func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	ad.codec = fmt.Sprintf("mp4a.40.%d", objectType)
 	return ad, nil
 }
+
+//
+// =======================
+// Opus
+// =======================
 
 type OpusData struct {
 	inInit        *mp4.InitSegment
@@ -376,4 +396,70 @@ func initOpusData(init *mp4.InitSegment) (*OpusData, error) {
 	od.outInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.AddChild(opusOut)
 	od.codec = "Opus"
 	return od, nil
+}
+
+//
+// =======================
+// AC-3 / EC-3
+// =======================
+
+type AC3Data struct {
+	inInit        *mp4.InitSegment
+	outInit       *mp4.InitSegment
+	codec         string
+	sampleRate    uint32
+	channelConfig string
+}
+
+// GenCMAFInitData returns a base64 encoded CMAF initialization segment.
+func (d *AC3Data) GenCMAFInitData() ([]byte, error) {
+	sw := bits.NewFixedSliceWriter(int(d.outInit.Size()))
+	if err := d.outInit.EncodeSW(sw); err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
+}
+
+func (d *AC3Data) Codec() string {
+	return d.codec
+}
+
+// initAC3Data initializes AC-3 data (no SampleEntry recreation)
+func initAC3Data(init *mp4.InitSegment) (*AC3Data, error) {
+	ad := &AC3Data{inInit: init}
+
+	trak := init.Moov.Trak
+	ac3Entry := trak.Mdia.Minf.Stbl.Stsd.AC3
+	if ac3Entry == nil || ac3Entry.Dac3 == nil {
+		return nil, fmt.Errorf("no dac3 box found")
+	}
+
+	// Reuse original init segment
+	ad.outInit = init
+
+	ad.codec = "ac-3"
+	ad.sampleRate = uint32(ac3Entry.SampleRate)
+	ad.channelConfig = fmt.Sprintf("%d", ac3Entry.ChannelCount)
+
+	return ad, nil
+}
+
+// initEC3Data initializes EC-3 data (no SampleEntry recreation)
+func initEC3Data(init *mp4.InitSegment) (*AC3Data, error) {
+	ad := &AC3Data{inInit: init}
+
+	trak := init.Moov.Trak
+	ec3Entry := trak.Mdia.Minf.Stbl.Stsd.EC3
+	if ec3Entry == nil || ec3Entry.Dec3 == nil {
+		return nil, fmt.Errorf("no dec3 box found")
+	}
+
+	// Reuse original init segment
+	ad.outInit = init
+
+	ad.codec = "ec-3"
+	ad.sampleRate = uint32(ec3Entry.SampleRate)
+	ad.channelConfig = fmt.Sprintf("%d", ec3Entry.ChannelCount)
+
+	return ad, nil
 }
