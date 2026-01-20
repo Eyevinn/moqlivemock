@@ -47,9 +47,11 @@ type options struct {
 	muxout    string
 	videoOut  string
 	audioOut  string
+	subsOut   string
 	qlogfile  string
 	videoname string
 	audioname string
+	subsname  string
 	loglevel  string
 	version   bool
 }
@@ -69,9 +71,11 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
+	fs.StringVar(&opts.subsOut, "subsout", "", "Output file for subtitles or stdout (-)")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track (default use first)")
 	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track (default use first)")
+	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 
 	err := fs.Parse(args[1:])
@@ -166,6 +170,7 @@ func runClient(ctx context.Context, opts *options) error {
 		logfh:     logfh,
 		videoname: opts.videoname,
 		audioname: opts.audioname,
+		subsname:  opts.subsname,
 	}
 
 	outs := make(map[string]io.Writer)
@@ -174,6 +179,7 @@ func runClient(ctx context.Context, opts *options) error {
 		"mux":   opts.muxout,
 		"video": opts.videoOut,
 		"audio": opts.audioOut,
+		"subs":  opts.subsOut,
 	}
 
 	for name, out := range outNames {

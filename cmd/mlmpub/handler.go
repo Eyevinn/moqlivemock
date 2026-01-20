@@ -248,6 +248,19 @@ func (h *moqHandler) getSubscribeHandler() moqtransport.SubscribeHandler {
 				}
 				return
 			}
+			// Check for subtitle tracks first
+			if st := h.asset.GetSubtitleTrackByName(m.Track); st != nil {
+				err := w.Accept()
+				if err != nil {
+					slog.Error("failed to accept subscription", "error", err)
+					return
+				}
+				slog.Info("got subtitle subscription", "track", st.Name)
+				go publishSubtitleTrack(context.TODO(), w, st)
+				return
+			}
+
+			// Check for video/audio tracks
 			for _, track := range h.catalog.Tracks {
 				if m.Track == track.Name {
 					err := w.Accept()
@@ -307,6 +320,85 @@ func publishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 		slog.Debug("published MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
 		groupNr++
 	}
+}
+
+func publishSubtitleTrack(ctx context.Context, publisher moqtransport.Publisher, st *internal.SubtitleTrack) {
+	now := time.Now().UnixMilli()
+	currGroupNr := internal.CurrSubtitleGroupNr(uint64(now), internal.MoqGroupDurMS)
+	groupNr := currGroupNr + 1 // Start stream on next group
+	slog.Info("publishing subtitle track", "track", st.Name, "group", groupNr)
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		sg, err := publisher.OpenSubgroup(groupNr, 0, mediaPriority)
+		if err != nil {
+			slog.Error("failed to open subgroup for subtitle", "error", err)
+			return
+		}
+
+		mg, err := internal.GenSubtitleGroup(st, groupNr, internal.MoqGroupDurMS)
+		if err != nil {
+			slog.Error("failed to generate subtitle group", "error", err)
+			return
+		}
+
+		slog.Info("writing MoQ subtitle group", "track", st.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+
+		// Subtitle groups have 1 object - write it with proper timing
+		err = writeSubtitleGroup(ctx, mg, groupNr, sg.WriteObject)
+		if err != nil {
+			slog.Error("failed to write subtitle MoQ group", "error", err)
+			return
+		}
+
+		err = sg.Close()
+		if err != nil {
+			slog.Error("failed to close subtitle subgroup", "error", err)
+			return
+		}
+
+		slog.Debug("published subtitle MoQ group", "track", st.Name, "group", groupNr)
+		groupNr++
+	}
+}
+
+// writeSubtitleGroup writes subtitle objects with appropriate timing
+func writeSubtitleGroup(ctx context.Context, moq *internal.MoQGroup, groupNr uint64, cb internal.ObjectWriter) error {
+	// Calculate when this group should be sent (at the start of the group)
+	groupStartTimeMS := int64(groupNr * uint64(internal.MoqGroupDurMS))
+
+	for nr, moqObj := range moq.MoQObjects {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		now := time.Now().UnixMilli()
+		waitTime := groupStartTimeMS - now
+
+		if waitTime <= 0 {
+			// Already past time, send immediately
+			_, err := cb(uint64(nr), moqObj)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Wait until the start of the group period
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(waitTime) * time.Millisecond):
+			_, err := cb(uint64(nr), moqObj)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (h *moqHandler) handle(conn moqtransport.Connection) {
