@@ -8,8 +8,9 @@
 
 moqlivemock is a simple media test service for [MoQ][moq] (Media over QUIC)
 and the [WARP][WARP] streaming format by providing a server which
-publishes an asset with wall-clock synchronized multi-bitrate video and
-two audio tracks, as well as a client that can receive these streams and even multiplex
+publishes an asset with wall-clock synchronized multi-bitrate video,
+audio tracks, and dynamically-generated subtitle tracks (WVTT and STPP),
+as well as a client that can receive these streams and even multiplex
 them for playback with ffplay like `mlmsub -muxout - | ffplay -`.
 
 The input media is 10s of video and audio which is then disassembled
@@ -32,6 +33,40 @@ or tracks that match the `-videoname` and `-audioname` options.
 
 It should later be possible to switch bitrate by unsubscribing to one
 track and subscribing to another, with no repeated or lost frames.
+
+## Subtitle Tracks
+
+The publisher generates subtitle tracks dynamically, showing UTC timestamp and group number.
+Two subtitle formats are supported:
+
+- **WVTT** (WebVTT in CMAF) - codec: `wvtt`
+- **STPP** (TTML in CMAF) - codec: `stpp.ttml.im1t`
+
+By default, one Swedish WVTT track (`subs_wvtt_sv`) and one English STPP track (`subs_stpp_en`) are created.
+You can configure multiple languages:
+
+```shell
+# Multiple languages for both formats
+./mlmpub -subswvtt "en,sv,de" -subsstpp "en,fr"
+
+# Only WVTT subtitles
+./mlmpub -subswvtt "en,sv" -subsstpp ""
+
+# No subtitles
+./mlmpub -subswvtt "" -subsstpp ""
+```
+
+Track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
+
+To receive subtitles with the subscriber:
+
+```shell
+# Subscribe to WVTT subtitles
+./mlmsub -subsout subs.mp4 -subsname wvtt
+
+# Subscribe to a specific language
+./mlmsub -subsout subs_sv.mp4 -subsname subs_wvtt_sv
+```
 
 ## Requirements
 

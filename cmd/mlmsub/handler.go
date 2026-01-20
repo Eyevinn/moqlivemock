@@ -30,6 +30,7 @@ type moqHandler struct {
 	logfh     io.Writer
 	videoname string
 	audioname string
+	subsname  string
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
@@ -113,6 +114,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	}
 	videoTrack := ""
 	audioTrack := ""
+	subsTrack := ""
 	for _, track := range h.catalog.Tracks {
 		// Select video track
 		if strings.HasPrefix(track.MimeType, "video") {
@@ -173,6 +175,29 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 				}
 			}
 		}
+
+		// Select subtitle track (wvtt or stpp codec)
+		isSubtitle := track.Codec == "wvtt" || strings.HasPrefix(track.Codec, "stpp")
+		if isSubtitle {
+			// If subsname is specified, match it as a substring of the track name
+			if h.subsname != "" {
+				if strings.Contains(track.Name, h.subsname) {
+					subsTrack = track.Name
+					slog.Info("selected subtitle track based on substring match", "trackName", track.Name, "substring", h.subsname)
+				}
+			} else if subsTrack == "" && h.outs["subs"] != nil {
+				// If no subsname specified but subs output requested, use the first subtitle track
+				subsTrack = track.Name
+			}
+
+			// Initialize subtitle track if it's the selected one
+			if subsTrack == track.Name && h.outs["subs"] != nil {
+				err = unpackWrite(track.InitData, h.outs["subs"])
+				if err != nil {
+					slog.Error("failed to write subtitle init data", "error", err)
+				}
+			}
+		}
 	}
 	if videoTrack != "" {
 		_, err := h.subscribeAndRead(ctx, session, h.namespace, videoTrack, "video")
@@ -196,7 +221,18 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 			return
 		}
 	}
-	if audioTrack == "" && videoTrack == "" {
+	if subsTrack != "" {
+		_, err := h.subscribeAndRead(ctx, session, h.namespace, subsTrack, "subs")
+		if err != nil {
+			slog.Error("failed to subscribe to subtitle track", "error", err)
+			err = conn.CloseWithError(0, "internal error")
+			if err != nil {
+				slog.Error("failed to close connection", "error", err)
+			}
+			return
+		}
+	}
+	if audioTrack == "" && videoTrack == "" && subsTrack == "" {
 		slog.Error("no matching tracks found")
 		err = conn.CloseWithError(0, "no matching tracks found")
 		if err != nil {

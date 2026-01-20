@@ -22,9 +22,13 @@ go mod vendor               # Vendor dependencies
 
 ### Key Components
 
-- `cmd/mlmpub/` - Publisher application serving media tracks
+- `cmd/mlmpub/` - Publisher application serving media tracks (video, audio, subtitles)
 - `cmd/mlmsub/` - Subscriber application receiving media
-- `internal/` - Shared internal packages (asset handling, catalog, media processing)
+- `internal/` - Shared internal packages:
+  - `asset.go` - Asset loading and track management
+  - `catalog.go` - WARP catalog generation
+  - `subtitle.go` - Dynamic subtitle generation (WVTT/STPP)
+  - `moqgroup.go` - MoQ group/object handling
 
 ### MoQ Transport Dependency
 
@@ -47,6 +51,23 @@ Publishers implement:
 Subscribers implement:
 - `Handler` - for ANNOUNCE messages (accept/reject)
 - `SubscribeHandler` - for SUBSCRIBE messages (typically reject as they don't publish)
+
+### Subtitle Tracks
+
+Subtitles are dynamically generated (not loaded from files) showing UTC time and group number:
+- **WVTT** (WebVTT in CMAF) - codec: `wvtt`, uses `mp4.VttcBox`/`mp4.PaylBox`
+- **STPP** (TTML in CMAF) - codec: `stpp.ttml.im1t`, uses Go templates (`stpptime.xml`)
+
+Key types in `internal/subtitle.go`:
+- `SubtitleTrack` - track configuration (format, language, timing)
+- `SubtitleData` - implements `CodecSpecificData` interface for init segments
+- `GenSubtitleGroup()` - generates MoQ group with CMAF media segment
+
+Configuration via mlmpub flags:
+- `-subswvtt "en,sv"` - comma-separated WVTT languages (default: "sv")
+- `-subsstpp "en,sv"` - comma-separated STPP languages (default: "en")
+
+Track naming: `subs_wvtt_{lang}`, `subs_stpp_{lang}`
 
 ## Testing
 

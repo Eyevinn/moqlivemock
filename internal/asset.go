@@ -34,9 +34,10 @@ type ContentTrack struct {
 }
 
 type Asset struct {
-	Name      string
-	Groups    []TrackGroup
-	LoopDurMS uint32
+	Name           string
+	Groups         []TrackGroup
+	LoopDurMS      uint32
+	SubtitleTracks []*SubtitleTrack
 }
 
 type CodecSpecificData interface {
@@ -58,6 +59,43 @@ func (a *Asset) GetTrackByName(name string) *ContentTrack {
 			}
 		}
 	}
+	return nil
+}
+
+// GetSubtitleTrackByName returns a pointer to a SubtitleTrack with the given name, or nil if not found.
+func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
+	for _, st := range a.SubtitleTracks {
+		if st.Name == name {
+			return st
+		}
+	}
+	return nil
+}
+
+// AddSubtitleTracks adds WVTT and STPP subtitle tracks for the given languages.
+// wvttLangs and stppLangs are lists of language codes (e.g., "en", "sv").
+// Track names are formatted as "subs_wvtt_{lang}" and "subs_stpp_{lang}".
+func (a *Asset) AddSubtitleTracks(wvttLangs, stppLangs []string) error {
+	// Create WVTT tracks
+	for _, lang := range wvttLangs {
+		name := fmt.Sprintf("subs_wvtt_%s", lang)
+		track, err := NewSubtitleTrack(name, SubtitleFormatWVTT, lang)
+		if err != nil {
+			return fmt.Errorf("failed to create WVTT subtitle track for %s: %w", lang, err)
+		}
+		a.SubtitleTracks = append(a.SubtitleTracks, track)
+	}
+
+	// Create STPP tracks
+	for _, lang := range stppLangs {
+		name := fmt.Sprintf("subs_stpp_%s", lang)
+		track, err := NewSubtitleTrack(name, SubtitleFormatSTPP, lang)
+		if err != nil {
+			return fmt.Errorf("failed to create STPP subtitle track for %s: %w", lang, err)
+		}
+		a.SubtitleTracks = append(a.SubtitleTracks, track)
+	}
+
 	return nil
 }
 
@@ -370,6 +408,45 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 			tracks = append(tracks, track)
 		}
 	}
+
+	// Add subtitle tracks to catalog
+	// Group by format: WVTT tracks in one altGroup, STPP in another
+	wvttAltGroup := len(a.Groups) + 1
+	stppAltGroup := len(a.Groups) + 2
+
+	for _, st := range a.SubtitleTracks {
+		initData := ""
+		if st.SpecData != nil {
+			data, err := st.SpecData.GenCMAFInitData()
+			if err != nil {
+				return nil, fmt.Errorf("could not generate init data for subtitle track %s: %w", st.Name, err)
+			}
+			initData = base64.StdEncoding.EncodeToString(data)
+		}
+
+		// Subtitles are encapsulated in MP4 (CMAF)
+		mimeType := "application/mp4"
+
+		// Determine altGroup based on format
+		altGroup := wvttAltGroup
+		if st.Format == SubtitleFormatSTPP {
+			altGroup = stppAltGroup
+		}
+
+		track := Track{
+			Name:        st.Name,
+			Namespace:   Namespace,
+			Packaging:   "cmaf",
+			RenderGroup: &renderGroup,
+			AltGroup:    &altGroup,
+			InitData:    initData,
+			Codec:       st.SpecData.Codec(),
+			MimeType:    mimeType,
+			Language:    st.Language,
+		}
+		tracks = append(tracks, track)
+	}
+
 	cat := &Catalog{
 		Version: 1,
 		Tracks:  tracks,

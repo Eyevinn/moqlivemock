@@ -19,6 +19,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -50,6 +51,8 @@ type options struct {
 	audioSampleBatch int
 	videoSampleBatch int
 	fingerprintPort  int
+	subsWvttLangs    string
+	subsStppLangs    string
 	version          bool
 }
 
@@ -69,6 +72,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
+	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")
+	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -118,6 +123,16 @@ func runServer(opts *options) error {
 	}
 	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch,
 		"videoSampleBatch", opts.videoSampleBatch)
+
+	// Parse subtitle languages and add tracks
+	wvttLangs := parseLanguages(opts.subsWvttLangs)
+	stppLangs := parseLanguages(opts.subsStppLangs)
+	err = asset.AddSubtitleTracks(wvttLangs, stppLangs)
+	if err != nil {
+		return err
+	}
+	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
+
 	catalog, err := asset.GenCMAFCatalogEntry()
 	if err != nil {
 		return err
@@ -145,6 +160,24 @@ func runServer(opts *options) error {
 	}
 
 	return h.runServer(context.TODO())
+}
+
+// parseLanguages parses a comma-separated string of language codes.
+// Returns an empty slice if the input is empty.
+func parseLanguages(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	langs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			langs = append(langs, p)
+		}
+	}
+	return langs
 }
 
 func generateTLSConfigWithCertAndKey(certFile, keyFile string) (*tls.Config, error) {
