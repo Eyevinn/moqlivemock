@@ -15,7 +15,7 @@ For audio with 46.875fps that bitrate is 42kbps.
 
 ## Files
 
-- `audio_128kbps.mp4`: AAC stereo audio track (128 kbps)
+- `audio_monotonic_128kbps_aac.mp4`: AAC stereo audio track (128 kbps)
   - 48 kHz sample rate
   - 2 channels (stereo)
   - Contains regular beeps every second for easy synchronization testing
@@ -24,7 +24,7 @@ For audio with 46.875fps that bitrate is 42kbps.
   - Average bitrate: 170.73 kbps incl overhead (from file size)
 
 
-- `video_400kbps.mp4`: Low bitrate video track (400 kbps)
+- `video_400kbps_avc.mp4`: Low bitrate video track (400 kbps)
   - 1280×720 resolution
   - 25 frames per second
   - H.264 encoding with only I and P frames (no B-frames)
@@ -33,7 +33,7 @@ For audio with 46.875fps that bitrate is 42kbps.
   - 10 seconds duration (250 frames)
   - Average bitrate: 396.30 kbps incl overhead (from file size)
 
-- `video_600kbps.mp4`: Medium bitrate video track (600 kbps)
+- `video_600kbps_avc.mp4`: Medium bitrate video track (600 kbps)
   - 1280×720 resolution
   - 25 frames per second
   - H.264 encoding with only I and P frames (no B-frames)
@@ -42,7 +42,7 @@ For audio with 46.875fps that bitrate is 42kbps.
   - 10 seconds duration (250 frames)
   - Average bitrate: 582.60 kbps incl overhead (from file size)
 
-- `video_900kbps.mp4`: High bitrate video track (900 kbps)
+- `video_900kbps_avc.mp4`: High bitrate video track (900 kbps)
   - 1280×720 resolution
   - 25 frames per second
   - H.264 encoding with only I and P frames (no B-frames)

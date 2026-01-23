@@ -41,19 +41,20 @@ Usage of %s:
 `
 
 type options struct {
-	addr      string
-	trackname string
-	duration  int
-	muxout    string
-	videoOut  string
-	audioOut  string
-	subsOut   string
-	qlogfile  string
-	videoname string
-	audioname string
-	subsname  string
-	loglevel  string
-	version   bool
+	addr       string
+	trackname  string
+	duration   int
+	muxout     string
+	videoOut   string
+	audioOut   string
+	subsOut    string
+	catalogOut string
+	qlogfile   string
+	videoname  string
+	audioname  string
+	subsname   string
+	loglevel   string
+	version    bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -65,16 +66,17 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 
 	opts := options{}
 	fs.StringVar(&opts.addr, "addr", "localhost:4443", "connect address (use https:// for WebTransport)")
-	fs.StringVar(&opts.trackname, "trackname", "video_400kbps", "Track to subscribe to")
+	fs.StringVar(&opts.trackname, "trackname", "video_400kbps_avc", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
 	fs.StringVar(&opts.muxout, "muxout", "", "Output file for mux or stdout (-)")
 	fs.StringVar(&opts.videoOut, "videoout", "", "Output file for video or stdout (-)")
 	fs.StringVar(&opts.audioOut, "audioout", "", "Output file for audio or stdout (-)")
 	fs.StringVar(&opts.subsOut, "subsout", "", "Output file for subtitles or stdout (-)")
+	fs.StringVar(&opts.catalogOut, "catalogout", "", "Output file for catalog JSON or stdout (-)")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
-	fs.StringVar(&opts.videoname, "videoname", "", "Substring to match for selecting video track (default use first)")
-	fs.StringVar(&opts.audioname, "audioname", "", "Substring to match for selecting audio track (default use first)")
+	fs.StringVar(&opts.videoname, "videoname", "_avc", "Substring to match for video track (default AVC)")
+	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 
@@ -176,10 +178,11 @@ func runClient(ctx context.Context, opts *options) error {
 	outs := make(map[string]io.Writer)
 
 	outNames := map[string]string{
-		"mux":   opts.muxout,
-		"video": opts.videoOut,
-		"audio": opts.audioOut,
-		"subs":  opts.subsOut,
+		"mux":     opts.muxout,
+		"video":   opts.videoOut,
+		"audio":   opts.audioOut,
+		"subs":    opts.subsOut,
+		"catalog": opts.catalogOut,
 	}
 
 	for name, out := range outNames {

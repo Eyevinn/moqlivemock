@@ -31,16 +31,16 @@ go run main.go
 2. Check the `output` directory for the generated files:
    - `audio_monotonic_128kbps_aac.mp4`: AAC stereo audio track
    - `audio_monotonic_128kbps_opus.mp4`: Opus stereo audio track
-   - `video_400kbps_h264.mp4`: 400 kbps H.264 video track
-   - `video_600kbps_h264.mp4`: 600 kbps H.264 video track
-   - `video_900kbps_h264.mp4`: 900 kbps H.264 video track
+   - `video_400kbps_avc.mp4`: 400 kbps H.264/AVC video track
+   - `video_600kbps_avc.mp4`: 600 kbps H.264/AVC video track
+   - `video_900kbps_avc.mp4`: 900 kbps H.264/AVC video track
 
 The actual average bitrates (from the size of the files) are:
 
 * audio 171kbps
-* video_400kbps 396kbps
-* video_600kbps 583kbps
-* video_900kbps 868kbps
+* video_400kbps_avc 396kbps
+* video_600kbps_avc 583kbps
+* video_900kbps_avc 868kbps
 
 There is a relatively high overhead of 100bytes per sample corresponding
 to 25kbps for video and 40kbps for audio.
@@ -51,7 +51,7 @@ to 25kbps for video and 40kbps for audio.
 ./gen_audio_scale.sh
 ```
 
-generates the files `audio_scale_64kbps_aac.mp4` and `audio_scale_64kbps_opus.mp4`.
+generates the files `audio_scale_128kbps_aac.mp4` and `audio_scale_128kbps_opus.mp4`.
 
 ## MP4 Fragmentation
 

@@ -63,28 +63,28 @@ func TestInitContentTrackWithBatch(t *testing.T) {
 	}{
 		{
 			desc:             "video_400kbps_batch_1",
-			filePath:         "../assets/test10s/video_400kbps.mp4",
+			filePath:         "../assets/test10s/video_400kbps_avc.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 1,
 			expectedBatch:    1,
 		},
 		{
 			desc:             "video_400kbps_batch_3",
-			filePath:         "../assets/test10s/video_400kbps.mp4",
+			filePath:         "../assets/test10s/video_400kbps_avc.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 3,
 			expectedBatch:    3,
 		},
 		{
 			desc:             "audio_128kbps_batch_2",
-			filePath:         "../assets/test10s/audio_monotonic_128kbps.mp4",
+			filePath:         "../assets/test10s/audio_monotonic_128kbps_aac.mp4",
 			audioSampleBatch: 2,
 			videoSampleBatch: 3,
 			expectedBatch:    2,
 		},
 		{
 			desc:             "audio_128kbps_batch_4",
-			filePath:         "../assets/test10s/audio_monotonic_128kbps.mp4",
+			filePath:         "../assets/test10s/audio_monotonic_128kbps_aac.mp4",
 			audioSampleBatch: 4,
 			videoSampleBatch: 1,
 			expectedBatch:    4,

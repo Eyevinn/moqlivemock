@@ -23,8 +23,8 @@ func TestPrepareTrack(t *testing.T) {
 		sampleBitrate int
 	}{
 		{
-			desc:          "video_400kbps",
-			filePath:      "../assets/test10s/video_400kbps.mp4",
+			desc:          "video_400kbps_avc",
+			filePath:      "../assets/test10s/video_400kbps_avc.mp4",
 			contentType:   "video",
 			timeScale:     12800,
 			duration:      128000,
@@ -34,8 +34,8 @@ func TestPrepareTrack(t *testing.T) {
 			sampleBitrate: 373200,
 		},
 		{
-			desc:          "audio_128kbps",
-			filePath:      "../assets/test10s/audio_monotonic_128kbps.mp4",
+			desc:          "audio_128kbps_aac",
+			filePath:      "../assets/test10s/audio_monotonic_128kbps_aac.mp4",
 			contentType:   "audio",
 			timeScale:     48000,
 			duration:      469 * 1024,
@@ -85,14 +85,14 @@ func TestLoadAsset(t *testing.T) {
 
 	// Check that track names match the files
 	var expectedNames = map[string]bool{
-		"audio_monotonic_128kbps": true,
-		"audio_scale_128kbps":     true,
-		"video_400kbps":           true,
-		"video_600kbps":           true,
-		"video_900kbps":           true,
-		"video_400kbps_hevc":      true,
-		"video_600kbps_hevc":      true,
-		"video_900kbps_hevc":      true,
+		"audio_monotonic_128kbps_aac": true,
+		"audio_scale_128kbps_aac":     true,
+		"video_400kbps_avc":           true,
+		"video_600kbps_avc":           true,
+		"video_900kbps_avc":           true,
+		"video_400kbps_hevc":          true,
+		"video_600kbps_hevc":          true,
+		"video_900kbps_hevc":          true,
 	}
 	for _, group := range asset.Groups {
 		for _, track := range group.Tracks {
@@ -146,13 +146,13 @@ func TestLoadAsset(t *testing.T) {
 	require.Equal(t, 8, len(cat.Tracks))
 	names := []string{
 		"video_400kbps_hevc",
-		"video_400kbps",
+		"video_400kbps_avc",
 		"video_600kbps_hevc",
-		"video_600kbps",
+		"video_600kbps_avc",
 		"video_900kbps_hevc",
-		"video_900kbps",
-		"audio_monotonic_128kbps",
-		"audio_scale_128kbps",
+		"video_900kbps_avc",
+		"audio_monotonic_128kbps_aac",
+		"audio_scale_128kbps_aac",
 	}
 	for i, track := range cat.Tracks {
 		require.Equal(t, Namespace, track.Namespace)
@@ -171,9 +171,9 @@ func TestGen20sCMAFStreams(t *testing.T) {
 		groupIdx int
 		trackNr  int
 	}{
-		{"video_400kbps", 0, 0},
-		{"video_600kbps", 0, 1},
-		{"video_900kbps", 0, 2},
+		{"video_400kbps_avc", 0, 0},
+		{"video_600kbps_avc", 0, 1},
+		{"video_900kbps_avc", 0, 2},
 		{"audio_128kbps", 1, 0},
 	}
 
