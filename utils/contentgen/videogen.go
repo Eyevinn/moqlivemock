@@ -11,20 +11,18 @@ import (
 )
 
 const (
-	duration        = 10 // seconds
-	frameRate       = 25 // fps
-	audioSampleRate = 48000
-	audioBitrate    = 128 // kbps
-	outputDir       = "output"
-	logDir          = "logs"
-	videoWidth      = 1280
-	videoHeight     = 720
+	duration    = 10 // seconds
+	frameRate   = 25 // fps
+	outputDir   = "output"
+	logDir      = "logs"
+	videoWidth  = 1280
+	videoHeight = 720
 )
 
 func main() {
 	// Parse command line flags
-	codecList := flag.String("codecs", "h264,aac,opus", "Comma-separated list of codecs to generate (h264, aac, opus))")
-	fragmentDuration := flag.Int("fragment-duration", 0, "Fragment duration in milliseconds (0 = one sample/fragment")
+	codecList := flag.String("codecs", "h264", "Comma-separated list of video codecs to generate (h264)")
+	fragmentDuration := flag.Int("fragment-duration", 0, "Fragment duration in milliseconds (0 = one sample/fragment)")
 	flag.Parse()
 
 	// Parse the codec list
@@ -46,14 +44,6 @@ func main() {
 
 	// Check and prepare required files
 	ensureRequiredFiles()
-
-	// Generate audio files based on codec selection
-	if codecMap["aac"] {
-		generateAudio("aac", "libfdk_aac", audioBitrate, *fragmentDuration)
-	}
-	if codecMap["opus"] {
-		generateAudio("opus", "opus", audioBitrate, *fragmentDuration)
-	}
 
 	type videoSetup struct {
 		codec   string
@@ -81,92 +71,17 @@ func main() {
 		}
 	}
 
-	fmt.Println("All files generated successfully!")
+	fmt.Println("All video files generated successfully!")
 
 	// Print average bitrates based on file sizes
 	printActualBitrates(codecMap)
 }
 
 func ensureRequiredFiles() {
-
 	// Check if font file exists
 	if _, err := os.Stat("resources/RobotoSlab-Regular.ttf"); os.IsNotExist(err) {
 		log.Fatalf("Required font file resources/RobotoSlab-Regular.ttf not found")
 	}
-}
-
-func generateAudio(codec, codecLib string, bitrateKbps, fragmentDurationMs int) {
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_%s.mp4", bitrateKbps, codec))
-	logFile := filepath.Join(logDir, fmt.Sprintf("audio_%dkbps_%s.log", bitrateKbps, codec))
-	fmt.Printf("Generating audio file: %s\n", outputFile)
-
-	// Create log file
-	logFileHandle, err := os.Create(logFile)
-	if err != nil {
-		log.Fatalf("Failed to create log file: %v", err)
-	}
-	defer logFileHandle.Close()
-
-	// Use the same audio generation approach as in the shell script
-	// Beep every second (aligned with timecode, not wall clock)
-	cmdArgs := []string{
-		"-y",          // Overwrite output file if it exists
-		"-f", "lavfi", // Use libavfilter virtual input
-		"-i", fmt.Sprintf("sine=frequency=1:beep_factor=880:sample_rate=%d", audioSampleRate), // Audio pattern with beeps
-		"-c:a", codecLib,
-		"-b:a", fmt.Sprintf("%dk", bitrateKbps), // Audio bitrate
-	}
-
-	// Add codec-specific options
-	switch codecLib {
-	case "libopus":
-		cmdArgs = append(cmdArgs, "-vbr", "off")
-	case "opus":
-		// Native opus encoder requires strict flag for experimental codec
-		cmdArgs = append(cmdArgs, "-strict", "-2")
-	}
-
-	// Build movflags based on fragment duration
-	var movflags string
-	if fragmentDurationMs == 0 {
-		movflags = "cmaf+separate_moof+delay_moov+skip_trailer+frag_every_frame"
-	} else {
-		movflags = "cmaf+separate_moof+delay_moov+skip_trailer"
-	}
-
-	cmdArgs = append(cmdArgs, []string{
-		"-ar", fmt.Sprintf("%d", audioSampleRate), // 48kHz sample rate
-		"-ac", "2", // Stereo audio (2 channels)
-		"-metadata:s:a:0", "language=mon", // Set language to 'mon' to indicate monotonic
-		"-t", fmt.Sprintf("%d", duration), // Duration in seconds
-		"-movflags", movflags, // MP4 fragmentation
-	}...)
-
-	// Add fragment duration if specified
-	if fragmentDurationMs > 0 {
-		fragmentDurationMicros := fragmentDurationMs * 1000 // Convert ms to microseconds
-		cmdArgs = append(cmdArgs, "-frag_duration", fmt.Sprintf("%d", fragmentDurationMicros))
-	}
-
-	cmdArgs = append(cmdArgs, outputFile)
-
-	// Print the ffmpeg command
-	cmdString := "ffmpeg " + strings.Join(cmdArgs, " ")
-	fmt.Println("Executing ffmpeg command:")
-	fmt.Println(cmdString)
-
-	// Write command to log file
-	_, _ = logFileHandle.WriteString("Command: " + cmdString + "\n\n")
-
-	cmd := exec.Command("ffmpeg", cmdArgs...)
-	cmd.Stdout = logFileHandle
-	cmd.Stderr = logFileHandle
-
-	if err := cmd.Run(); err != nil {
-		log.Fatalf("Failed to generate audio file: %v", err)
-	}
-
-	fmt.Printf("Audio %s generation completed. Log saved to: %s\n", codec, logFile)
 }
 
 func generateVideo(codec string, options []string, bitrateKbps, fragmentDurationMs int) {
@@ -282,27 +197,17 @@ func printActualBitrates(codecMap map[string]bool) {
 	fmt.Println("\nActual average bitrates based on file sizes:")
 	fmt.Println("--------------------------------------------")
 
-	// Check audio files based on selected codecs
-	if codecMap["aac"] {
-		audioFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_aac.mp4", audioBitrate))
-		printFileBitrate(audioFile, duration, true)
-	}
-	if codecMap["opus"] {
-		audioFile := filepath.Join(outputDir, fmt.Sprintf("audio_monotonic_%dkbps_opus.mp4", audioBitrate))
-		printFileBitrate(audioFile, duration, true)
-	}
-
 	// Check video files based on selected codecs
 	videoBitrates := []int{400, 600, 900} // kbps - keep in sync with main()
 	for _, bitrate := range videoBitrates {
 		if codecMap["h264"] {
 			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_avc.mp4", bitrate))
-			printFileBitrate(videoFile, duration, false)
+			printFileBitrate(videoFile, duration)
 		}
 	}
 }
 
-func printFileBitrate(filePath string, durationSec int, isAudio bool) {
+func printFileBitrate(filePath string, durationSec int) {
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		fmt.Printf("Error getting file info for %s: %v\n", filePath, err)
@@ -316,12 +221,8 @@ func printFileBitrate(filePath string, durationSec int, isAudio bool) {
 
 	// Get target bitrate from filename
 	fileName := filepath.Base(filePath)
-	fileType := "Video"
-	if isAudio {
-		fileType = "Audio"
-	}
 
-	fmt.Printf("%s file: %s\n", fileType, fileName)
+	fmt.Printf("Video file: %s\n", fileName)
 	fmt.Printf("  File size: %.2f KB (%.2f MB)\n", float64(fileSizeBytes)/1024.0, float64(fileSizeBytes)/1024.0/1024.0)
 	fmt.Printf("  Duration: %d seconds\n", durationSec)
 	fmt.Printf("  Average bitrate: %.2f kbps\n\n", actualBitrateKbps)

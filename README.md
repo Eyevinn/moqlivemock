@@ -88,7 +88,7 @@ There are two commands
 * `mlmsub` is the client and subscriber
 
 The content used is in the `assets/test10s` directory, and was
-generate using the code in `utils/videogen`.
+generated using the tools in `utils/contentgen`.
 
 To run the system, first start the publisher
 
