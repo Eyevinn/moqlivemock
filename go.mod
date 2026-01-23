@@ -5,7 +5,7 @@ go 1.23.6
 replace github.com/mengelbart/moqtransport => github.com/Eyevinn/moqtransport v0.5.1-0.20260106133925-94934ef9534a
 
 require (
-	github.com/Eyevinn/mp4ff v0.48.0
+	github.com/Eyevinn/mp4ff v0.50.0
 	github.com/mengelbart/moqtransport v0.3.1-0.20250602103256-a67bb792b05a
 	github.com/mengelbart/qlog v0.1.0
 	github.com/quic-go/quic-go v0.53.0

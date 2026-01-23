@@ -41,7 +41,7 @@ ffmpeg -i silent_with_noise.wav \
 # Define codec configurations: codec:bitrate:output_file
 codec_configs=(
   "libfdk_aac:128k:audio_scale_128kbps_aac.mp4"
-  "libopus:128k:audio_scale_128kbps_opus.mp4"
+  "opus:128k:audio_scale_128kbps_opus.mp4"
 )
 
 for config in "${codec_configs[@]}"; do
@@ -59,12 +59,12 @@ for config in "${codec_configs[@]}"; do
   fi
 
   # Add opus-specific options
-  if [[ "$codec" == "libopus" ]]; then
+  if [[ "$codec" == "opus" ]]; then
     ffmpeg -y -i c_major_scale.wav \
       -t 10 \
       -c:a "$codec" \
       -b:a "$bitrate" \
-      -vbr off \
+      -strict -2 \
       -ar 48000 \
       -ac 2 \
       -metadata:s:a:0 language=sca \

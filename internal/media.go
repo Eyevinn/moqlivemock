@@ -314,3 +314,66 @@ func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	ad.codec = fmt.Sprintf("mp4a.40.%d", objectType)
 	return ad, nil
 }
+
+type OpusData struct {
+	inInit        *mp4.InitSegment
+	outInit       *mp4.InitSegment
+	codec         string
+	sampleRate    uint32
+	channelConfig string
+}
+
+// GenCMAFInitData returns a CMAF initialization segment for Opus.
+func (d *OpusData) GenCMAFInitData() ([]byte, error) {
+	sw := bits.NewFixedSliceWriter(int(d.outInit.Size()))
+	err := d.outInit.EncodeSW(sw)
+	if err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
+}
+
+func (d *OpusData) Codec() string {
+	return d.codec
+}
+
+// initOpusData recreates an Opus init segment from an existing init segment.
+func initOpusData(init *mp4.InitSegment) (*OpusData, error) {
+	od := &OpusData{
+		inInit: init,
+	}
+	opus := init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Opus
+	if opus == nil {
+		return nil, fmt.Errorf("no Opus box found in init segment")
+	}
+	dops := opus.Dops
+	if dops == nil {
+		return nil, fmt.Errorf("no dOps box found in Opus sample entry")
+	}
+
+	od.outInit = mp4.CreateEmptyInit()
+	lang := init.Moov.Trak.Mdia.Mdhd.GetLanguage()
+	if init.Moov.Trak.Mdia.Elng != nil {
+		lang = init.Moov.Trak.Mdia.Elng.Language
+	}
+	timeScale := init.Moov.Trak.Mdia.Mdhd.Timescale
+	od.outInit.AddEmptyTrack(timeScale, "audio", lang)
+	od.sampleRate = dops.InputSampleRate
+	od.channelConfig = fmt.Sprintf("%d", dops.OutputChannelCount)
+
+	// Create new dOps box for output
+	dopsOut := &mp4.DopsBox{
+		Version:            dops.Version,
+		OutputChannelCount: dops.OutputChannelCount,
+		PreSkip:            dops.PreSkip,
+		InputSampleRate:    dops.InputSampleRate,
+		OutputGain:         dops.OutputGain,
+		ChannelMappingFamily: dops.ChannelMappingFamily,
+	}
+	opusOut := mp4.CreateAudioSampleEntryBox("Opus",
+		uint16(dops.OutputChannelCount),
+		16, uint16(od.sampleRate), dopsOut)
+	od.outInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.AddChild(opusOut)
+	od.codec = "Opus"
+	return od, nil
+}

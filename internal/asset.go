@@ -131,7 +131,7 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	case "avc1", "avc3", "hvc1", "hev1":
 		ct.ContentType = "video"
 		ct.SampleBatch = videoSampleBatch
-	case "mp4a":
+	case "mp4a", "Opus":
 		ct.ContentType = "audio"
 		ct.SampleBatch = audioSampleBatch
 	default:
@@ -223,6 +223,11 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		ct.SpecData, err = initAACData(init)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize AAC data: %w", err)
+		}
+	case "Opus":
+		ct.SpecData, err = initOpusData(init)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize Opus data: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
@@ -394,13 +399,22 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 					}
 				}
 			case "audio":
-				sd := ct.SpecData.(*AACData)
 				track.MimeType = "audio/mp4"
-				if sd.sampleRate != 0 {
-					track.SampleRate = Ptr(int(sd.sampleRate))
-				}
-				if sd.channelConfig != "" {
-					track.ChannelConfig = sd.channelConfig
+				switch sd := ct.SpecData.(type) {
+				case *AACData:
+					if sd.sampleRate != 0 {
+						track.SampleRate = Ptr(int(sd.sampleRate))
+					}
+					if sd.channelConfig != "" {
+						track.ChannelConfig = sd.channelConfig
+					}
+				case *OpusData:
+					if sd.sampleRate != 0 {
+						track.SampleRate = Ptr(int(sd.sampleRate))
+					}
+					if sd.channelConfig != "" {
+						track.ChannelConfig = sd.channelConfig
+					}
 				}
 			}
 			track.Namespace = Namespace
