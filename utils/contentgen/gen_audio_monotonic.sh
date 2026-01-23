@@ -19,29 +19,26 @@ done
 
 echo "Fragment duration: ${fragment_duration}ms"
 
-# Create a 10-second base with low-level white noise
-ffmpeg -f lavfi -i "anoisesrc=amplitude=0.001:color=white:duration=10" -c:a pcm_s16le -ar 48000 -ac 2 silent_with_noise.wav
+# Create a 10-second silent base
+ffmpeg -f lavfi -i "anullsrc=r=48000:cl=stereo:d=10" -c:a pcm_s16le silent_base.wav
 
-# Frequencies for extended C-major scale (C4 to E5)
-# C4=261.63, D4=293.66, E4=329.63, F4=349.23, G4=392.00, A4=440.00, B4=493.88, C5=523.25, D5=587.33, E5=659.25
-freqs=(261.63 293.66 329.63 349.23 392.00 440.00 493.88 523.25 587.33 659.25)
-
-# Generate each note and mix them
+# Generate 10 beeps at 880Hz (A4), one per second
+freq=880
 for i in {0..9}; do
-  ffmpeg -f lavfi -i "sine=frequency=${freqs[$i]}:duration=0.03" -af "volume=1.0,adelay=$((i*1000))|$((i*1000))" "note$i.wav"
+  ffmpeg -f lavfi -i "sine=frequency=${freq}:duration=0.5" -af "volume=0.8,afade=t=out:st=0.3:d=0.2,adelay=$((i*1000))|$((i*1000))" "beep$i.wav"
 done
 
-# Mix all notes with the base that has white noise
-ffmpeg -i silent_with_noise.wav \
-  $(for i in {0..9}; do echo "-i note$i.wav"; done) \
-  -filter_complex "$(for i in {0..10}; do echo "[$i:0]"; done)amix=inputs=11:duration=longest" \
-  -c:a pcm_s16le c_major_scale.wav
+# Mix all beeps with the silent base, normalize=0 prevents volume reduction
+ffmpeg -i silent_base.wav \
+  $(for i in {0..9}; do echo "-i beep$i.wav"; done) \
+  -filter_complex "$(for i in {0..10}; do echo "[$i:0]"; done)amix=inputs=11:duration=longest:normalize=0" \
+  -c:a pcm_s16le monotonic_beeps.wav
 
 # Encode with different codecs and bitrates
 # Define codec configurations: codec:bitrate:output_file
 codec_configs=(
-  "libfdk_aac:128k:audio_scale_128kbps_aac.mp4"
-  "opus:128k:audio_scale_128kbps_opus.mp4"
+  "libfdk_aac:128k:audio_monotonic_128kbps_aac.mp4"
+  "opus:128k:audio_monotonic_128kbps_opus.mp4"
 )
 
 for config in "${codec_configs[@]}"; do
@@ -60,25 +57,25 @@ for config in "${codec_configs[@]}"; do
 
   # Add opus-specific options
   if [[ "$codec" == "opus" ]]; then
-    ffmpeg -y -i c_major_scale.wav \
+    ffmpeg -y -i monotonic_beeps.wav \
       -t 10 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -strict -2 \
       -ar 48000 \
       -ac 2 \
-      -metadata:s:a:0 language=sca \
+      -metadata:s:a:0 language=mon \
       -movflags "$movflags" \
       $frag_args \
       "output/$output"
   else
-    ffmpeg -y -i c_major_scale.wav \
+    ffmpeg -y -i monotonic_beeps.wav \
       -t 10 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -ar 48000 \
       -ac 2 \
-      -metadata:s:a:0 language=sca \
+      -metadata:s:a:0 language=mon \
       -movflags "$movflags" \
       $frag_args \
       "output/$output"
@@ -86,9 +83,9 @@ for config in "${codec_configs[@]}"; do
 done
 
 # Clean up temporary files
-rm silent_with_noise.wav c_major_scale.wav
+rm silent_base.wav monotonic_beeps.wav
 for i in {0..9}; do
-  rm "note$i.wav"
+  rm "beep$i.wav"
 done
 
-echo "Audio scale generation completed. Output files: output/audio_scale_128kbps_aac.mp4, output/audio_scale_128_kbps_opus.mp4"
+echo "Audio monotonic generation completed. Output files: output/audio_monotonic_128kbps_aac.mp4, output/audio_monotonic_128kbps_opus.mp4"

@@ -42,7 +42,7 @@ func TestPrepareTrack(t *testing.T) {
 			sampleDur:     1024,
 			nrSamples:     469,
 			gopLength:     1,
-			sampleBitrate: 127691,
+			sampleBitrate: 128001,
 			language:      "und",
 		},
 	}

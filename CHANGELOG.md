@@ -11,7 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Include SEI NAL units in AVC output
 - Renamed asset files to include codec suffix (`video_*_avc.mp4`, `audio_*_aac.mp4`)
-- Updated videogen to generate files with consistent codec naming
+- Renamed `utils/videogen` to `utils/contentgen`
+- Audio generation moved to shell scripts (`gen_audio_monotonic.sh`, `gen_audio_scale.sh`)
+- Improved audio levels for monotonic and scale content (0.5s beeps with fadeout)
 - Default track selection in mlmsub now prefers AVC video and AAC audio (lowest bitrate)
 
 ### Added
@@ -24,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports appending multiple catalog updates to the same file
 - Opus audio codec support (CMAF packaging)
   - Bundled Opus test content in `assets/test10s`
-  - Updated videogen to generate Opus audio files
 
 ### Fixed
 
@@ -63,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- utils/videogen to generated test content
+- utils/contentgen to generate test content
 - WARP catalog generation and parsing
 - wall-clock-synchronized media soursce
 - multiplexing received video and audio for direct playback via ffplay
