@@ -19,9 +19,17 @@ const (
 	videoHeight = 720
 )
 
+// getFFmpegPath returns the path to ffmpeg, checking FFMPEG_PATH env var first
+func getFFmpegPath() string {
+	if path := os.Getenv("FFMPEG_PATH"); path != "" {
+		return path
+	}
+	return "ffmpeg"
+}
+
 func main() {
 	// Parse command line flags
-	codecList := flag.String("codecs", "h264", "Comma-separated list of video codecs to generate (h264)")
+	codecList := flag.String("codecs", "h264", "Comma-separated list of video codecs to generate (h264,h265)")
 	fragmentDuration := flag.Int("fragment-duration", 0, "Fragment duration in milliseconds (0 = one sample/fragment)")
 	flag.Parse()
 
@@ -57,6 +65,14 @@ func main() {
 			"-profile:v", "main",
 			"-x264opts", fmt.Sprintf("keyint=%d:min-keyint=%d:scenecut=0:bframes=0:force-cfr=1", frameRate, frameRate),
 			"-pix_fmt", "yuv420p"},
+		},
+		{"h265", []string{
+			"-c:v", "libx265",
+			"-preset", "medium",
+			"-x265-params", fmt.Sprintf(
+				"profile=main:keyint=%d:min-keyint=%d:scenecut=0:bframes=0:open-gop=0", frameRate, frameRate),
+			"-pix_fmt", "yuv420p",
+			"-tag:v", "hvc1"},
 		},
 	}
 
@@ -174,7 +190,8 @@ func generateVideo(codec string, options []string, bitrateKbps, fragmentDuration
 	cmdArgs = append(cmdArgs, cmdArgsFirst...)
 	cmdArgs = append(cmdArgs, options...)
 	cmdArgs = append(cmdArgs, cmdArgsLast...)
-	cmdString := "ffmpeg " + strings.Join(cmdArgs, " ")
+	ffmpegPath := getFFmpegPath()
+	cmdString := ffmpegPath + " " + strings.Join(cmdArgs, " ")
 	fmt.Println("Executing ffmpeg command:")
 	fmt.Println(cmdString)
 
@@ -182,7 +199,7 @@ func generateVideo(codec string, options []string, bitrateKbps, fragmentDuration
 	_, _ = logFileHandle.WriteString("Command: " + cmdString + "\n\n")
 
 	// Run ffmpeg command
-	cmd := exec.Command("ffmpeg", cmdArgs...)
+	cmd := exec.Command(ffmpegPath, cmdArgs...)
 	cmd.Stdout = logFileHandle
 	cmd.Stderr = logFileHandle
 
@@ -202,6 +219,10 @@ func printActualBitrates(codecMap map[string]bool) {
 	for _, bitrate := range videoBitrates {
 		if codecMap["h264"] {
 			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_avc.mp4", bitrate))
+			printFileBitrate(videoFile, duration)
+		}
+		if codecMap["h265"] {
+			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_hevc.mp4", bitrate))
 			printFileBitrate(videoFile, duration)
 		}
 	}
