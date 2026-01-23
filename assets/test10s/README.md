@@ -25,12 +25,18 @@ For audio with 46.875fps that bitrate is 42kbps.
 - `audio_monotonic_128kbps_opus.mp4`: Opus stereo audio track (128 kbps)
   - Same content as AAC version, Opus codec
 
+- `audio_monotonic_192kbps_ac3.mp4`: AC-3 (Dolby Digital) stereo audio track (192 kbps)
+  - Same content as AAC version, AC-3 codec
+
 - `audio_scale_128kbps_aac.mp4`: AAC stereo audio track (128 kbps)
   - C-major scale notes, one per second (0.5s duration with fadeout)
   - Language code: `sca` (scale)
 
 - `audio_scale_128kbps_opus.mp4`: Opus stereo audio track (128 kbps)
   - Same content as AAC version, Opus codec
+
+- `audio_scale_192kbps_ac3.mp4`: AC-3 (Dolby Digital) stereo audio track (192 kbps)
+  - Same content as AAC version, AC-3 codec
 
 ### Video Tracks (AVC/H.264)
 

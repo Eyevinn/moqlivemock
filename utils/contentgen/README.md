@@ -13,11 +13,11 @@ sent over MoQ (MediaOverQuic) one frame at a time.
 - 10-second duration
 
 ### Audio (Shell scripts)
-- Generates AAC and Opus stereo audio at 48kHz
+- Generates AAC, Opus, and AC-3 stereo audio at 48kHz
 - Monotonic beeps: 880Hz beep every second (language code: mon)
 - Scale beeps: C-major scale notes, one per second (language code: sca)
 - Each beep is 0.5 seconds with fadeout
-- Audio encoded at 128 kbps
+- AAC and Opus encoded at 128 kbps, AC-3 encoded at 192 kbps
 - Outputs fragmented MP4 files with each frame in an individual fragment
 
 ## Requirements
@@ -48,6 +48,7 @@ Monotonic beeps (880Hz, one per second):
 Output files:
 - `output/audio_monotonic_128kbps_aac.mp4`
 - `output/audio_monotonic_128kbps_opus.mp4`
+- `output/audio_monotonic_192kbps_ac3.mp4`
 
 C-major scale beeps (one note per second):
 ```bash
@@ -57,6 +58,7 @@ C-major scale beeps (one note per second):
 Output files:
 - `output/audio_scale_128kbps_aac.mp4`
 - `output/audio_scale_128kbps_opus.mp4`
+- `output/audio_scale_192kbps_ac3.mp4`
 
 ## Actual Bitrates
 

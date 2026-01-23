@@ -19,8 +19,8 @@ done
 
 echo "Fragment duration: ${fragment_duration}ms"
 
-# Create a 10-second silent base
-ffmpeg -f lavfi -i "anullsrc=r=48000:cl=stereo:d=10" -c:a pcm_s16le silent_base.wav
+# Create a 10.5-second silent base (slightly longer to avoid truncated last frame)
+ffmpeg -f lavfi -i "anullsrc=r=48000:cl=stereo:d=10.1" -c:a pcm_s16le silent_base.wav
 
 # Generate 10 beeps at 880Hz (A4), one per second
 freq=880
@@ -39,6 +39,7 @@ ffmpeg -i silent_base.wav \
 codec_configs=(
   "libfdk_aac:128k:audio_monotonic_128kbps_aac.mp4"
   "opus:128k:audio_monotonic_128kbps_opus.mp4"
+  "ac3:192k:audio_monotonic_192kbps_ac3.mp4"
 )
 
 for config in "${codec_configs[@]}"; do
@@ -58,7 +59,7 @@ for config in "${codec_configs[@]}"; do
   # Add opus-specific options
   if [[ "$codec" == "opus" ]]; then
     ffmpeg -y -i monotonic_beeps.wav \
-      -t 10 \
+      -t 10.1 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -strict -2 \
@@ -70,7 +71,7 @@ for config in "${codec_configs[@]}"; do
       "output/$output"
   else
     ffmpeg -y -i monotonic_beeps.wav \
-      -t 10 \
+      -t 10.1 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -ar 48000 \
@@ -88,4 +89,4 @@ for i in {0..9}; do
   rm "beep$i.wav"
 done
 
-echo "Audio monotonic generation completed. Output files: output/audio_monotonic_128kbps_aac.mp4, output/audio_monotonic_128kbps_opus.mp4"
+echo "Audio monotonic generation completed. Output files: output/audio_monotonic_128kbps_aac.mp4, output/audio_monotonic_128kbps_opus.mp4, output/audio_monotonic_192kbps_ac3.mp4"
