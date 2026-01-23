@@ -21,3 +21,9 @@ vendor/
 # References like draft spec versions and typical AI findings
 references/
 findings/
+
+# Logs
+*.log
+
+# Certificates
+*.pem
