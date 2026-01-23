@@ -153,7 +153,7 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			require.NotNil(t, catalog)
 
 			// Verify that tracks exist in the catalog
-			require.Equal(t, 8, len(catalog.Tracks))
+			require.Equal(t, 10, len(catalog.Tracks))
 
 			// Check that the bitrates in the catalog reflect the batch sizes
 			for _, track := range catalog.Tracks {

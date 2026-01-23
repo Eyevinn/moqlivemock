@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Can be parsed and written to file by `mlmsub`
 - `-catalogout` option in mlmsub to write received catalog JSON to file
   - Supports appending multiple catalog updates to the same file
+- Opus audio codec support (CMAF packaging)
+  - Bundled Opus test content in `assets/test10s`
+  - Updated videogen to generate Opus audio files
 
 ### Fixed
 

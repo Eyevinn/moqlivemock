@@ -52,7 +52,7 @@ func main() {
 		generateAudio("aac", "libfdk_aac", audioBitrate, *fragmentDuration)
 	}
 	if codecMap["opus"] {
-		generateAudio("opus", "libopus", audioBitrate, *fragmentDuration)
+		generateAudio("opus", "opus", audioBitrate, *fragmentDuration)
 	}
 
 	type videoSetup struct {
@@ -117,9 +117,13 @@ func generateAudio(codec, codecLib string, bitrateKbps, fragmentDurationMs int) 
 		"-b:a", fmt.Sprintf("%dk", bitrateKbps), // Audio bitrate
 	}
 
-	// Add opus-specific options
-	if codecLib == "libopus" {
+	// Add codec-specific options
+	switch codecLib {
+	case "libopus":
 		cmdArgs = append(cmdArgs, "-vbr", "off")
+	case "opus":
+		// Native opus encoder requires strict flag for experimental codec
+		cmdArgs = append(cmdArgs, "-strict", "-2")
 	}
 
 	// Build movflags based on fragment duration
