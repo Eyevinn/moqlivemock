@@ -120,7 +120,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		if strings.HasPrefix(track.MimeType, "video") {
 			// If videoname is specified, match it as a substring of the track name
 			if h.videoname != "" {
-				if strings.Contains(track.Name, h.videoname) {
+				if videoTrack == "" && strings.Contains(track.Name, h.videoname) {
 					videoTrack = track.Name
 					slog.Info("selected video track based on substring match", "trackName", track.Name, "substring", h.videoname)
 				}
@@ -150,7 +150,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		if strings.HasPrefix(track.MimeType, "audio") {
 			// If audioname is specified, match it as a substring of the track name
 			if h.audioname != "" {
-				if strings.Contains(track.Name, h.audioname) {
+				if audioTrack == "" && strings.Contains(track.Name, h.audioname) {
 					audioTrack = track.Name
 					slog.Info("selected audio track based on substring match", "trackName", track.Name, "substring", h.audioname)
 				}
@@ -181,7 +181,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		if isSubtitle {
 			// If subsname is specified, match it as a substring of the track name
 			if h.subsname != "" {
-				if strings.Contains(track.Name, h.subsname) {
+				if subsTrack == "" && strings.Contains(track.Name, h.subsname) {
 					subsTrack = track.Name
 					slog.Info("selected subtitle track based on substring match", "trackName", track.Name, "substring", h.subsname)
 				}
@@ -248,9 +248,9 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 	if err != nil {
 		return err
 	}
-	defer rs.Close()
 	o, err := rs.ReadObject(ctx)
 	if err != nil {
+		rs.Close()
 		if err == io.EOF {
 			return nil
 		}
@@ -259,6 +259,7 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 
 	err = json.Unmarshal(o.Payload, &h.catalog)
 	if err != nil {
+		rs.Close()
 		return err
 	}
 	slog.Info("received catalog",
@@ -269,6 +270,66 @@ func (h *moqHandler) subscribeToCatalog(ctx context.Context, s *moqtransport.Ses
 	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
 		fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
 	}
+	if h.outs["catalog"] != nil {
+		indented, err := json.MarshalIndent(h.catalog, "", "  ")
+		if err != nil {
+			slog.Error("failed to marshal catalog", "error", err)
+		} else {
+			_, err = h.outs["catalog"].Write(indented)
+			if err != nil {
+				slog.Error("failed to write catalog", "error", err)
+			}
+			_, err = h.outs["catalog"].Write([]byte("\n"))
+			if err != nil {
+				slog.Error("failed to write catalog newline", "error", err)
+			}
+		}
+	}
+
+	// Continue reading catalog updates in background
+	go func() {
+		defer rs.Close()
+		for {
+			o, err := rs.ReadObject(ctx)
+			if err != nil {
+				if err != io.EOF {
+					slog.Debug("catalog subscription ended", "error", err)
+				}
+				return
+			}
+			var cat internal.Catalog
+			err = json.Unmarshal(o.Payload, &cat)
+			if err != nil {
+				slog.Error("failed to unmarshal catalog update", "error", err)
+				continue
+			}
+			h.catalog = &cat
+			slog.Info("received catalog update",
+				"groupID", o.GroupID,
+				"subGroupID", o.SubGroupID,
+				"payloadLength", len(o.Payload),
+			)
+			if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
+				fmt.Fprintf(os.Stderr, "catalog update: %s\n", h.catalog.String())
+			}
+			if h.outs["catalog"] != nil {
+				indented, err := json.MarshalIndent(&cat, "", "  ")
+				if err != nil {
+					slog.Error("failed to marshal catalog update", "error", err)
+				} else {
+					_, err = h.outs["catalog"].Write(indented)
+					if err != nil {
+						slog.Error("failed to write catalog update", "error", err)
+					}
+					_, err = h.outs["catalog"].Write([]byte("\n"))
+					if err != nil {
+						slog.Error("failed to write catalog update newline", "error", err)
+					}
+				}
+			}
+		}
+	}()
+
 	return nil
 }
 

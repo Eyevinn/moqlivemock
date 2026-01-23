@@ -98,7 +98,7 @@ func TestWriteMoQGroupLive(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
-	name := "video_400kbps"
+	name := "video_400kbps_avc"
 	ct := asset.GetTrackByName(name)
 	require.NotNil(t, ct)
 	ofh, err := os.Create(name + "_live.mp4")

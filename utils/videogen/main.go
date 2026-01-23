@@ -166,8 +166,16 @@ func generateAudio(codec, codecLib string, bitrateKbps, fragmentDurationMs int) 
 }
 
 func generateVideo(codec string, options []string, bitrateKbps, fragmentDurationMs int) {
-	outputFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_%s.mp4", bitrateKbps, codec))
-	logFile := filepath.Join(logDir, fmt.Sprintf("video_%dkbps_%s.log", bitrateKbps, codec))
+	// Map internal codec names to output file codec suffixes
+	codecSuffix := codec
+	switch codec {
+	case "h264":
+		codecSuffix = "avc"
+	case "h265":
+		codecSuffix = "hevc"
+	}
+	outputFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_%s.mp4", bitrateKbps, codecSuffix))
+	logFile := filepath.Join(logDir, fmt.Sprintf("video_%dkbps_%s.log", bitrateKbps, codecSuffix))
 	fmt.Printf("Generating video file at %d kbps: %s\n", bitrateKbps, outputFile)
 
 	// Create log file
@@ -284,7 +292,7 @@ func printActualBitrates(codecMap map[string]bool) {
 	videoBitrates := []int{400, 600, 900} // kbps - keep in sync with main()
 	for _, bitrate := range videoBitrates {
 		if codecMap["h264"] {
-			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_h264.mp4", bitrate))
+			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_avc.mp4", bitrate))
 			printFileBitrate(videoFile, duration, false)
 		}
 	}
