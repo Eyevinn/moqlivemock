@@ -5,14 +5,24 @@ import (
 	"fmt"
 )
 
-// Catalog represents the WARP JSON catalog as defined in
-// [draft-ietf-moq-warp](https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html)
-// as of 28 Apr 2025 17:43:00 +0200
-// It provides information about the tracks being produced by a WARP publisher.
+// Catalog represents the MSF JSON catalog as defined in
+// draft-ietf-moq-msf-00 (MOQT Streaming Format) and
+// draft-ietf-moq-cmsf-00 (CMAF MOQT Streaming Format).
+// It provides information about the tracks being produced by an MSF publisher.
 type Catalog struct {
-	// Version specifies the version of WARP referenced by this catalog.
+	// Version specifies the version of MSF referenced by this catalog.
 	// Required field at the root level.
 	Version int `json:"version"`
+
+	// GeneratedAt is the wallclock time at which this catalog was generated,
+	// expressed as milliseconds since the Unix epoch.
+	// Optional field at the root level. Should be present when tracks are live.
+	GeneratedAt *int64 `json:"generatedAt,omitempty"`
+
+	// IsComplete signals that a previously live broadcast is complete.
+	// All tracks are complete, no new tracks will be added.
+	// Optional field at the root level. Must not be included if false.
+	IsComplete bool `json:"isComplete,omitempty"`
 
 	// DeltaUpdate indicates that this catalog object represents a delta (or partial) update.
 	// Optional field at the root level.
@@ -33,10 +43,6 @@ type Catalog struct {
 	// Tracks is an array of track objects.
 	// Required field at the root level for non-delta updates.
 	Tracks []Track `json:"tracks,omitempty"`
-
-	// SupportsDeltaUpdates indicates if the publisher may issue incremental (delta) updates.
-	// Optional field at the root level. Default is false.
-	SupportsDeltaUpdates bool `json:"supportsDeltaUpdates,omitempty"`
 }
 
 func (c *Catalog) GetTrackByName(name string) *Track {
@@ -74,7 +80,7 @@ func (c *Catalog) String() string {
 	return string(jsonBytes)
 }
 
-// Track represents a track object in the WARP catalog.
+// Track represents a track object in the MSF/CMSF catalog.
 type Track struct {
 	// Name defines the name of the track.
 	// Required field at the track level.
@@ -85,8 +91,23 @@ type Track struct {
 	Namespace string `json:"namespace,omitempty"`
 
 	// Packaging defines the type of payload encapsulation.
-	// Required field at the track level. Allowed values: "loc", but we also use "cmaf"
+	// Required field at the track level. MSF values: "loc", "mediatimeline", "eventtimeline".
+	// CMSF adds: "cmaf".
 	Packaging string `json:"packaging"`
+
+	// IsLive indicates whether new objects will be added to the track.
+	// Required field at the track level (MSF Section 5.1.15).
+	IsLive bool `json:"isLive"`
+
+	// TargetLatency is the target latency in milliseconds.
+	// Optional field at the track level. Must not be included if IsLive is false.
+	TargetLatency *int `json:"targetLatency,omitempty"`
+
+	// Role defines the role of content carried by the track.
+	// Optional field at the track level. Reserved values include:
+	// "video", "audio", "subtitle", "caption", "audiodescription",
+	// "mediatimeline", "eventtimeline", "signlanguage".
+	Role string `json:"role,omitempty"`
 
 	// Label is a human-readable label for the track.
 	// Optional field at the track level.
@@ -101,7 +122,7 @@ type Track struct {
 	AltGroup *int `json:"altGroup,omitempty"`
 
 	// InitData holds Base64 encoded initialization data for the track.
-	// Optional field at the track level. We use this for CMAF init segment.
+	// Optional field at the track level. Used for CMAF init segments.
 	InitData string `json:"initData,omitempty"`
 
 	// Dependencies holds an array of track names on which the current track is dependent.
@@ -127,6 +148,10 @@ type Track struct {
 	// Framerate defines the video framerate of the track, expressed as frames per second.
 	// Optional field at the track level.
 	Framerate *float64 `json:"framerate,omitempty"`
+
+	// Timescale is the number of time units that pass per second.
+	// Optional field at the track level (MSF Section 5.1.27).
+	Timescale *int `json:"timescale,omitempty"`
 
 	// Bitrate defines the bitrate of track, expressed in bits per second.
 	// Optional field at the track level.
@@ -159,6 +184,14 @@ type Track struct {
 	// Language defines the dominant language of the track.
 	// Optional field at the track level.
 	Language string `json:"lang,omitempty"`
+
+	// TrackDuration is the duration of the track in integer milliseconds.
+	// Optional field at the track level. Must not be included if IsLive is true.
+	TrackDuration *int `json:"trackDuration,omitempty"`
+
+	// EventType defines the type & structure of data in an event timeline track.
+	// Optional field at the track level. Required when packaging is "eventtimeline".
+	EventType string `json:"eventType,omitempty"`
 
 	// ParentName defines the parent track name to be cloned.
 	// This field is only included inside a CloneTracks object.

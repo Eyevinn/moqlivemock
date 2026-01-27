@@ -357,8 +357,11 @@ func (a *Asset) setLoopDuration() error {
 	return nil
 }
 
-// GenCMAFCatalogEntry generates a WARP/CMAF catalog entry for this asset, populating all available fields.
-func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
+// GenCMAFCatalogEntry generates an MSF/CMSF catalog entry for this asset, populating all available fields.
+// Conforms to draft-ietf-moq-msf-00 and draft-ietf-moq-cmsf-00.
+// The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
+// to be set as the catalog's generatedAt value.
+func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
 	for _, group := range a.Groups {
@@ -379,17 +382,20 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 			track := Track{
 				Name:        ct.Name,
 				Packaging:   "cmaf",
+				IsLive:      true,
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
 				InitData:    initData,
 				Codec:       ct.SpecData.Codec(),
 				Bitrate:     &cmafBitrate,
+				Timescale:   Ptr(int(ct.TimeScale)),
 				Language:    ct.Language,
 			}
 
 			// Populate optional fields if available
 			switch ct.ContentType {
 			case "video":
+				track.Role = "video"
 				track.MimeType = "video/mp4"
 				track.Framerate = Ptr(frameRate)
 				switch sd := ct.SpecData.(type) {
@@ -409,6 +415,7 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 					}
 				}
 			case "audio":
+				track.Role = "audio"
 				track.MimeType = "audio/mp4"
 				switch sd := ct.SpecData.(type) {
 				case *AACData:
@@ -468,19 +475,23 @@ func (a *Asset) GenCMAFCatalogEntry() (*Catalog, error) {
 			Name:        st.Name,
 			Namespace:   Namespace,
 			Packaging:   "cmaf",
+			IsLive:      true,
+			Role:        "subtitle",
 			RenderGroup: &renderGroup,
 			AltGroup:    &altGroup,
 			InitData:    initData,
 			Codec:       st.SpecData.Codec(),
 			MimeType:    mimeType,
+			Timescale:   Ptr(int(st.TimeScale)),
 			Language:    st.Language,
 		}
 		tracks = append(tracks, track)
 	}
 
 	cat := &Catalog{
-		Version: 1,
-		Tracks:  tracks,
+		Version:     1,
+		GeneratedAt: &generatedAtMS,
+		Tracks:      tracks,
 	}
 	return cat, nil
 }

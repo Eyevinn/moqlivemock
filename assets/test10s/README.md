@@ -82,11 +82,13 @@ with the MoQ protocol. For more details on how these files were created, see the
 
 ## Example Catalog
 
-The file `example_catalog.json` contains an example of a partial WARP catalog following
-the [WARP specification][warp-00]. This is for reference only and does not include the
-`initData` field (base64-encoded init segments) required for actual CMAF rendering.
+The file `example_catalog.json` contains an example of a partial MSF/CMSF catalog following
+[draft-ietf-moq-msf-00][msf-00] and [draft-ietf-moq-cmsf-00][cmsf-00]. This is for
+reference only and does not include the `initData` field (base64-encoded init segments)
+required for actual CMAF rendering.
 
 The actual catalog used by `mlmpub` is generated dynamically from the loaded assets and
 includes the proper `initData` for each track.
 
-[warp-00]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-warp-00
+[msf-00]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
+[cmsf-00]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
