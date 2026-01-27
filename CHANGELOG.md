@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-27
+
 ### Changed
 
 - Include SEI NAL units in AVC output
@@ -15,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Audio generation moved to shell scripts (`gen_audio_monotonic.sh`, `gen_audio_scale.sh`)
 - Improved audio levels for monotonic and scale content (0.5s beeps with fadeout)
 - Default track selection in mlmsub now prefers AVC video and AAC audio (lowest bitrate)
+- Catalog aligned with [MSF/CMSF draft-00][msf-00]
 
 ### Added
 
@@ -26,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports appending multiple catalog updates to the same file
 - Opus audio codec support (CMAF packaging)
   - Bundled Opus test content in `assets/test10s`
+- AC-3 and E-AC-3 (EC-3) audio codec support
 
 ### Fixed
 
@@ -88,13 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...HEAD
+[0.5.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
+[msf-00]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/00/
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
 [moqtransport]: https://github.com/mengelbart/moqtransport
