@@ -26,7 +26,7 @@ go mod vendor               # Vendor dependencies
 - `cmd/mlmsub/` - Subscriber application receiving media
 - `internal/` - Shared internal packages:
   - `asset.go` - Asset loading and track management
-  - `catalog.go` - WARP catalog generation
+  - `catalog.go` - MSF/CMSF catalog generation
   - `subtitle.go` - Dynamic subtitle generation (WVTT/STPP)
   - `moqgroup.go` - MoQ group/object handling
 
@@ -75,3 +75,11 @@ The `internal/` package contains unit tests. Run with:
 ```bash
 go test ./internal/...
 ```
+
+## References
+
+IETF draft specifications are stored in `references/` for offline reference:
+
+- `draft-ietf-moq-transport-14.txt` - MoQ Transport protocol (draft-14), the wire protocol used by this project
+- `draft-ietf-moq-msf-00.txt` - MoQ Streaming Format (MSF), defines how media is mapped to MoQ tracks/groups/objects
+- `draft-ietf-moq-cmsf-00.txt` - CMAF MoQ Streaming Format (CMSF), defines CMAF-based media packaging for MoQ

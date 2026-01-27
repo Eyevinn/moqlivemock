@@ -6,31 +6,35 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/Eyevinn/moqlivemock)](https://goreportcard.com/report/github.com/Eyevinn/moqlivemock)
 [![license](https://img.shields.io/github/license/Eyevinn/moqlivemock.svg)](https://github.com/Eyevinn/moqlivemock/blob/master/LICENSE)
 
-moqlivemock is a simple media test service for [MoQ][moq] (Media over QUIC)
-and the [WARP][WARP] streaming format by providing a server which
+moqlivemock is a simple media test service for [MOQ Transport][moqt]
+and the [MSF][MSF]/[CMSF][CMSF] streaming format by providing a server which
 publishes an asset with wall-clock synchronized multi-bitrate video,
 audio tracks, and dynamically-generated subtitle tracks (WVTT and STPP),
 as well as a client that can receive these streams and even multiplex
-them for playback with ffplay like `mlmsub -muxout - | ffplay -`.
+video and audio for playback with ffplay like `mlmsub -muxout - | ffplay -`.
 
 The input media is 10s of video and audio which is then disassembled
 into frames. One or more frames are then combined into a MoQ object as a CMAF chunk.
 How many frames are combined is configurable via the `-audiobatch` and `-videobatch` options.
+
+Subtitles are generated on the fly and delivered as 1s groups with 1 object per group.
+That object is published at the start of each second in order to not increase the latency.
 
 LOC is currently not supported, but one possible scenario is to send LOC over the wire and
 then reassamble CMAF on the receiving side again.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer.
 As the MoQ transport layer is still work in progress, this project is also
-work in progress.
+work in progress. Currently a fork is used to align to [draft-14 of MOQT][moqt-14].
 
 ## Session setup
 
 The first things that happens after the session establishment is that the namespace is
-announced by the server. The client next subscribes to the WARP catalog.
-Once it has the catalog, it subscribes to the first video and audio track from the catalog
-or tracks that match the `-videoname` and `-audioname` options.
+announced by the server. The client next subscribes to the MSF catalog.
+Once it has the catalog, it can subscribe to media.
 
+The bundled `mlmsub` client subscribes to the first video and audio track from the catalog
+or tracks that match the `-videoname`, `-audioname`. For subtitles, see below.
 It should later be possible to switch bitrate by unsubscribing to one
 track and subscribing to another, with no repeated or lost frames.
 
@@ -56,9 +60,9 @@ You can configure multiple languages:
 ./mlmpub -subswvtt "" -subsstpp ""
 ```
 
-Track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
+Subitle track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
 
-To receive subtitles with the subscriber:
+To receive subtitles with the mlmsub subscriber:
 
 ```shell
 # Subscribe to WVTT subtitles
@@ -133,14 +137,14 @@ There are more options to change the loglevel, choose track etc.
 The subscriber will connect to the publisher and start receiving
 video and audio frames if some tracks are selected.
 
-### WARP browser player
+### Use with Eyevinn's browser player
 
 The browser player [warp-player][warp-player] has been created to match the
 mlmpub publisher. It will subscribe to and read a catalog.
 One can then choose video and audio tracks and start playing synchronized
-video and audio.
+video and audio with configurable latency.
 
-For that to work, one typically need better certificates.
+For that to work, one either need certificates or use of the fingerprint mechanism.
 
 #### Using mkcert (recommended for development)
 
@@ -154,7 +158,9 @@ One way to do that is with mkcert:
 
 #### Using certificate fingerprint
 
-For browsers that support WebTransport certificate fingerprints (e.g., Chrome), you can use self-signed certificates without installing them:
+For browsers that support WebTransport certificate fingerprints (e.g., Chrome),
+you can use self-signed certificates without installing them. This is especially
+useful when running the server locally.
 
 **Run mlmpub with fingerprint support**:
 ```sh
@@ -178,14 +184,14 @@ This will:
 - Start an HTTP server on port 8081 that serves the certificate's SHA-256 fingerprint
 - Validate that the certificate meets WebTransport requirements
 
-The warp-player (fingerprint branch) can then connect using:
+The warp-player can then connect using:
 - Server URL: `https://localhost:4443/moq` or `https://127.0.0.1:4443/moq`
 - Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
 
 **Notes**: 
-- The fingerprint server is disabled by default (`-fingerprintport 0`). Only enable it when using certificates that meet WebTransport's strict requirements.
+- The fingerprint server is disabled by default (`-fingerprintport 0`).
+  Only enable it when using certificates that meet WebTransport's strict requirements.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
-
 
 ## Development
 
@@ -217,7 +223,9 @@ Contact [sales@eyevinn.se](mailto:sales@eyevinn.se) if you are interested.
 
 Want to know more about Eyevinn and how it is to work here. Contact us at work@eyevinn.se!
 
-[moq]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
-[WARP]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-warp-00
+[moqt]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
+[moqt-14]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-14
+[MSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
+[CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
 [moqtransport]: https://github.com/mengelbart/moqtransport
 [warp-player]: https://github.com/Eyevinn/warp-player

@@ -27,7 +27,7 @@ const (
 	defaultQlogFileName = "mlmsub.log"
 )
 
-var usg = `%s acts as a MoQ client and subscriber for WARP.
+var usg = `%s acts as a MoQ client and subscriber for MSF/CMSF.
 Should first subscribe to catalog. When receiving a catalog, it should choose one video and 
 one audio track and subscribe to these.
 

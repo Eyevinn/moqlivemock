@@ -29,9 +29,9 @@ const (
 	appName = "mlmpub"
 )
 
-var usg = `%s acts as a MoQ server and publisher using WARP to send
+var usg = `%s acts as a MoQ server and publisher using MSF/CMSF to send
 mocked live video and audio tracks, synchronized with wall-clock time.
-It is intended to be a test-bed for MoQ and WARP.
+It is intended to be a test-bed for MoQ and MSF/CMSF.
 
 The qlog logs are currently massive, and written to 
 
@@ -133,7 +133,7 @@ func runServer(opts *options) error {
 	}
 	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
 
-	catalog, err := asset.GenCMAFCatalogEntry()
+	catalog, err := asset.GenCMAFCatalogEntry(time.Now().UnixMilli())
 	if err != nil {
 		return err
 	}
