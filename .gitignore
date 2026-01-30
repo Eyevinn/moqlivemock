@@ -1,6 +1,13 @@
 # Genreated binaries
 out/
 
+# Output for test-assets
+assets/output/
+
+#logs
+cmd/mlmpub/mlmpub.log
+cmd/mlmsub/mlmsub.log
+
 # Test binary, built with `go test -c`
 *.test
 

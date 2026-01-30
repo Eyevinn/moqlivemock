@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
@@ -19,6 +22,11 @@ import (
 const (
 	initialMaxRequestID = 64
 )
+
+type CENC struct {
+	Key         []byte
+	DecryptInfo map[string]mp4.DecryptInfo // keyed by track name
+}
 
 type moqHandler struct {
 	quic      bool
@@ -31,6 +39,7 @@ type moqHandler struct {
 	videoname string
 	audioname string
 	subsname  string
+	cenc      *CENC
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
@@ -116,6 +125,13 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	audioTrack := ""
 	subsTrack := ""
 	for _, track := range h.catalog.Tracks {
+		//If track is encrypted, the InitData needs to be adjusted
+		if h.cenc != nil {
+			track.InitData, err = h.decryptInit(track.InitData, track.Name)
+			if err != nil {
+				slog.Error("failed to decrypt init data", "error", err)
+			}
+		}
 		// Select video track
 		if strings.HasPrefix(track.MimeType, "video") {
 			// If videoname is specified, match it as a substring of the track name
@@ -362,6 +378,12 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 					"groupID", o.GroupID,
 					"payloadLength", len(o.Payload))
 			}
+			if h.cenc != nil {
+				o.Payload, err = h.decryptPayload(o.Payload, trackname)
+				if err != nil {
+					slog.Error("failed to decrypt payload", "error", err)
+				}
+			}
 
 			if h.mux != nil {
 				err = h.mux.muxSample(o.Payload, mediaType)
@@ -408,4 +430,73 @@ func unpackWrite(initData string, w io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+func (h *moqHandler) decryptInit(initData string, trackName string) (string, error) {
+	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
+	if err != nil {
+		return "", err
+	}
+	sr := bits.NewFixedSliceReader(initDataBytes)
+	f, err := mp4.DecodeFileSR(sr)
+	if err != nil {
+		return "", err
+	}
+	if f.Init == nil {
+		return "", fmt.Errorf("no init segment in initData")
+	}
+	decryptInfo, err := mp4.DecryptInit(f.Init)
+	if err != nil {
+		return "", fmt.Errorf("unable to decrypt init")
+	}
+	h.cenc.DecryptInfo[trackName] = decryptInfo
+	sw := bits.NewFixedSliceWriter(int(f.Init.Size()))
+	err = f.Init.EncodeSW(sw)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(sw.Bytes()), nil
+}
+
+func (h *moqHandler) decryptPayload(payload []byte, trackName string) ([]byte, error) {
+	decryptInfo, ok := h.cenc.DecryptInfo[trackName]
+	if !ok {
+		return nil, fmt.Errorf("no decrypt info for track %s", trackName)
+	}
+
+	bytesReader := bytes.NewReader(payload)
+	var pos uint64 = 0
+	moofBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode moof: %w", err)
+	}
+	moof, ok := moofBox.(*mp4.MoofBox)
+	if !ok {
+		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
+	}
+	pos += moof.Size()
+	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode mdat: %w", err)
+	}
+	mdat, ok := mdatBox.(*mp4.MdatBox)
+	if !ok {
+		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
+	}
+
+	decodedFrag := mp4.NewFragment()
+	decodedFrag.AddChild(moof)
+	decodedFrag.AddChild(mdat)
+
+	err = mp4.DecryptFragment(decodedFrag, decryptInfo, h.cenc.Key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decrypt fragment: %w", err)
+	}
+	encSize := decodedFrag.Size()
+	encSw := bits.NewFixedSliceWriter(int(encSize))
+	err = decodedFrag.EncodeSW(encSw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
+	}
+	return encSw.Bytes(), nil
 }

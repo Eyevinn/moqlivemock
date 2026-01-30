@@ -97,7 +97,7 @@ func TestInitContentTrackWithBatch(t *testing.T) {
 			require.NoError(t, err)
 			defer fh.Close()
 
-			ct, err := InitContentTrack(fh, tc.desc, tc.audioSampleBatch, tc.videoSampleBatch)
+			ct, err := InitContentTrack(fh, tc.desc, tc.audioSampleBatch, tc.videoSampleBatch, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedBatch, ct.SampleBatch, "SampleBatch")
 		})
