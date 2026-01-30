@@ -125,10 +125,15 @@ func (d *AVCData) Codec() string {
 	return d.codec
 }
 
+func (d *AVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
 //
 // =======================
 // HEVC
 // =======================
+// GetInit returns the output init segment.
 
 type HEVCData struct {
 	inInit  *mp4.InitSegment
@@ -270,10 +275,15 @@ func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
+func (d *HEVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
 //
 // =======================
 // AAC
 // =======================
+// GetInit returns the output init segment.
 
 type AACData struct {
 	inInit        *mp4.InitSegment
@@ -295,6 +305,11 @@ func (d *AACData) GenCMAFInitData() ([]byte, error) {
 
 func (d *AACData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AACData) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initAACData recreates an AAC init segment from an existing init segment.

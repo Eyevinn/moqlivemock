@@ -2,6 +2,7 @@ package internal
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +32,15 @@ type ContentTrack struct {
 	SampleBatch   int
 	Samples       []mp4.FullSample
 	SpecData      CodecSpecificData
+	cenc          *CENCInfo
+}
+
+type CENCInfo struct {
+	scheme    string
+	kid       mp4.UUID
+	key       []byte
+	iv        []byte
+	psshBoxes []*mp4.PsshBox
 }
 
 type Asset struct {
@@ -43,6 +53,7 @@ type Asset struct {
 type CodecSpecificData interface {
 	GenCMAFInitData() ([]byte, error)
 	Codec() string
+	GetInit() *mp4.InitSegment
 }
 
 type TrackGroup struct {
@@ -101,7 +112,7 @@ func (a *Asset) AddSubtitleTracks(wvttLangs, stppLangs []string) error {
 
 // InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4).
 // The name is stripped of any extension.
-func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBatch int) (*ContentTrack, error) {
+func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*ContentTrack, error) {
 	m, err := mp4.DecodeFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode file: %w", err)
@@ -122,6 +133,7 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		TimeScale: mdia.Mdhd.Timescale,
 		Language:  mdia.Mdhd.GetLanguage(),
 		Name:      name,
+		cenc:      cenc,
 	}
 	sampleDesc, err := mdia.Minf.Stbl.Stsd.GetSampleDescription(0)
 	if err != nil {
@@ -254,12 +266,19 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	if durationSeconds > 0 {
 		ct.SampleBitrate = uint32(float64(totalBytes*8) / durationSeconds)
 	}
+
 	return &ct, nil
 }
 
 // LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
 // groups them by contentType, and returns a pointer to an Asset.
 func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, error) {
+	return LoadAssetWithCENCInfo(dirPath, audioSampleBatch, videoSampleBatch, nil)
+}
+
+// LoadAssetWithCENCInfo opens a directory, reads all *.mp4 files, creates ContentTrack from each,
+// groups them by contentType, and returns a pointer to an Asset. If cenc is not nil, it also encrypts every ContentTrack during CMAF chunk generation.
+func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*Asset, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read directory: %w", err)
@@ -277,7 +296,7 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 		if err != nil {
 			return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 		}
-		ct, err := InitContentTrack(fh, entry.Name(), audioSampleBatch, videoSampleBatch)
+		ct, err := InitContentTrack(fh, entry.Name(), audioSampleBatch, videoSampleBatch, cenc)
 		fh.Close()
 		if err != nil {
 			return nil, fmt.Errorf("could not create ContentTrack for %s: %w", filePath, err)
@@ -313,6 +332,7 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 			Tracks:     audioTracks,
 		})
 	}
+
 	asset := &Asset{
 		Name:   filepath.Base(dirPath),
 		Groups: groups,
@@ -321,6 +341,61 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 		return nil, fmt.Errorf("could not set loop duration: %w", err)
 	}
 	return asset, nil
+}
+
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct
+func ParseCENCflags(scheme, kidStr, keyStr, ivStr, psshFile string) (*CENCInfo, error) {
+	if kidStr == "" && keyStr == "" && ivStr == "" {
+		return nil, nil
+	}
+
+	kid, err := mp4.UnpackKey(kidStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key ID %s: %w", kidStr, err)
+	}
+	kidHex := hex.EncodeToString(kid)
+	kidUUID, _ := mp4.NewUUIDFromString(kidHex)
+
+	if scheme != "cenc" && scheme != "cbcs" {
+		return nil, fmt.Errorf("scheme must be cenc or cbcs: %s", scheme)
+	}
+
+	if len(ivStr) != 32 && len(ivStr) != 16 {
+		return nil, fmt.Errorf("hex iv must have length 16 or 32 chars; %d", len(ivStr))
+	}
+	iv, err := hex.DecodeString(ivStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid iv %s", ivStr)
+	}
+
+	if len(keyStr) != 32 {
+		return nil, fmt.Errorf("hex key must have length 32 chars: %d", len(keyStr))
+	}
+	key, err := mp4.UnpackKey(keyStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
+	}
+
+	var psshData []byte
+	if psshFile != "" {
+		psshData, err = os.ReadFile(psshFile)
+		if err != nil {
+			return nil, fmt.Errorf("could not read pssh data from file: %w", err)
+		}
+	}
+	psshBoxes, err := mp4.PsshBoxesFromBytes(psshData)
+	if err != nil {
+		return nil, fmt.Errorf("pssh boxes from data: %w", err)
+	}
+
+	cencInfo := CENCInfo{
+		scheme:    scheme,
+		kid:       kidUUID,
+		key:       key,
+		iv:        iv,
+		psshBoxes: psshBoxes,
+	}
+	return &cencInfo, nil
 }
 
 // setLoopDuration set a loop duration for all tracks in the asset
@@ -533,13 +608,29 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		f.AddFullSample(fs)
 	}
 	f.SetTrunDataOffsets()
+
+	cenc := t.cenc
+	var ipd *mp4.InitProtectData
+	if t.cenc != nil {
+		ipd, err = mp4.InitProtect(t.SpecData.GetInit(), cenc.key, cenc.iv, cenc.scheme, cenc.kid, cenc.psshBoxes)
+		if err != nil {
+			return nil, fmt.Errorf("unable to add protection data to Init: %w", err)
+		}
+	}
+	if cenc != nil {
+		err := mp4.EncryptFragment(f, cenc.key, cenc.iv, ipd)
+		if err != nil {
+			return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
+		}
+	}
+
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))
 	err = f.EncodeSW(sw)
 	if err != nil {
 		return nil, err
 	}
-	return sw.Bytes(), nil
+	return sw.Bytes(), nil //Encrypt here?
 }
 
 // calcSample calculates the start time and original sample number for a given output sample number.

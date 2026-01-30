@@ -53,6 +53,11 @@ type options struct {
 	fingerprintPort  int
 	subsWvttLangs    string
 	subsStppLangs    string
+	cencKey          string
+	cencIV           string
+	cencKeyId        string
+	cencScheme       string
+	psshFile         string
 	version          bool
 }
 
@@ -74,6 +79,13 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
 	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
+	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars)")
+	fs.StringVar(&opts.cencIV, "cenciv", "", "IV for CENC encryption (16 or 32 hex chars)")
+	fs.StringVar(&opts.cencKeyId, "cenckeyid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
+	fs.StringVar(&opts.cencScheme, "cencscheme", "cenc", "Scheme for CENC encryption. Either \"cenc\" or \"cbcs\"")
+	fs.StringVar(&opts.psshFile, "pssh", "", "File with one or more pssh box(es) in binary format.")
+
+	//TODO add cenc support via initfile.
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -117,10 +129,15 @@ func runServer(opts *options) error {
 			return err
 		}
 	}
-	asset, err := internal.LoadAsset(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch)
+	cencInfo, err := internal.ParseCENCflags(opts.cencScheme, opts.cencKeyId, opts.cencKey, opts.cencIV, opts.psshFile)
 	if err != nil {
 		return err
 	}
+	asset, err := internal.LoadAssetWithCENCInfo(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch, cencInfo)
+	if err != nil {
+		return err
+	}
+
 	slog.Info("loaded asset", "path", opts.asset, "audioSampleBatch", opts.audioSampleBatch,
 		"videoSampleBatch", opts.videoSampleBatch)
 

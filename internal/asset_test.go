@@ -51,7 +51,7 @@ func TestPrepareTrack(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			fh, err := os.Open(tc.filePath)
 			require.NoError(t, err)
-			ct, err := InitContentTrack(fh, tc.desc, 1, 1)
+			ct, err := InitContentTrack(fh, tc.desc, 1, 1, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.contentType, ct.ContentType, "contentType")
 			require.Equal(t, tc.timeScale, int(ct.TimeScale), "timeScale")
