@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -33,6 +34,7 @@ type ContentTrack struct {
 	Samples       []mp4.FullSample
 	SpecData      CodecSpecificData
 	cenc          *CENCInfo
+	ipd           *mp4.InitProtectData
 }
 
 type CENCInfo struct {
@@ -254,7 +256,13 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	default:
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
 	}
-
+	if ct.cenc != nil {
+		ipd, err := mp4.InitProtect(ct.SpecData.GetInit(), cenc.key, cenc.iv, cenc.scheme, cenc.kid, cenc.psshBoxes)
+		if err != nil {
+			return nil, fmt.Errorf("unable to add protection data to Init: %w", err)
+		}
+		ct.ipd = ipd
+	}
 	ct.Duration = uint32(len(ct.Samples)) * ct.SampleDur
 	ct.NrSamples = uint32(len(ct.Samples))
 	// Calculate sampleBitrate (bits per second)
@@ -609,28 +617,23 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	}
 	f.SetTrunDataOffsets()
 
-	cenc := t.cenc
-	var ipd *mp4.InitProtectData
-	if t.cenc != nil {
-		ipd, err = mp4.InitProtect(t.SpecData.GetInit(), cenc.key, cenc.iv, cenc.scheme, cenc.kid, cenc.psshBoxes)
-		if err != nil {
-			return nil, fmt.Errorf("unable to add protection data to Init: %w", err)
-		}
-	}
-	if cenc != nil {
-		err := mp4.EncryptFragment(f, cenc.key, cenc.iv, ipd)
-		if err != nil {
-			return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
-		}
-	}
-
+	// Encode the unencrypted fragment to bytes first
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))
 	err = f.EncodeSW(sw)
 	if err != nil {
 		return nil, err
 	}
-	return sw.Bytes(), nil //Encrypt here?
+
+	if t.cenc != nil {
+		encrypted, err := t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		return encrypted, nil
+	}
+
+	return sw.Bytes(), nil
 }
 
 // calcSample calculates the start time and original sample number for a given output sample number.
@@ -647,4 +650,43 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 
 	origNr = deltaTime / sampleDur
 	return startTime, origNr
+}
+
+// encryptFragment encrypts a fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
+	bytesReader := bytes.NewReader(fragmentBytes)
+	var pos uint64 = 0
+	moofBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode moof: %w", err)
+	}
+	moof, ok := moofBox.(*mp4.MoofBox)
+	if !ok {
+		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
+	}
+	pos += moof.Size()
+	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode mdat: %w", err)
+	}
+	mdat, ok := mdatBox.(*mp4.MdatBox)
+	if !ok {
+		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
+	}
+
+	decodedFrag := mp4.NewFragment()
+	decodedFrag.AddChild(moof)
+	decodedFrag.AddChild(mdat)
+
+	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
+	}
+	encSize := decodedFrag.Size()
+	encSw := bits.NewFixedSliceWriter(int(encSize))
+	err = decodedFrag.EncodeSW(encSw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
+	}
+	return encSw.Bytes(), nil
 }

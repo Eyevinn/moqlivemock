@@ -91,6 +91,12 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	if err != nil {
 		return nil, fmt.Errorf("could not set AVC descriptor: %w", err)
 	}
+	// Copy Trex default values from input init segment for proper fragment handling
+	if init.Moov.Mvex != nil && init.Moov.Mvex.Trex != nil {
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleDuration = init.Moov.Mvex.Trex.DefaultSampleDuration
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleSize = init.Moov.Mvex.Trex.DefaultSampleSize
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleFlags = init.Moov.Mvex.Trex.DefaultSampleFlags
+	}
 	sps, err := avc.ParseSPSNALUnit(ad.Spss[0], false)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode SPS: %w", err)
@@ -125,6 +131,7 @@ func (d *AVCData) Codec() string {
 	return d.codec
 }
 
+// GetInit returns the output init segment.
 func (d *AVCData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
@@ -133,7 +140,6 @@ func (d *AVCData) GetInit() *mp4.InitSegment {
 // =======================
 // HEVC
 // =======================
-// GetInit returns the output init segment.
 
 type HEVCData struct {
 	inInit  *mp4.InitSegment
@@ -248,6 +254,13 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		return nil, fmt.Errorf("could not set HEVC descriptor: %w", err)
 	}
 
+	// Copy Trex default values from input init segment for proper fragment handling
+	if init.Moov.Mvex != nil && init.Moov.Mvex.Trex != nil {
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleDuration = init.Moov.Mvex.Trex.DefaultSampleDuration
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleSize = init.Moov.Mvex.Trex.DefaultSampleSize
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleFlags = init.Moov.Mvex.Trex.DefaultSampleFlags
+	}
+
 	// Parse SPS for codec string and resolution
 	sps, err := hevc.ParseSPSNALUnit(hd.Spss[0])
 	if err != nil {
@@ -275,6 +288,7 @@ func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
+// GetInit returns the output init segment.
 func (d *HEVCData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
@@ -283,7 +297,6 @@ func (d *HEVCData) GetInit() *mp4.InitSegment {
 // =======================
 // AAC
 // =======================
-// GetInit returns the output init segment.
 
 type AACData struct {
 	inInit        *mp4.InitSegment
@@ -311,6 +324,7 @@ func (d *AACData) Codec() string {
 func (d *AACData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
+
 
 // initAACData recreates an AAC init segment from an existing init segment.
 func initAACData(init *mp4.InitSegment) (*AACData, error) {
