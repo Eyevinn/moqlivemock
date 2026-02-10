@@ -54,10 +54,9 @@ type options struct {
 	subsWvttLangs    string
 	subsStppLangs    string
 	cencKey          string
-	cencIV           string
-	cencKeyId        string
-	cencScheme       string
-	psshFile         string
+	iv               string
+	kid              string
+	scheme           string
 	version          bool
 }
 
@@ -79,13 +78,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
 	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
-	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars)")
-	fs.StringVar(&opts.cencIV, "cenciv", "", "IV for CENC encryption (16 or 32 hex chars)")
-	fs.StringVar(&opts.cencKeyId, "cenckeyid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
-	fs.StringVar(&opts.cencScheme, "cencscheme", "cenc", "Scheme for CENC encryption. Either \"cenc\" or \"cbcs\"")
-	fs.StringVar(&opts.psshFile, "pssh", "", "File with one or more pssh box(es) in binary format.")
-
-	//TODO add cenc support via initfile.
+	fs.StringVar(&opts.kid, "kid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
+	fs.StringVar(&opts.iv, "iv", "", "IV for CENC encryption (16 or 32 hex chars)")
+	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars). If no key is specified the key id will be used as the key.")
+	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption. Either \"cenc\" or \"cbcs\". Default is cenc")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -129,7 +125,7 @@ func runServer(opts *options) error {
 			return err
 		}
 	}
-	cencInfo, err := internal.ParseCENCflags(opts.cencScheme, opts.cencKeyId, opts.cencKey, opts.cencIV, opts.psshFile)
+	cencInfo, err := internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv)
 	if err != nil {
 		return err
 	}
