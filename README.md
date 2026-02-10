@@ -206,6 +206,23 @@ The warp-player can then connect using:
   Only enable it when using certificates that meet WebTransport's strict requirements.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 
+### Using DRM
+moqlivemock supports the use of ClearKey DRM. To use this add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenckey is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
+
+Example publisher:
+```sh
+cd cmd/mlmpub
+go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -fingerprintport 8081
+```
+
+The subscriber needs to make a request to the clearkey license server, the `-clearkeyurl` flag therefore needs to be provided. If left empty the subscriber will not attempt decryption.
+
+Example subscriber:
+```sh
+cd cmd/mlmsub
+go run . -clearkeyurl http://localhost:8081/clearkey -muxout - | ffplay -
+```
+
 ## Development
 
 Use plain Go environment, with go 1.23 or later.
