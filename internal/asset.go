@@ -336,8 +336,8 @@ func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch in
 	return asset, nil
 }
 
-// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct
-func ParseCENCflags(scheme, kidStr, keyStr, ivStr, psshFile string) (*CENCInfo, error) {
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. If all flags are empty nil is returned.
+func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 	if kidStr == "" && keyStr == "" && ivStr == "" {
 		return nil, nil
 	}
@@ -361,24 +361,22 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr, psshFile string) (*CENCInfo, 
 		return nil, fmt.Errorf("invalid iv %s", ivStr)
 	}
 
-	if len(keyStr) != 32 {
+	if keyStr != "" && len(keyStr) != 32 {
 		return nil, fmt.Errorf("hex key must have length 32 chars: %d", len(keyStr))
 	}
-	key, err := mp4.UnpackKey(keyStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
-	}
 
-	var psshData []byte
-	if psshFile != "" {
-		psshData, err = os.ReadFile(psshFile)
+	var key mp4.UUID
+	if keyStr == "" {
+		key = kidUUID
+	} else {
+		key, err = mp4.UnpackKey(keyStr)
 		if err != nil {
-			return nil, fmt.Errorf("could not read pssh data from file: %w", err)
+			return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
 		}
 	}
-	psshBoxes, err := mp4.PsshBoxesFromBytes(psshData)
+	psshBoxes, err := createClearKeyPssh(kidUUID)
 	if err != nil {
-		return nil, fmt.Errorf("pssh boxes from data: %w", err)
+		return nil, fmt.Errorf("could not create ClearKey PSSH: %w", err)
 	}
 
 	cencInfo := CENCInfo{
@@ -389,6 +387,26 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr, psshFile string) (*CENCInfo, 
 		psshBoxes: psshBoxes,
 	}
 	return &cencInfo, nil
+}
+
+// createClearKeyPssh creates a PsshBox using the provided key-id
+func createClearKeyPssh(kid mp4.UUID) ([]*mp4.PsshBox, error) {
+	const clearKeySystemID = "1077efecc0b24d02ace33c1e52e2fb4b"
+
+	systemID, err := mp4.NewUUIDFromString(clearKeySystemID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ClearKey system ID: %w", err)
+	}
+
+	psshBox := &mp4.PsshBox{
+		Version:  1,
+		Flags:    0,
+		SystemID: systemID,
+		KIDs:     []mp4.UUID{kid},
+		Data:     nil,
+	}
+
+	return []*mp4.PsshBox{psshBox}, nil
 }
 
 // setLoopDuration set a loop duration for all tracks in the asset
@@ -610,7 +628,7 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts a fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+// encryptFragment encrypts an encoded fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
 func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
 	var pos uint64 = 0
@@ -640,11 +658,10 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
-	encSize := decodedFrag.Size()
-	encSw := bits.NewFixedSliceWriter(int(encSize))
-	err = decodedFrag.EncodeSW(encSw)
+	sw := bits.NewFixedSliceWriter(int(decodedFrag.Size()))
+	err = decodedFrag.EncodeSW(sw)
 	if err != nil {
 		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
 	}
-	return encSw.Bytes(), nil
+	return sw.Bytes(), nil
 }
