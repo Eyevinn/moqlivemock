@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/moqtransport/quicmoq"
 	"github.com/mengelbart/moqtransport/webtransportmoq"
@@ -42,25 +41,21 @@ Usage of %s:
 `
 
 type options struct {
-	addr       string
-	trackname  string
-	duration   int
-	muxout     string
-	videoOut   string
-	audioOut   string
-	subsOut    string
-	catalogOut string
-	qlogfile   string
-	videoname  string
-	audioname  string
-	subsname   string
-	loglevel   string
-	cencKey    string
-	cencIV     string
-	cencKeyId  string
-	cencScheme string
-	psshFile   string
-	version    bool
+	addr        string
+	trackname   string
+	duration    int
+	muxout      string
+	videoOut    string
+	audioOut    string
+	subsOut     string
+	catalogOut  string
+	qlogfile    string
+	videoname   string
+	audioname   string
+	subsname    string
+	loglevel    string
+	clearkeyUrl string
+	version     bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -85,11 +80,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
-	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars)")
-	fs.StringVar(&opts.cencIV, "cenciv", "", "IV for CENC encryption (16 or 32 hex chars)")
-	fs.StringVar(&opts.cencKeyId, "cenckeyid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
-	fs.StringVar(&opts.cencScheme, "cencscheme", "cenc", "Scheme for CENC encryption. Either \"cenc\" or \"cbcs\"")
-	fs.StringVar(&opts.psshFile, "pssh", "", "File with one or more pssh box(es) in binary format.")
+	fs.StringVar(&opts.clearkeyUrl, "clearkeyurl", "", "URL to DRM server to fetch ClearKey license."+
+		"If this is left empty mlmsub will not attempt to decrypt the received media.")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -161,22 +153,6 @@ func runWithOptions(opts *options) error {
 	return runClient(ctx, opts)
 }
 
-func parseCENCFlags(cencKey string) (*CENC, error) {
-	if cencKey == "" {
-		return nil, nil
-	}
-
-	key, err := mp4.UnpackKey(cencKey)
-	if err != nil {
-		return nil, fmt.Errorf("invalid key %s: %w", cencKey, err)
-	}
-
-	return &CENC{
-		Key:         key,
-		DecryptInfo: make(map[string]mp4.DecryptInfo),
-	}, nil
-}
-
 func runClient(ctx context.Context, opts *options) error {
 	var logfh io.Writer
 	if opts.qlogfile == "-" {
@@ -190,24 +166,18 @@ func runClient(ctx context.Context, opts *options) error {
 		defer fh.Close()
 	}
 
-	cenc, err := parseCENCFlags(opts.cencKey)
-	if err != nil {
-		slog.Error("failed to parse cenc flags", "error", err)
-		return err
-	}
-
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
 	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
-		subsname:  opts.subsname,
-		cenc:      cenc,
+		quic:        !useWebTransport,
+		addr:        opts.addr,
+		namespace:   []string{internal.Namespace},
+		logfh:       logfh,
+		videoname:   opts.videoname,
+		audioname:   opts.audioname,
+		subsname:    opts.subsname,
+		clearkeyUrl: opts.clearkeyUrl,
 	}
 
 	outs := make(map[string]io.Writer)

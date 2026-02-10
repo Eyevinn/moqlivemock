@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -29,17 +32,18 @@ type CENC struct {
 }
 
 type moqHandler struct {
-	quic      bool
-	addr      string
-	namespace []string
-	catalog   *internal.Catalog
-	mux       *cmafMux
-	outs      map[string]io.Writer
-	logfh     io.Writer
-	videoname string
-	audioname string
-	subsname  string
-	cenc      *CENC
+	quic        bool
+	addr        string
+	namespace   []string
+	catalog     *internal.Catalog
+	mux         *cmafMux
+	outs        map[string]io.Writer
+	logfh       io.Writer
+	videoname   string
+	audioname   string
+	subsname    string
+	cenc        *CENC
+	clearkeyUrl string
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
@@ -125,8 +129,15 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	audioTrack := ""
 	subsTrack := ""
 	for _, track := range h.catalog.Tracks {
+		isSubtitle := track.Codec == "wvtt" || strings.HasPrefix(track.Codec, "stpp")
+
 		//If track is encrypted, the InitData needs to be adjusted
-		if h.cenc != nil {
+		if h.clearkeyUrl != "" && !isSubtitle {
+			if h.cenc == nil {
+				h.cenc = &CENC{
+					DecryptInfo: make(map[string]mp4.DecryptInfo),
+				}
+			}
 			track.InitData, err = h.decryptInit(track.InitData, track.Name)
 			if err != nil {
 				slog.Error("failed to decrypt init data", "error", err)
@@ -193,7 +204,6 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 
 		// Select subtitle track (wvtt or stpp codec)
-		isSubtitle := track.Codec == "wvtt" || strings.HasPrefix(track.Codec, "stpp")
 		if isSubtitle {
 			// If subsname is specified, match it as a substring of the track name
 			if h.subsname != "" {
@@ -432,6 +442,54 @@ func unpackWrite(initData string, w io.Writer) error {
 	return nil
 }
 
+type clearKeyRequest struct {
+	Kids []string `json:"kids"`
+}
+
+type keyInfo struct {
+	Kty string `json:"kty"`
+	K   string `json:"k"`
+	Kid string `json:"kid"`
+}
+
+type clearKeyResponse struct {
+	Keys []keyInfo `json:"keys"`
+}
+
+// fetchClearkey makes a post request to a ClearKey server and returns the response.
+func (h *moqHandler) fetchClearKey(kids []string) ([]keyInfo, error) {
+	if h.clearkeyUrl == "" {
+		return nil, fmt.Errorf("fingerprint URL not configured, cannot fetch ClearKey license")
+	}
+	slog.Info("fetching clearkey license")
+	u, err := url.Parse(h.clearkeyUrl)
+	if err != nil {
+		return nil, err
+	}
+	reqBody, err := json.Marshal(clearKeyRequest{Kids: kids})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.Post(u.String(), "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ClearKey request failed: %s", resp.Status)
+	}
+
+	var ckResp clearKeyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ckResp); err != nil {
+		return nil, err
+	}
+	return ckResp.Keys, nil
+}
+
+// decryptInit takes base64-encoded init data and makes a ClearKey request. 
+// It then stores the CENC-key and returns the base64-encoded init data with DRM-related fields removed.
 func (h *moqHandler) decryptInit(initData string, trackName string) (string, error) {
 	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
 	if err != nil {
@@ -449,6 +507,20 @@ func (h *moqHandler) decryptInit(initData string, trackName string) (string, err
 	if err != nil {
 		return "", fmt.Errorf("unable to decrypt init")
 	}
+
+	kid := decryptInfo.TrackInfos[0].Sinf.Schi.Tenc.DefaultKID
+	keys, err := h.fetchClearKey([]string{hex.EncodeToString(kid[:])})
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch ClearKey")
+	} else if len(keys) > 0 {
+		key, err := mp4.UnpackKey(keys[0].K)
+		if err != nil {
+			return "", fmt.Errorf("failed to unpack key: %w", err)
+		} else {
+			h.cenc.Key = key
+		}
+	}
+
 	h.cenc.DecryptInfo[trackName] = decryptInfo
 	sw := bits.NewFixedSliceWriter(int(f.Init.Size()))
 	err = f.Init.EncodeSW(sw)
@@ -458,6 +530,7 @@ func (h *moqHandler) decryptInit(initData string, trackName string) (string, err
 	return base64.StdEncoding.EncodeToString(sw.Bytes()), nil
 }
 
+// decryptPayload decrypts a byte-format stored fragment (moof+mdat) and returns the unencrypted encoding.
 func (h *moqHandler) decryptPayload(payload []byte, trackName string) ([]byte, error) {
 	decryptInfo, ok := h.cenc.DecryptInfo[trackName]
 	if !ok {
