@@ -97,21 +97,77 @@ func (h *moqHandler) startFingerprintServer() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/fingerprint", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
 
-		// Handle preflight OPTIONS request
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+	// Middleware to handle CORS and OPTIONS preflight
+	withCORS := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			next(w, r)
+		}
+	}
+
+	mux.HandleFunc("/fingerprint", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, fingerprint)
+		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
+	}))
+
+	mux.HandleFunc("/clearkey", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
-		fmt.Fprint(w, fingerprint)
-		slog.Debug("Served fingerprint", "fingerprint", fingerprint)
-	})
+		var req struct {
+			Kids []string `json:"kids"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "failed to decode request body", http.StatusBadRequest)
+			return
+		}
+
+		type keyInfo struct {
+			Kty string `json:"kty"`
+			K   string `json:"k"`
+			Kid string `json:"kid"`
+		}
+		type clearKeyResponse struct {
+			Keys []keyInfo `json:"keys"`
+			Type string    `json:"type"`
+		}
+
+		var keys []keyInfo
+		for _, kid := range req.Kids {
+			keys = append(keys, keyInfo{
+				Kty: "oct",
+				K:   kid,
+				Kid: kid,
+			})
+		}
+
+		response := clearKeyResponse{
+			Keys: keys,
+			Type: "temporary",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		err = json.NewEncoder(w).Encode(response)
+		if err != nil {
+			slog.Error("failed to encode clearkey response", "error", err)
+		}
+		slog.Info("Served ClearKey license")
+	}))
 
 	addr := fmt.Sprintf(":%d", h.fingerprintPort)
 	slog.Info("Starting fingerprint HTTP server", "addr", addr)
