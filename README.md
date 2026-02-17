@@ -1,7 +1,7 @@
 # moqlivemock
 
 ![Test](https://github.com/Eyevinn/moqlivemock/workflows/Go/badge.svg)
-[![Coverage Status](https://coveralls.io/repos/github/Eyevinn/moqlivemock/badge.svg?branch=master)](https://coveralls.io/github/Eyevinn/moqlivemock?branch=master)
+[![Coverage Status](https://coveralls.io/repos/github/Eyevinn/moqlivemock/badge.svg?branch=main)](https://coveralls.io/github/Eyevinn/moqlivemock?branch=main)
 [![GoDoc](https://godoc.org/github.com/Eyevinn/moqlivemock?status.svg)](http://godoc.org/github.com/Eyevinn/moqlivemock)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Eyevinn/moqlivemock)](https://goreportcard.com/report/github.com/Eyevinn/moqlivemock)
 [![license](https://img.shields.io/github/license/Eyevinn/moqlivemock.svg)](https://github.com/Eyevinn/moqlivemock/blob/master/LICENSE)
@@ -19,6 +19,19 @@ How many frames are combined is configurable via the `-audiobatch` and `-videoba
 
 Subtitles are generated on the fly and delivered as 1s groups with 1 object per group.
 That object is published at the start of each second in order to not increase the latency.
+
+### Wall-clock alignment
+
+All streams are aligned to UTC wall-clock time at two levels:
+
+1. **The 10-second asset loop** is aligned to UTC modulo 10 seconds.
+   The first sample of the clip maps to epoch times where `seconds % 10 == 0`.
+   This means every subscriber joining at the same wall-clock time receives
+   the same content, regardless of when the publisher was started.
+2. **MoQ groups** are aligned to full UTC seconds. Each group number is
+   `Unix_epoch_ms / 1000`, so group boundaries fall on exact second boundaries.
+   Audio is typically not compatible with integral seconds, so minimal
+   displacement is applied without accumulated drift over time.
 
 LOC is currently not supported, but one possible scenario is to send LOC over the wire and
 then reassamble CMAF on the receiving side again.
@@ -60,7 +73,7 @@ You can configure multiple languages:
 ./mlmpub -subswvtt "" -subsstpp ""
 ```
 
-Subitle track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
+Subtitle track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
 
 To receive subtitles with the mlmsub subscriber:
 
@@ -116,7 +129,7 @@ You can also specify options for the publisher:
 ```
 
 In another shell, start the subscriber and choose if the video, the audio,
-or a muxed combination should be output, e.g. 
+or a muxed combination should be output, e.g.
 
 ```shell
 cd cmd/mlmsub
@@ -188,7 +201,7 @@ The warp-player can then connect using:
 - Server URL: `https://localhost:4443/moq` or `https://127.0.0.1:4443/moq`
 - Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
 
-**Notes**: 
+**Notes**:
 - The fingerprint server is disabled by default (`-fingerprintport 0`).
   Only enable it when using certificates that meet WebTransport's strict requirements.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.

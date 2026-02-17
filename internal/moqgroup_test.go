@@ -58,7 +58,7 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 func TestGenMoQStreams(t *testing.T) {
 	// StartNr corresponding to 2025-04-21T17:07:48Z
 	startNr := uint64(1745255189)
-	endNr := startNr + 15                       // 15 MoQGroups à 1s per MoQGroup
+	endNr := startNr + 15                              // 15 MoQGroups à 1s per MoQGroup
 	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
