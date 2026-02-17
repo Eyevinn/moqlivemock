@@ -1,55 +1,50 @@
-.PHONY: all
-all: lint test coverage check-licenses build
+.PHONY: all build test coverage check check-licenses pre-commit pre-commit-install codespell clean install update
+
+LDFLAGS = -X github.com/Eyevinn/moqlivemock/internal.commitVersion=$$(git describe --tags HEAD 2>/dev/null || echo dev-$$(git rev-parse --short HEAD)) \
+          -X github.com/Eyevinn/moqlivemock/internal.commitDate=$$(git log -1 --format=%ct)
+
+all: check build test
 
 # Add programs to build here. Should be placed in the cmd/ directory.
-# For example cmd/example/main.go. Add more programs in the build line with a space between.
-.PHONY: build
 build: mlmpub mlmsub
 
-.PHONY: lint
-lint: prepare
-	golangci-lint run
-
-.PHONY: prepare
-prepare:
-	go mod tidy
-
-# Build binaries and write them to out/
-# Same list of programs as in build.
 mlmpub mlmsub:
-	go build -ldflags "-X github.com/Eyevinn/moqlivemock/internal.commitVersion=$$(git describe --tags HEAD) -X github.com/Eyevinn/moqlivemock/internal.commitDate=$$(git log -1 --format=%ct)" -o out/$@ ./cmd/$@
+	go build -ldflags "$(LDFLAGS)" -o out/$@ ./cmd/$@
 
-.PHONY: test
-test: prepare
+test:
 	go test ./...
 
-.PHONY: coverage
 coverage:
-	# Ignore (allow) packages without any tests
-	set -o pipefail
-	go test ./... -coverprofile coverage.out
-	set +o pipefail
+	go test -coverpkg=./... -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
-	go tool cover -func coverage.out -o coverage.txt
-	tail -1 coverage.txt
+	go tool cover -func=coverage.out -o coverage.txt
+	@echo "Coverage report: coverage.html"
 
-.PHONY: check
-check: prepare
+check:
 	golangci-lint run
 
-.PHONY: clean
+check-licenses:
+	wwhrd check
+
+pre-commit-install: venv/bin/pre-commit
+	venv/bin/pre-commit install
+
+pre-commit: venv/bin/pre-commit
+	venv/bin/pre-commit run --all-files
+
+venv/bin/pre-commit venv/bin/codespell:
+	python3 -m venv venv
+	venv/bin/pip install pre-commit codespell
+
+codespell: venv/bin/codespell
+	venv/bin/codespell -S venv,references,coverage.html,'*.mp4' -L ue,trun,truns
+
 clean:
-	rm -f out/*
-	rm -r examples-out/*
+	rm -rf out/ coverage.out coverage.html coverage.txt venv/
 
-.PHONY: install
-install: all
-	cp out/* $(GOPATH)/bin/
+install:
+	go install -ldflags "$(LDFLAGS)" ./cmd/mlmpub
+	go install -ldflags "$(LDFLAGS)" ./cmd/mlmsub
 
-.PHONY: update
 update:
 	go get -t -u ./...
-
-.PHONY: check-licenses
-check-licenses: prepare
-	wwhrd check

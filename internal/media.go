@@ -383,11 +383,11 @@ func initOpusData(init *mp4.InitSegment) (*OpusData, error) {
 
 	// Create new dOps box for output
 	dopsOut := &mp4.DopsBox{
-		Version:            dops.Version,
-		OutputChannelCount: dops.OutputChannelCount,
-		PreSkip:            dops.PreSkip,
-		InputSampleRate:    dops.InputSampleRate,
-		OutputGain:         dops.OutputGain,
+		Version:              dops.Version,
+		OutputChannelCount:   dops.OutputChannelCount,
+		PreSkip:              dops.PreSkip,
+		InputSampleRate:      dops.InputSampleRate,
+		OutputGain:           dops.OutputGain,
 		ChannelMappingFamily: dops.ChannelMappingFamily,
 	}
 	opusOut := mp4.CreateAudioSampleEntryBox("Opus",

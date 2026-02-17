@@ -6,6 +6,7 @@ out/
 
 # Output of the make coverage target
 coverage.*
+!.github/workflows/coverage.yml
 
 # Output from video generation
 utils/videogen/output*
