@@ -114,7 +114,13 @@ func (a *Asset) AddSubtitleTracks(wvttLangs, stppLangs []string) error {
 
 // InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4).
 // The name is stripped of any extension.
-func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*ContentTrack, error) {
+func InitContentTrack(
+	r io.Reader,
+	name string,
+	audioSampleBatch,
+	videoSampleBatch int,
+	cenc *CENCInfo,
+) (*ContentTrack, error) {
 	m, err := mp4.DecodeFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode file: %w", err)
@@ -285,7 +291,8 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 }
 
 // LoadAssetWithCENCInfo opens a directory, reads all *.mp4 files, creates ContentTrack from each,
-// groups them by contentType, and returns a pointer to an Asset. If cenc is not nil, it also encrypts every ContentTrack during CMAF chunk generation.
+// groups them by contentType, and returns a pointer to an Asset. 
+// If cenc is not nil, it also encrypts every ContentTrack during CMAF chunk generation.
 func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*Asset, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -351,7 +358,8 @@ func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch in
 	return asset, nil
 }
 
-// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. If all flags are empty (except scheme) nil is returned.
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. 
+// If all flags are empty (except scheme) nil is returned.
 func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 	if kidStr == "" && keyStr == "" && ivStr == "" {
 		return nil, nil
@@ -670,7 +678,8 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts an encoded fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+// encryptFragment encrypts an encoded fragment and returns the encrypted bytes. 
+// For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
 func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
 	var pos uint64 = 0

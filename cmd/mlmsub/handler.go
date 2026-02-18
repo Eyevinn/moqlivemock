@@ -488,7 +488,8 @@ func (h *moqHandler) fetchClearKey(kids []string) ([]keyInfo, error) {
 	return ckResp.Keys, nil
 }
 
-// decryptInit takes base64-encoded init data and makes a ClearKey request. It then stores the CENC-key and returns the base64-encoded init data with DRM-related fields removed.
+// decryptInit takes base64-encoded init data and makes a ClearKey request. 
+// It then stores the CENC-key and returns the base64-encoded init data with DRM-related fields removed.
 func (h *moqHandler) decryptInit(initData string, trackName string) (string, error) {
 	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
 	if err != nil {

@@ -135,7 +135,6 @@ func (d *AVCData) Codec() string {
 func (d *AVCData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
-
 //
 // =======================
 // HEVC
@@ -325,7 +324,6 @@ func (d *AACData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
 
-
 // initAACData recreates an AAC init segment from an existing init segment.
 func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	ad := &AACData{
@@ -384,6 +382,11 @@ func (d *OpusData) GenCMAFInitData() ([]byte, error) {
 
 func (d *OpusData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *OpusData) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initOpusData recreates an Opus init segment from an existing init segment.
@@ -451,6 +454,11 @@ func (d *AC3Data) GenCMAFInitData() ([]byte, error) {
 
 func (d *AC3Data) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AC3Data) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initAC3Data initializes AC-3 data (no SampleEntry recreation)

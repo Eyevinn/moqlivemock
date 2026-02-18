@@ -43,7 +43,8 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 		endSample := min(i+uint64(sampleBatch), endNr)
 		chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w", groupNr, firstSample, endSample, err)
+			return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
+				groupNr, firstSample, endSample, err)
 		}
 		mq.MoQObjects = append(mq.MoQObjects, chunk)
 	}

@@ -80,7 +80,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
-	fs.StringVar(&opts.clearkeyUrl, "clearkeyurl", "", "URL to DRM server to fetch ClearKey license. If this is left empty mlmsub will not attempt to decrypt the received media.")
+	fs.StringVar(&opts.clearkeyUrl, "clearkeyurl", "", "URL to DRM server to fetch ClearKey license."+
+		"If this is left empty mlmsub will not attempt to decrypt the received media.")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
