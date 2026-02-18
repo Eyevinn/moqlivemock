@@ -351,7 +351,7 @@ func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch in
 	return asset, nil
 }
 
-// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. If all flags are empty nil is returned.
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. If all flags are empty (except scheme) nil is returned.
 func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 	if kidStr == "" && keyStr == "" && ivStr == "" {
 		return nil, nil
@@ -389,7 +389,7 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 			return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
 		}
 	}
-	psshBoxes, err := createClearKeyPssh(kidUUID)
+	psshBox, err := createClearKeyPssh(kidUUID)
 	if err != nil {
 		return nil, fmt.Errorf("could not create ClearKey PSSH: %w", err)
 	}
@@ -399,13 +399,13 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 		kid:       kidUUID,
 		key:       key,
 		iv:        iv,
-		psshBoxes: psshBoxes,
+		psshBoxes: []*mp4.PsshBox{psshBox},
 	}
 	return &cencInfo, nil
 }
 
 // createClearKeyPssh creates a PsshBox using the provided key-id
-func createClearKeyPssh(kid mp4.UUID) ([]*mp4.PsshBox, error) {
+func createClearKeyPssh(kid mp4.UUID) (*mp4.PsshBox, error) {
 	const clearKeySystemID = "1077efecc0b24d02ace33c1e52e2fb4b"
 
 	systemID, err := mp4.NewUUIDFromString(clearKeySystemID)
@@ -421,7 +421,7 @@ func createClearKeyPssh(kid mp4.UUID) ([]*mp4.PsshBox, error) {
 		Data:     nil,
 	}
 
-	return []*mp4.PsshBox{psshBox}, nil
+	return psshBox, nil
 }
 
 // setLoopDuration set a loop duration for all tracks in the asset
