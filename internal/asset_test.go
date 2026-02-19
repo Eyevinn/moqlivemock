@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/require"
 )
@@ -206,6 +207,118 @@ func TestGen20sCMAFStreams(t *testing.T) {
 				// and exactly one sample without compositionTimeOffset.
 				require.Equal(t, 100, int(frag.Moof.Size()))
 			}
+		})
+	}
+}
+
+func TestDecryptedTracksMatchExactly(t *testing.T) {
+	kidStr := "39112233445566778899aabbccddeeff"
+	keyStr := "40112233445566778899aabbccddeeff"
+	ivStr := "41112233445566778899aabbccddeeff"
+	scheme := "cenc"
+	cenc, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr)
+	require.NoError(t, err)
+
+	cencAsset, err := LoadAssetWithCENCInfo("../assets/test10s", 1, 1, cenc)
+	require.NoError(t, err)
+	require.NotNil(t, cencAsset)
+
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+
+	tmpDir := t.TempDir()
+	cases := []struct {
+		name     string
+		groupIdx int
+		trackNr  int
+	}{
+		{"video_400kbps_avc", 0, 0},
+		{"video_600kbps_avc", 0, 1},
+		{"video_600kbps_hevc", 0, 2},
+		{"audio_128kbps", 1, 0},
+		{"audio_monotonic_128kbps_opus", 1, 1},
+	}
+
+	encryptionStatuses := []string{"original", "encrypted"}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var files []*mp4.File
+			for _, encryptionStatus := range encryptionStatuses {
+				var curAsset *Asset
+				switch encryptionStatus {
+				case "original":
+					curAsset = asset
+				case "encrypted":
+					curAsset = cencAsset
+				}
+				tr := curAsset.Groups[tc.groupIdx].Tracks[tc.trackNr]
+				outFile := filepath.Join(tmpDir, tc.name+encryptionStatus+".mp4")
+				ofh, err := os.Create(outFile)
+				require.NoError(t, err)
+				spc := tr.SpecData
+				initData, err := spc.GenCMAFInitData()
+				require.NoError(t, err)
+				_, err = ofh.Write(initData)
+				require.NoError(t, err)
+				nrSamples := int(3 * tr.TimeScale / tr.SampleDur)
+				groupNr := uint32(0)
+				for nr := 0; nr < nrSamples; nr++ {
+					chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1))
+					require.NoError(t, err)
+					_, err = ofh.Write(chunk)
+					require.NoError(t, err)
+				}
+				ofh.Close()
+				fh, err := os.Open(outFile)
+				require.NoError(t, err)
+				defer fh.Close()
+				mp4f, err := mp4.DecodeFile(fh)
+				require.NoError(t, err)
+
+				//Decrypt CENC encrypted file and remove protection information
+				if encryptionStatus == "encrypted" {
+					sw := bits.NewFixedSliceWriter(int(mp4f.Init.Size()))
+					err = mp4f.Init.EncodeSW(sw)
+					require.NoError(t, err)
+					decryptedInit, _, ipd, err := DecryptInit(sw.Bytes(), tc.name)
+					require.NoError(t, err)
+
+					// Replace encrypted init with decrypted one
+					initDecoded, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(decryptedInit))
+					require.NoError(t, err)
+					mp4f.Init = initDecoded.Init
+
+					for _, seg := range mp4f.Segments {
+						for i, frag := range seg.Fragments {
+							sw = bits.NewFixedSliceWriter(int(frag.Size()))
+							err = frag.EncodeSW(sw)
+							require.NoError(t, err)
+							decPayload, err := DecryptFragment(sw.Bytes(), ipd, cenc.key)
+							require.NoError(t, err)
+
+							fsr := bits.NewFixedSliceReader(decPayload)
+							fDec, err := mp4.DecodeFileSR(fsr)
+							require.NoError(t, err)
+							//Replace encrypted fragment with unencrypted fragment
+							seg.Fragments[i] = fDec.Segments[0].Fragments[0]
+						}
+					}
+				}
+				files = append(files, mp4f)
+			}
+			// Encode original to bytes
+			sw0 := bits.NewFixedSliceWriter(int(files[0].Size()))
+			err = files[0].EncodeSW(sw0)
+			require.NoError(t, err)
+
+			// Encode decrypted to bytes
+			sw1 := bits.NewFixedSliceWriter(int(files[1].Size()))
+			err = files[1].EncodeSW(sw1)
+			require.NoError(t, err)
+
+			// Check that the encoded bytes match exactly
+			require.Equal(t, sw0.Bytes(), sw1.Bytes(), "Encoded files should be identical")
 		})
 	}
 }
