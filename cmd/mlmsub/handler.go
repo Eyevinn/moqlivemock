@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/qlog"
@@ -488,88 +487,37 @@ func (h *moqHandler) fetchClearKey(kids []string) ([]keyInfo, error) {
 	return ckResp.Keys, nil
 }
 
-// decryptInit takes base64-encoded init data and makes a ClearKey request. 
-// It then stores the CENC-key and returns the base64-encoded init data with DRM-related fields removed.
-func (h *moqHandler) decryptInit(initData string, trackName string) (string, error) {
+// decryptInit decrypts the init data, requests the ClearKey license server
+// and stores protection information in the moqHandler. It returns the
+// base64 encoded string representation of the init data with protection information removed.
+func (h *moqHandler) decryptInit(initData, trackName string) (string, error) {
 	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to base64 decode init data: %w", err)
 	}
-	sr := bits.NewFixedSliceReader(initDataBytes)
-	f, err := mp4.DecodeFileSR(sr)
+	decryptedInitBytes, kid, ipd, err := internal.DecryptInit(initDataBytes, trackName)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to decrypt init: %w", err)
 	}
-	if f.Init == nil {
-		return "", fmt.Errorf("no init segment in initData")
-	}
-	decryptInfo, err := mp4.DecryptInit(f.Init)
-	if err != nil {
-		return "", fmt.Errorf("unable to decrypt init")
-	}
+	decryptedInit := base64.StdEncoding.EncodeToString(decryptedInitBytes)
 
-	kid := decryptInfo.TrackInfos[0].Sinf.Schi.Tenc.DefaultKID
 	keys, err := h.fetchClearKey([]string{hex.EncodeToString(kid[:])})
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch ClearKey")
-	} else if len(keys) > 0 {
-		key, err := mp4.UnpackKey(keys[0].K)
-		if err != nil {
-			return "", fmt.Errorf("failed to unpack key: %w", err)
-		} else {
-			h.cenc.Key = key
-		}
+		return "", fmt.Errorf("failed to fetch ClearKey: %w", err)
 	}
-
-	h.cenc.DecryptInfo[trackName] = decryptInfo
-	sw := bits.NewFixedSliceWriter(int(f.Init.Size()))
-	err = f.Init.EncodeSW(sw)
+	if len(keys) == 0 {
+		return "", fmt.Errorf("no keys found in ClearKey response")
+	}
+	key, err := mp4.UnpackKey(keys[0].K)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to unpack ClearKey key: %w", err)
+	} else {
+		h.cenc.Key = key
 	}
-	return base64.StdEncoding.EncodeToString(sw.Bytes()), nil
+	h.cenc.DecryptInfo[trackName] = ipd
+	return decryptedInit, nil
 }
 
-// decryptPayload decrypts a byte-format stored fragment (moof+mdat) and returns the unencrypted encoding.
 func (h *moqHandler) decryptPayload(payload []byte, trackName string) ([]byte, error) {
-	decryptInfo, ok := h.cenc.DecryptInfo[trackName]
-	if !ok {
-		return nil, fmt.Errorf("no decrypt info for track %s", trackName)
-	}
-
-	bytesReader := bytes.NewReader(payload)
-	var pos uint64 = 0
-	moofBox, err := mp4.DecodeBox(pos, bytesReader)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode moof: %w", err)
-	}
-	moof, ok := moofBox.(*mp4.MoofBox)
-	if !ok {
-		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
-	}
-	pos += moof.Size()
-	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode mdat: %w", err)
-	}
-	mdat, ok := mdatBox.(*mp4.MdatBox)
-	if !ok {
-		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
-	}
-
-	decodedFrag := mp4.NewFragment()
-	decodedFrag.AddChild(moof)
-	decodedFrag.AddChild(mdat)
-
-	err = mp4.DecryptFragment(decodedFrag, decryptInfo, h.cenc.Key)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decrypt fragment: %w", err)
-	}
-	encSize := decodedFrag.Size()
-	encSw := bits.NewFixedSliceWriter(int(encSize))
-	err = decodedFrag.EncodeSW(encSw)
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
-	}
-	return encSw.Bytes(), nil
+	return internal.DecryptFragment(payload, h.cenc.DecryptInfo[trackName], h.cenc.Key)
 }

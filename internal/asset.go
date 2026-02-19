@@ -291,7 +291,7 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 }
 
 // LoadAssetWithCENCInfo opens a directory, reads all *.mp4 files, creates ContentTrack from each,
-// groups them by contentType, and returns a pointer to an Asset. 
+// groups them by contentType, and returns a pointer to an Asset.
 // If cenc is not nil, it also encrypts every ContentTrack during CMAF chunk generation.
 func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*Asset, error) {
 	entries, err := os.ReadDir(dirPath)
@@ -358,7 +358,7 @@ func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch in
 	return asset, nil
 }
 
-// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct. 
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct.
 // If all flags are empty (except scheme) nil is returned.
 func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
 	if kidStr == "" && keyStr == "" && ivStr == "" {
@@ -678,7 +678,7 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts an encoded fragment and returns the encrypted bytes. 
+// encryptFragment encrypts an encoded fragment and returns the encrypted bytes.
 // For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
 func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
@@ -715,4 +715,69 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
 	}
 	return sw.Bytes(), nil
+}
+
+// decryptInit takes base64-encoded init data and makes a ClearKey request.
+// It then stores the CENC-key and returns
+// the base64-encoded init data with DRM-related fields removed, the key-id, and the decryption info.
+func DecryptInit(initData []byte, trackName string) ([]byte, mp4.UUID, mp4.DecryptInfo, error) {
+	sr := bits.NewFixedSliceReader(initData)
+	f, err := mp4.DecodeFileSR(sr)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, err
+	}
+	if f.Init == nil {
+		return nil, nil, mp4.DecryptInfo{}, fmt.Errorf("no init segment in initData")
+	}
+	decryptInfo, err := mp4.DecryptInit(f.Init)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, fmt.Errorf("unable to decrypt init")
+	}
+
+	kid := decryptInfo.TrackInfos[0].Sinf.Schi.Tenc.DefaultKID
+	sw := bits.NewFixedSliceWriter(int(f.Init.Size()))
+	err = f.Init.EncodeSW(sw)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, err
+	}
+	return sw.Bytes(), kid, decryptInfo, nil
+}
+
+// decryptFragment decrypts an enocded fragment (moof+mdat) and returns the unencrypted encoding.
+func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) ([]byte, error) {
+	bytesReader := bytes.NewReader(payload)
+	var pos uint64 = 0
+	moofBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode moof: %w", err)
+	}
+	moof, ok := moofBox.(*mp4.MoofBox)
+	if !ok {
+		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
+	}
+	pos += moof.Size()
+	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode mdat: %w", err)
+	}
+	mdat, ok := mdatBox.(*mp4.MdatBox)
+	if !ok {
+		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
+	}
+
+	decodedFrag := mp4.NewFragment()
+	decodedFrag.AddChild(moof)
+	decodedFrag.AddChild(mdat)
+
+	err = mp4.DecryptFragment(decodedFrag, decryptInfo, key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decrypt fragment: %w", err)
+	}
+	encSize := decodedFrag.Size()
+	encSw := bits.NewFixedSliceWriter(int(encSize))
+	err = decodedFrag.EncodeSW(encSw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
+	}
+	return encSw.Bytes(), nil
 }
