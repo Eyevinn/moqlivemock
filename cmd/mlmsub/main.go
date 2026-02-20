@@ -41,20 +41,21 @@ Usage of %s:
 `
 
 type options struct {
-	addr       string
-	trackname  string
-	duration   int
-	muxout     string
-	videoOut   string
-	audioOut   string
-	subsOut    string
-	catalogOut string
-	qlogfile   string
-	videoname  string
-	audioname  string
-	subsname   string
-	loglevel   string
-	version    bool
+	addr        string
+	trackname   string
+	duration    int
+	muxout      string
+	videoOut    string
+	audioOut    string
+	subsOut     string
+	catalogOut  string
+	qlogfile    string
+	videoname   string
+	audioname   string
+	subsname    string
+	loglevel    string
+	clearkeyUrl string
+	version     bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -79,6 +80,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
+	fs.StringVar(&opts.clearkeyUrl, "clearkeyurl", "", "URL to DRM server to fetch ClearKey license."+
+		"If this is left empty mlmsub will not attempt to decrypt the received media.")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -88,6 +91,7 @@ func main() {
 	// Parse command line arguments first to get the log level
 	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
 	opts, err := parseOptions(fs, os.Args)
+
 	if err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
@@ -166,13 +170,14 @@ func runClient(ctx context.Context, opts *options) error {
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
 	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
-		subsname:  opts.subsname,
+		quic:        !useWebTransport,
+		addr:        opts.addr,
+		namespace:   []string{internal.Namespace},
+		logfh:       logfh,
+		videoname:   opts.videoname,
+		audioname:   opts.audioname,
+		subsname:    opts.subsname,
+		clearkeyUrl: opts.clearkeyUrl,
 	}
 
 	outs := make(map[string]io.Writer)

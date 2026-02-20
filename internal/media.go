@@ -91,6 +91,12 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	if err != nil {
 		return nil, fmt.Errorf("could not set AVC descriptor: %w", err)
 	}
+	// Copy Trex default values from input init segment for proper fragment handling
+	if init.Moov.Mvex != nil && init.Moov.Mvex.Trex != nil {
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleDuration = init.Moov.Mvex.Trex.DefaultSampleDuration
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleSize = init.Moov.Mvex.Trex.DefaultSampleSize
+		ad.outInit.Moov.Mvex.Trex.DefaultSampleFlags = init.Moov.Mvex.Trex.DefaultSampleFlags
+	}
 	sps, err := avc.ParseSPSNALUnit(ad.Spss[0], false)
 	if err != nil {
 		return nil, fmt.Errorf("could not decode SPS: %w", err)
@@ -125,6 +131,10 @@ func (d *AVCData) Codec() string {
 	return d.codec
 }
 
+// GetInit returns the output init segment.
+func (d *AVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
 //
 // =======================
 // HEVC
@@ -243,6 +253,13 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		return nil, fmt.Errorf("could not set HEVC descriptor: %w", err)
 	}
 
+	// Copy Trex default values from input init segment for proper fragment handling
+	if init.Moov.Mvex != nil && init.Moov.Mvex.Trex != nil {
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleDuration = init.Moov.Mvex.Trex.DefaultSampleDuration
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleSize = init.Moov.Mvex.Trex.DefaultSampleSize
+		hd.outInit.Moov.Mvex.Trex.DefaultSampleFlags = init.Moov.Mvex.Trex.DefaultSampleFlags
+	}
+
 	// Parse SPS for codec string and resolution
 	sps, err := hevc.ParseSPSNALUnit(hd.Spss[0])
 	if err != nil {
@@ -270,6 +287,11 @@ func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
+// GetInit returns the output init segment.
+func (d *HEVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
 //
 // =======================
 // AAC
@@ -295,6 +317,11 @@ func (d *AACData) GenCMAFInitData() ([]byte, error) {
 
 func (d *AACData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AACData) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initAACData recreates an AAC init segment from an existing init segment.
@@ -355,6 +382,11 @@ func (d *OpusData) GenCMAFInitData() ([]byte, error) {
 
 func (d *OpusData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *OpusData) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initOpusData recreates an Opus init segment from an existing init segment.
@@ -422,6 +454,11 @@ func (d *AC3Data) GenCMAFInitData() ([]byte, error) {
 
 func (d *AC3Data) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AC3Data) GetInit() *mp4.InitSegment {
+	return d.outInit
 }
 
 // initAC3Data initializes AC-3 data (no SampleEntry recreation)
