@@ -80,10 +80,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.kid, "kid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
 	fs.StringVar(&opts.iv, "iv", "", "IV for CENC encryption (16 or 32 hex chars)")
-	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars)."+
-		"If no key is specified the key id will be used as the key.")
-	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption."+
-		"Either \"cenc\" or \"cbcs\". Default is cenc")
+	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars),"+
+		"if no key is specified the key id will be used as the key.")
+	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption,"+
+		"either \"cenc\" or \"cbcs\"")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err

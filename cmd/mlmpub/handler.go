@@ -164,7 +164,8 @@ func (h *moqHandler) startFingerprintServer() {
 		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(response)
 		if err != nil {
-			slog.Error("failed to encode clearkey response", "error", err)
+			slog.Error("failed to encode ClearKey response", "error", err)
+			return
 		}
 		slog.Info("Served ClearKey license")
 	}))
