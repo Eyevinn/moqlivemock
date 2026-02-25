@@ -52,7 +52,7 @@ func TestPrepareTrack(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			fh, err := os.Open(tc.filePath)
 			require.NoError(t, err)
-			ct, err := InitContentTrack(fh, tc.desc, 1, 1, nil)
+			ct, err := InitContentTrack(fh, tc.desc, 1, 1)
 			require.NoError(t, err)
 			require.Equal(t, tc.contentType, ct.ContentType, "contentType")
 			require.Equal(t, tc.timeScale, int(ct.TimeScale), "timeScale")
@@ -155,6 +155,36 @@ func TestLoadAsset(t *testing.T) {
 	}
 }
 
+func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
+	tracksByType, err := parseTracks("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+
+	origVideo := tracksByType["video"][0]
+	videoInitBefore, err := origVideo.SpecData.GenCMAFInitData()
+	require.NoError(t, err)
+
+	kidStr := "39112233445566778899aabbccddeeff"
+	keyStr := "40112233445566778899aabbccddeeff"
+	ivStr := "41112233445566778899aabbccddeeff"
+	cenc, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr)
+	require.NoError(t, err)
+
+	err = createProtectedTracks(tracksByType, cenc)
+	require.NoError(t, err)
+
+	origVideoAfter := tracksByType["video"][0]
+	videoInitAfter, err := origVideoAfter.SpecData.GenCMAFInitData()
+	require.NoError(t, err)
+	require.Equal(t, videoInitBefore, videoInitAfter, "original video init data should be unchanged")
+
+	protectedVideo := tracksByType["video"][len(tracksByType["video"])-1]
+	require.NotNil(t, protectedVideo.cenc)
+	require.NotNil(t, protectedVideo.ipd)
+	protectedVideoInit, err := protectedVideo.SpecData.GenCMAFInitData()
+	require.NoError(t, err)
+	require.NotEqual(t, videoInitBefore, protectedVideoInit, "protected track should have modified init data")
+}
+
 func TestGen20sCMAFStreams(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
@@ -244,15 +274,24 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var files []*mp4.File
+			originalTrack := asset.Groups[tc.groupIdx].Tracks[tc.trackNr]
 			for _, encryptionStatus := range encryptionStatuses {
-				var curAsset *Asset
+				var tr ContentTrack
 				switch encryptionStatus {
 				case "original":
-					curAsset = asset
+					tr = originalTrack
 				case "encrypted":
-					curAsset = cencAsset
+					protectedName := originalTrack.Name + "_protected"
+					found := false
+					for _, cand := range cencAsset.Groups[tc.groupIdx].Tracks {
+						if cand.Name == protectedName {
+							tr = cand
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "could not find protected track %s", protectedName)
 				}
-				tr := curAsset.Groups[tc.groupIdx].Tracks[tc.trackNr]
 				outFile := filepath.Join(tmpDir, tc.name+encryptionStatus+".mp4")
 				ofh, err := os.Create(outFile)
 				require.NoError(t, err)
@@ -281,7 +320,7 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 					sw := bits.NewFixedSliceWriter(int(mp4f.Init.Size()))
 					err = mp4f.Init.EncodeSW(sw)
 					require.NoError(t, err)
-					decryptedInit, _, ipd, err := DecryptInit(sw.Bytes(), tc.name)
+					decryptedInit, _, ipd, err := DecryptInit(sw.Bytes())
 					require.NoError(t, err)
 
 					// Replace encrypted init with decrypted one

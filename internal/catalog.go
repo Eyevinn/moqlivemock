@@ -196,4 +196,28 @@ type Track struct {
 	// ParentName defines the parent track name to be cloned.
 	// This field is only included inside a CloneTracks object.
 	ParentName string `json:"parentName,omitempty"`
+
+	// ContentProtection contains DRM-related information.
+	//Optional field at the trck level. Should only be included if the track is DRM protected.
+	ContentProtection *ContentProtection `json:"contentProtection,omitempty"`
+}
+
+// ContentProtection represents DRM information for a track.
+type ContentProtection struct {
+	Scheme      string               `json:"scheme,omitempty"`
+	DefaultKIDs []string               `json:"defaultKIDs,omitempty"`
+	DRMSystems  map[string]DRMSystem `json:"drmSystems,omitempty"`
+}
+
+// DRMSystem represents a specific DRM system configuration.
+type DRMSystem struct {
+	License       *DRMService `json:"license,omitempty"`
+	Authorization *DRMService `json:"authorization,omitempty"`
+	PSSH          string      `json:"pssh,omitempty"`
+}
+
+// DRMService represents a license or authorization service.
+type DRMService struct {
+	URL  string `json:"url,omitempty"`
+	Type string `json:"type,omitempty"`
 }

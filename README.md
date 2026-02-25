@@ -207,7 +207,7 @@ The warp-player can then connect using:
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 
 ### Using DRM
-moqlivemock supports the use of ClearKey DRM. To use this add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenckey is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
+moqlivemock supports the use of ClearKey DRM. To use this add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenc key is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
 
 Example publisher:
 ```sh
@@ -215,12 +215,12 @@ cd cmd/mlmpub
 go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -fingerprintport 8081
 ```
 
-The subscriber needs to make a request to the clearkey license server, the `-clearkeyurl` flag therefore needs to be provided. If left empty the subscriber will not attempt decryption.
+The subscriber uses information from the catalog to make a ClearKey request so no extra flags need to be provided except for choosing the protected tracks.
 
 Example subscriber:
 ```sh
 cd cmd/mlmsub
-go run . -clearkeyurl http://localhost:8081/clearkey -muxout - | ffplay -
+go run . -videoname video_400kbps_avc_protected -audioname audio_monotonic_128kbps_aac_protected -muxout - | ffplay -
 ```
 
 ## Development

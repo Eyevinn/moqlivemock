@@ -54,7 +54,6 @@ type options struct {
 	audioname   string
 	subsname    string
 	loglevel    string
-	clearkeyUrl string
 	version     bool
 }
 
@@ -80,8 +79,6 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
-	fs.StringVar(&opts.clearkeyUrl, "clearkeyurl", "", "URL to DRM server to fetch ClearKey license."+
-		"If this is left empty mlmsub will not attempt to decrypt the received media.")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -177,7 +174,6 @@ func runClient(ctx context.Context, opts *options) error {
 		videoname:   opts.videoname,
 		audioname:   opts.audioname,
 		subsname:    opts.subsname,
-		clearkeyUrl: opts.clearkeyUrl,
 	}
 
 	outs := make(map[string]io.Writer)
