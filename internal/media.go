@@ -12,6 +12,25 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
+func cloneInitSegment(initSeg *mp4.InitSegment) (*mp4.InitSegment, error) {
+	if initSeg == nil {
+		return nil, fmt.Errorf("init segment is nil")
+	}
+	buf := bytes.Buffer{}
+	err := initSeg.Encode(&buf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode init segment: %w", err)
+	}
+	decoded, err := mp4.DecodeFile(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode cloned init segment: %w", err)
+	}
+	if decoded.Init == nil {
+		return nil, fmt.Errorf("decoded file missing init segment")
+	}
+	return decoded.Init, nil
+}
+
 //
 // =======================
 // AVC
@@ -123,6 +142,21 @@ func (d *AVCData) GenCMAFInitData() ([]byte, error) {
 
 func (d *AVCData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *AVCData) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
 }
 
 //
@@ -270,6 +304,21 @@ func (d *HEVCData) Codec() string {
 	return d.codec
 }
 
+// GetInit returns the output init segment.
+func (d *HEVCData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *HEVCData) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
+}
+
 //
 // =======================
 // AAC
@@ -295,6 +344,21 @@ func (d *AACData) GenCMAFInitData() ([]byte, error) {
 
 func (d *AACData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AACData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *AACData) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
 }
 
 // initAACData recreates an AAC init segment from an existing init segment.
@@ -355,6 +419,21 @@ func (d *OpusData) GenCMAFInitData() ([]byte, error) {
 
 func (d *OpusData) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *OpusData) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *OpusData) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
 }
 
 // initOpusData recreates an Opus init segment from an existing init segment.
@@ -422,6 +501,21 @@ func (d *AC3Data) GenCMAFInitData() ([]byte, error) {
 
 func (d *AC3Data) Codec() string {
 	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AC3Data) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *AC3Data) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
 }
 
 // initAC3Data initializes AC-3 data (no SampleEntry recreation)

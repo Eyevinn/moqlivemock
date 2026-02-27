@@ -41,20 +41,20 @@ Usage of %s:
 `
 
 type options struct {
-	addr       string
-	trackname  string
-	duration   int
-	muxout     string
-	videoOut   string
-	audioOut   string
-	subsOut    string
-	catalogOut string
-	qlogfile   string
-	videoname  string
-	audioname  string
-	subsname   string
-	loglevel   string
-	version    bool
+	addr        string
+	trackname   string
+	duration    int
+	muxout      string
+	videoOut    string
+	audioOut    string
+	subsOut     string
+	catalogOut  string
+	qlogfile    string
+	videoname   string
+	audioname   string
+	subsname    string
+	loglevel    string
+	version     bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -88,6 +88,7 @@ func main() {
 	// Parse command line arguments first to get the log level
 	fs := flag.NewFlagSet(appName, flag.ContinueOnError)
 	opts, err := parseOptions(fs, os.Args)
+
 	if err != nil {
 		if !errors.Is(err, flag.ErrHelp) {
 			fmt.Fprintf(os.Stderr, "Error parsing options: %v\n", err)
@@ -166,13 +167,13 @@ func runClient(ctx context.Context, opts *options) error {
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
 	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
-		subsname:  opts.subsname,
+		quic:        !useWebTransport,
+		addr:        opts.addr,
+		namespace:   []string{internal.Namespace},
+		logfh:       logfh,
+		videoname:   opts.videoname,
+		audioname:   opts.audioname,
+		subsname:    opts.subsname,
 	}
 
 	outs := make(map[string]io.Writer)

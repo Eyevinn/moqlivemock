@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/moqtransport"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
@@ -19,6 +22,11 @@ import (
 const (
 	initialMaxRequestID = 64
 )
+
+type CENC struct {
+	Key         []byte
+	DecryptInfo map[string]mp4.DecryptInfo // keyed by track name
+}
 
 type moqHandler struct {
 	quic      bool
@@ -31,6 +39,7 @@ type moqHandler struct {
 	videoname string
 	audioname string
 	subsname  string
+	cenc      *CENC
 }
 
 func (h *moqHandler) runClient(ctx context.Context, wt bool, outs map[string]io.Writer) error {
@@ -116,6 +125,18 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	audioTrack := ""
 	subsTrack := ""
 	for _, track := range h.catalog.Tracks {
+		//If track is encrypted, the InitData needs to be adjusted
+		if track.ContentProtection != nil {
+			if h.cenc == nil {
+				h.cenc = &CENC{
+					DecryptInfo: make(map[string]mp4.DecryptInfo),
+				}
+			}
+			track.InitData, err = h.decryptInit(track.InitData, track.ContentProtection, track.Name)
+			if err != nil {
+				slog.Error("failed to decrypt init data", "error", err)
+			}
+		}
 		// Select video track
 		if strings.HasPrefix(track.MimeType, "video") {
 			// If videoname is specified, match it as a substring of the track name
@@ -177,8 +198,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 
 		// Select subtitle track (wvtt or stpp codec)
-		isSubtitle := track.Codec == "wvtt" || strings.HasPrefix(track.Codec, "stpp")
-		if isSubtitle {
+		if track.MimeType == "application/mp4" {
 			// If subsname is specified, match it as a substring of the track name
 			if h.subsname != "" {
 				if subsTrack == "" && strings.Contains(track.Name, h.subsname) {
@@ -362,6 +382,13 @@ func (h *moqHandler) subscribeAndRead(ctx context.Context, s *moqtransport.Sessi
 					"groupID", o.GroupID,
 					"payloadLength", len(o.Payload))
 			}
+			if h.cenc != nil {
+				o.Payload, err = h.decryptPayload(o.Payload, trackname)
+				if err != nil {
+					slog.Error("failed to decrypt payload", "error", err)
+					return
+				}
+			}
 
 			if h.mux != nil {
 				err = h.mux.muxSample(o.Payload, mediaType)
@@ -408,4 +435,102 @@ func unpackWrite(initData string, w io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+type clearKeyRequest struct {
+	Kids []string `json:"kids"`
+}
+
+type keyInfo struct {
+	Kty string `json:"kty"`
+	K   string `json:"k"`
+	Kid string `json:"kid"`
+}
+
+type clearKeyResponse struct {
+	Keys []keyInfo `json:"keys"`
+}
+
+// fetchClearkey makes a post request to a ClearKey server and returns the response.
+func requestClearKey(laurl string, kids []string) ([]keyInfo, error) {
+	slog.Info("requesting clearkey license")
+	reqBody, err := json.Marshal(clearKeyRequest{Kids: kids})
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.Post(laurl, "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ClearKey request failed: %s", resp.Status)
+	}
+
+	var ckResp clearKeyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ckResp); err != nil {
+		return nil, err
+	}
+	return ckResp.Keys, nil
+}
+
+// decryptInit decrypts the init data, requests the ClearKey license server
+// and stores protection information in the moqHandler. It returns the
+// base64 encoded string representation of the init data with protection information removed.
+func (h *moqHandler) decryptInit(initData string, contentProtection *internal.ContentProtection,
+	trackName string) (string, error) {
+	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
+	if err != nil {
+		return "", fmt.Errorf("failed to base64 decode init data: %w", err)
+	}
+	decryptedInitBytes, _, ipd, err := internal.DecryptInit(initDataBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt init: %w", err)
+	}
+	h.cenc.Key, err = obtainClearkey(contentProtection)
+	if err != nil {
+		return "", fmt.Errorf("failed to obtain ClearKey: %w", err)
+	}
+
+	decryptedInit := base64.StdEncoding.EncodeToString(decryptedInitBytes)
+	h.cenc.DecryptInfo[trackName] = ipd
+	return decryptedInit, nil
+}
+
+func (h *moqHandler) decryptPayload(payload []byte, trackName string) ([]byte, error) {
+	return internal.DecryptFragment(payload, h.cenc.DecryptInfo[trackName], h.cenc.Key)
+}
+
+//obtainClerkey parses the contentProtection struct and makes a ClearKey request.
+func obtainClearkey(contentProtection *internal.ContentProtection) ([]byte, error) {
+	var kids []string
+	for _, uuid := range contentProtection.DefaultKIDs {
+		kid, err := mp4.UnpackKey(uuid)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unpack kid UUID: %w", err)
+		}
+		kids = append(kids, base64.RawURLEncoding.EncodeToString(kid))
+	}
+	clearkey, ok := contentProtection.DRMSystems["1077efec-c0b2-4d02-ace3-3c1e52e2fb4b"]
+	if !ok {
+		return nil, fmt.Errorf("system id 1077efec-c0b2-4d02-ace3-3c1e52e2fb4b not found," +
+			" Clearkey is not supported for this track")
+	}
+	keys, err := requestClearKey(clearkey.License.URL, kids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch ClearKey: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no keys found in ClearKey response")
+	}
+	if len(keys) > 1 {
+		return nil, fmt.Errorf("too many keys in ClearKey response: got %d, want 1", len(keys))
+	}
+	key, err := base64.RawURLEncoding.DecodeString(keys[0].K)
+	if err != nil {
+		return nil, fmt.Errorf("unable to base64URL-decode key in ClearKey response: %w", err)
+	}
+	return key, nil
 }

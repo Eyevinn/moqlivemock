@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +33,16 @@ type ContentTrack struct {
 	SampleBatch   int
 	Samples       []mp4.FullSample
 	SpecData      CodecSpecificData
+	cenc          *CENCInfo
+	ipd           *mp4.InitProtectData
+}
+
+type CENCInfo struct {
+	scheme    string
+	kid       mp4.UUID
+	key       []byte
+	iv        []byte
+	psshBoxes []*mp4.PsshBox
 }
 
 type Asset struct {
@@ -43,6 +55,8 @@ type Asset struct {
 type CodecSpecificData interface {
 	GenCMAFInitData() ([]byte, error)
 	Codec() string
+	GetInit() *mp4.InitSegment
+	Clone() (CodecSpecificData, error)
 }
 
 type TrackGroup struct {
@@ -242,7 +256,6 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	default:
 		return nil, fmt.Errorf("unknown sample description type: %s", sampleDesc.Type())
 	}
-
 	ct.Duration = uint32(len(ct.Samples)) * ct.SampleDur
 	ct.NrSamples = uint32(len(ct.Samples))
 	// Calculate sampleBitrate (bits per second)
@@ -254,12 +267,46 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 	if durationSeconds > 0 {
 		ct.SampleBitrate = uint32(float64(totalBytes*8) / durationSeconds)
 	}
+
 	return &ct, nil
 }
 
 // LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
 // groups them by contentType, and returns a pointer to an Asset.
 func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, error) {
+	return LoadAssetWithCENCInfo(dirPath, audioSampleBatch, videoSampleBatch, nil)
+}
+
+// LoadAssetWithCENCInfo creates an asset from the *.mp4 files in the specified dirPath.
+// If CENCInfo is not nil, a separate track with content protection applied is created
+// for all existing video and audio tracks.
+func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*Asset, error) {
+	tracksByType, err := parseTracks(dirPath, audioSampleBatch, videoSampleBatch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse tracks: %w", err)
+	}
+	if cenc != nil {
+		err = createProtectedTracks(tracksByType, cenc)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create protected tracks: %w", err)
+		}
+	}
+	trackGroups, err := generateTrackGroups(tracksByType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate track groups: %w", err)
+	}
+	asset := &Asset{
+		Name:   filepath.Base(dirPath),
+		Groups: trackGroups,
+	}
+	if err := asset.setLoopDuration(); err != nil {
+		return nil, fmt.Errorf("could not set loop duration: %w", err)
+	}
+	return asset, nil
+}
+
+// parseTracks parses all *.mp4 files in the specified dirPath and groups them by contentType.
+func parseTracks(dirPath string, audioSampleBatch, videoSampleBatch int) (map[string][]ContentTrack, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read directory: %w", err)
@@ -278,12 +325,66 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 			return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 		}
 		ct, err := InitContentTrack(fh, entry.Name(), audioSampleBatch, videoSampleBatch)
-		fh.Close()
 		if err != nil {
 			return nil, fmt.Errorf("could not create ContentTrack for %s: %w", filePath, err)
 		}
 		tracksByType[ct.ContentType] = append(tracksByType[ct.ContentType], *ct)
+		fh.Close()
 	}
+	return tracksByType, nil
+}
+
+// createProtectedTracks creates duplicate protected versions of all existing tracks and adds them to the map.
+func createProtectedTracks(tracksByType map[string][]ContentTrack, cenc *CENCInfo) error {
+	types := []string{"video", "audio"}
+	for _, typ := range types {
+		orig, ok := tracksByType[typ]
+		if !ok || len(orig) == 0 {
+			continue
+		}
+		var added []ContentTrack
+		for _, ct := range orig {
+			protectedCt, err := addProtectionToTrack(ct, cenc)
+			if err != nil {
+				return err
+			}
+			added = append(added, protectedCt)
+		}
+		tracksByType[typ] = append(tracksByType[typ], added...)
+	}
+	return nil
+}
+
+// addProtectionToTrack adds protection informaiton to a track.
+func addProtectionToTrack(ct ContentTrack, cenc *CENCInfo) (ContentTrack, error) {
+	protectedCt := ct
+	protectedCt.Name = ct.Name + "_protected"
+	protectedSpecData, err := cloneCodecSpecificData(ct.SpecData)
+	if err != nil {
+		return ContentTrack{}, err
+	}
+	protectedCt.SpecData = protectedSpecData
+	ipd, err := mp4.InitProtect(protectedCt.SpecData.GetInit(), cenc.key, cenc.iv, cenc.scheme, cenc.kid, cenc.psshBoxes)
+	if err != nil {
+		return ContentTrack{}, fmt.Errorf("unable to add protection data to cloned init for track %s: %w", ct.Name, err)
+	}
+	protectedCt.ipd = ipd
+	protectedCt.cenc = cenc
+	return protectedCt, nil
+}
+
+func cloneCodecSpecificData(specData CodecSpecificData) (CodecSpecificData, error) {
+	if specData == nil {
+		return nil, fmt.Errorf("codec specific data is nil")
+	}
+	cloned, err := specData.Clone()
+	if err != nil {
+		return nil, fmt.Errorf("failed to clone %s codec  %w", specData.Codec(), err)
+	}
+	return cloned, nil
+}
+
+func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, error) {
 	var groups []TrackGroup
 	groupID := uint32(1)
 	// Add video group(s) first
@@ -313,14 +414,81 @@ func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, 
 			Tracks:     audioTracks,
 		})
 	}
-	asset := &Asset{
-		Name:   filepath.Base(dirPath),
-		Groups: groups,
+	return groups, nil
+}
+
+// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct.
+// If all flags are empty (except scheme) nil is returned.
+func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
+	if kidStr == "" && keyStr == "" && ivStr == "" {
+		return nil, nil
 	}
-	if err := asset.setLoopDuration(); err != nil {
-		return nil, fmt.Errorf("could not set loop duration: %w", err)
+
+	kid, err := mp4.UnpackKey(kidStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key ID %s: %w", kidStr, err)
 	}
-	return asset, nil
+	kidHex := hex.EncodeToString(kid)
+	kidUUID, _ := mp4.NewUUIDFromString(kidHex)
+
+	if scheme != "cenc" && scheme != "cbcs" {
+		return nil, fmt.Errorf("scheme must be cenc or cbcs: %s", scheme)
+	}
+
+	if len(ivStr) != 32 && len(ivStr) != 16 {
+		return nil, fmt.Errorf("hex iv must have length 16 or 32 chars; %d", len(ivStr))
+	}
+	iv, err := hex.DecodeString(ivStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid iv %s", ivStr)
+	}
+
+	if keyStr != "" && len(keyStr) != 32 {
+		return nil, fmt.Errorf("hex key must have length 32 chars: %d", len(keyStr))
+	}
+
+	var key mp4.UUID
+	if keyStr == "" {
+		key = kidUUID
+	} else {
+		key, err = mp4.UnpackKey(keyStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
+		}
+	}
+	psshBox, err := createClearKeyPssh(kidUUID)
+	if err != nil {
+		return nil, fmt.Errorf("could not create ClearKey PSSH: %w", err)
+	}
+
+	cencInfo := CENCInfo{
+		scheme:    scheme,
+		kid:       kidUUID,
+		key:       key,
+		iv:        iv,
+		psshBoxes: []*mp4.PsshBox{psshBox},
+	}
+	return &cencInfo, nil
+}
+
+// createClearKeyPssh creates a PsshBox using the provided key-id
+func createClearKeyPssh(kid mp4.UUID) (*mp4.PsshBox, error) {
+	const clearKeySystemID = "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b"
+
+	systemID, err := mp4.NewUUIDFromString(clearKeySystemID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ClearKey system ID: %w", err)
+	}
+
+	psshBox := &mp4.PsshBox{
+		Version:  1,
+		Flags:    0,
+		SystemID: systemID,
+		KIDs:     []mp4.UUID{kid},
+		Data:     nil,
+	}
+
+	return psshBox, nil
 }
 
 // setLoopDuration set a loop duration for all tracks in the asset
@@ -358,7 +526,7 @@ func (a *Asset) setLoopDuration() error {
 }
 
 // GenCMAFCatalogEntry generates an MSF/CMSF catalog entry for this asset, populating all available fields.
-// Conforms to draft-ietf-moq-msf-00 and draft-ietf-moq-cmsf-00.
+// Conforms to draft-ietf-moq-msf-00 and draft-ietf-moq-cmsf-00, except for the extra contentProtection field.
 // The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
 // to be set as the catalog's generatedAt value.
 func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
@@ -441,8 +609,35 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 					}
 				}
 			}
+			if ct.cenc != nil {
+				contentProtection := &ContentProtection{
+					Scheme:      ct.cenc.scheme,
+					DefaultKIDs: []string{ct.cenc.kid.String()},
+				}
+
+				drmSystems := make(map[string]DRMSystem)
+				for _, entry := range ct.cenc.psshBoxes {
+					if entry.SystemID.String() != "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b" {
+						continue
+					}
+					license := &DRMService{
+						URL:  "http://localhost:8081/clearkey",
+						Type: "EME-1.0",
+					}
+					sw := bits.NewFixedSliceWriter(int(entry.Size()))
+					err := entry.EncodeSW(sw)
+					if err != nil {
+						return nil, fmt.Errorf("failed to encode pssh box: %w", err)
+					}
+					drmSystems[entry.SystemID.String()] = DRMSystem{
+						License: license,
+						PSSH:    base64.URLEncoding.EncodeToString(sw.Bytes()),
+					}
+				}
+				contentProtection.DRMSystems = drmSystems
+				track.ContentProtection = contentProtection
+			}
 			track.Namespace = Namespace
-			track.Name = ct.Name
 			tracks = append(tracks, track)
 		}
 	}
@@ -539,6 +734,15 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	if err != nil {
 		return nil, err
 	}
+
+	if t.cenc != nil {
+		encrypted, err := t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		return encrypted, nil
+	}
+
 	return sw.Bytes(), nil
 }
 
@@ -556,4 +760,107 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 
 	origNr = deltaTime / sampleDur
 	return startTime, origNr
+}
+
+// encryptFragment encrypts an encoded fragment and returns the encrypted bytes.
+// For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
+	bytesReader := bytes.NewReader(fragmentBytes)
+	var pos uint64 = 0
+	moofBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode moof: %w", err)
+	}
+	moof, ok := moofBox.(*mp4.MoofBox)
+	if !ok {
+		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
+	}
+	pos += moof.Size()
+	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode mdat: %w", err)
+	}
+	mdat, ok := mdatBox.(*mp4.MdatBox)
+	if !ok {
+		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
+	}
+
+	decodedFrag := mp4.NewFragment()
+	decodedFrag.AddChild(moof)
+	decodedFrag.AddChild(mdat)
+
+	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
+	}
+	sw := bits.NewFixedSliceWriter(int(decodedFrag.Size()))
+	err = decodedFrag.EncodeSW(sw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
+	}
+	return sw.Bytes(), nil
+}
+
+// DecryptInit decrypts an encoded init segment
+// and returns the decrypted encoding, the KID and decryption decryption information..
+func DecryptInit(initData []byte) ([]byte, mp4.UUID, mp4.DecryptInfo, error) {
+	sr := bits.NewFixedSliceReader(initData)
+	f, err := mp4.DecodeFileSR(sr)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, err
+	}
+	if f.Init == nil {
+		return nil, nil, mp4.DecryptInfo{}, fmt.Errorf("no init segment in initData")
+	}
+	decryptInfo, err := mp4.DecryptInit(f.Init)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, fmt.Errorf("unable to decrypt init")
+	}
+
+	kid := decryptInfo.TrackInfos[0].Sinf.Schi.Tenc.DefaultKID
+	sw := bits.NewFixedSliceWriter(int(f.Init.Size()))
+	err = f.Init.EncodeSW(sw)
+	if err != nil {
+		return nil, nil, mp4.DecryptInfo{}, err
+	}
+	return sw.Bytes(), kid, decryptInfo, nil
+}
+
+// DecryptFragment decrypts an enocoded fragment (moof+mdat) and returns the unencrypted encoding.
+func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) ([]byte, error) {
+	bytesReader := bytes.NewReader(payload)
+	var pos uint64 = 0
+	moofBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode moof: %w", err)
+	}
+	moof, ok := moofBox.(*mp4.MoofBox)
+	if !ok {
+		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
+	}
+	pos += moof.Size()
+	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decode mdat: %w", err)
+	}
+	mdat, ok := mdatBox.(*mp4.MdatBox)
+	if !ok {
+		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
+	}
+
+	decodedFrag := mp4.NewFragment()
+	decodedFrag.AddChild(moof)
+	decodedFrag.AddChild(mdat)
+
+	err = mp4.DecryptFragment(decodedFrag, decryptInfo, key)
+	if err != nil {
+		return nil, fmt.Errorf("unable to decrypt fragment: %w", err)
+	}
+	encSize := decodedFrag.Size()
+	encSw := bits.NewFixedSliceWriter(int(encSize))
+	err = decodedFrag.EncodeSW(encSw)
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
+	}
+	return encSw.Bytes(), nil
 }
