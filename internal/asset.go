@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -34,16 +33,8 @@ type ContentTrack struct {
 	SampleBatch   int
 	Samples       []mp4.FullSample
 	SpecData      CodecSpecificData
-	cenc          *CENCInfo
+	drm           *DRMInfo
 	ipd           *mp4.InitProtectData
-}
-
-type CENCInfo struct {
-	scheme    string
-	kid       mp4.UUID
-	key       []byte
-	iv        []byte
-	psshBoxes []*mp4.PsshBox
 }
 
 type Asset struct {
@@ -275,19 +266,19 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 // LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
 // groups them by contentType, and returns a pointer to an Asset.
 func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, error) {
-	return LoadAssetWithCENCInfo(dirPath, audioSampleBatch, videoSampleBatch, nil)
+	return LoadAssetWithDRM(dirPath, audioSampleBatch, videoSampleBatch, nil)
 }
 
-// LoadAssetWithCENCInfo creates an asset from the *.mp4 files in the specified dirPath.
+// LoadAssetWithDRM creates an asset from the *.mp4 files in the specified dirPath.
 // If CENCInfo is not nil, a separate track with content protection applied is created
 // for all existing video and audio tracks.
-func LoadAssetWithCENCInfo(dirPath string, audioSampleBatch, videoSampleBatch int, cenc *CENCInfo) (*Asset, error) {
+func LoadAssetWithDRM(dirPath string, audioSampleBatch, videoSampleBatch int, drm *DRMInfo) (*Asset, error) {
 	tracksByType, err := parseTracks(dirPath, audioSampleBatch, videoSampleBatch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tracks: %w", err)
 	}
-	if cenc != nil {
-		err = createProtectedTracks(tracksByType, cenc)
+	if drm != nil {
+		err = createProtectedTracks(tracksByType, drm)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create protected tracks: %w", err)
 		}
@@ -336,7 +327,7 @@ func parseTracks(dirPath string, audioSampleBatch, videoSampleBatch int) (map[st
 }
 
 // createProtectedTracks creates duplicate protected versions of all existing tracks and adds them to the map.
-func createProtectedTracks(tracksByType map[string][]ContentTrack, cenc *CENCInfo) error {
+func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo) error {
 	types := []string{"video", "audio"}
 	for _, typ := range types {
 		orig, ok := tracksByType[typ]
@@ -345,7 +336,7 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, cenc *CENCInf
 		}
 		var added []ContentTrack
 		for _, ct := range orig {
-			protectedCt, err := addProtectionToTrack(ct, cenc)
+			protectedCt, err := addProtectionToTrack(ct, drm)
 			if err != nil {
 				return err
 			}
@@ -357,20 +348,25 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, cenc *CENCInf
 }
 
 // addProtectionToTrack adds protection information to a track.
-func addProtectionToTrack(ct ContentTrack, cenc *CENCInfo) (ContentTrack, error) {
+func addProtectionToTrack(ct ContentTrack, drm *DRMInfo) (ContentTrack, error) {
 	protectedCt := ct
-	protectedCt.Name = ct.Name + "_protected"
 	protectedSpecData, err := cloneCodecSpecificData(ct.SpecData)
+	protectedCt.Name = ct.Name + "_protected"
 	if err != nil {
 		return ContentTrack{}, err
 	}
 	protectedCt.SpecData = protectedSpecData
-	ipd, err := mp4.InitProtect(protectedCt.SpecData.GetInit(), cenc.key, cenc.iv, cenc.scheme, cenc.kid, cenc.psshBoxes)
+	kid, err := mp4.NewUUIDFromString(drm.ContentProtection.DefaultKIDs[0])
+	if err != nil {
+		return ContentTrack{}, fmt.Errorf("unable to parse UUID from string: %w", err)
+	}
+	ipd, err := mp4.InitProtect(protectedCt.SpecData.GetInit(), []byte{},
+		drm.cenc.iv, drm.ContentProtection.Scheme, kid, nil)
 	if err != nil {
 		return ContentTrack{}, fmt.Errorf("unable to add protection data to cloned init for track %s: %w", ct.Name, err)
 	}
 	protectedCt.ipd = ipd
-	protectedCt.cenc = cenc
+	protectedCt.drm = drm
 	return protectedCt, nil
 }
 
@@ -416,81 +412,6 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 		})
 	}
 	return groups, nil
-}
-
-// ParseCENCflags converts the string CENC-related parameters into a CENCInfo struct.
-// If all flags are empty (except scheme) nil is returned.
-func ParseCENCflags(scheme, kidStr, keyStr, ivStr string) (*CENCInfo, error) {
-	if kidStr == "" && keyStr == "" && ivStr == "" {
-		return nil, nil
-	}
-
-	kid, err := mp4.UnpackKey(kidStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid key ID %s: %w", kidStr, err)
-	}
-	kidHex := hex.EncodeToString(kid)
-	kidUUID, err := mp4.NewUUIDFromString(kidHex)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert kid hexstring to UUID: %w", err)
-	}
-
-	if scheme != "cenc" && scheme != "cbcs" {
-		return nil, fmt.Errorf("scheme must be cenc or cbcs: %s", scheme)
-	}
-
-	if len(ivStr) != 32 && len(ivStr) != 16 {
-		return nil, fmt.Errorf("hex iv must have length 16 or 32 chars; %d", len(ivStr))
-	}
-	iv, err := hex.DecodeString(ivStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid iv %s", ivStr)
-	}
-
-	if keyStr != "" && len(keyStr) != 32 {
-		return nil, fmt.Errorf("hex key must have length 32 chars: %d", len(keyStr))
-	}
-
-	var key mp4.UUID
-	if keyStr == "" {
-		key = kidUUID
-	} else {
-		key, err = mp4.UnpackKey(keyStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid key %s, %w", keyStr, err)
-		}
-	}
-	psshBox, err := createClearKeyPssh(kidUUID)
-	if err != nil {
-		return nil, fmt.Errorf("could not create ClearKey PSSH: %w", err)
-	}
-
-	cencInfo := CENCInfo{
-		scheme:    scheme,
-		kid:       kidUUID,
-		key:       key,
-		iv:        iv,
-		psshBoxes: []*mp4.PsshBox{psshBox},
-	}
-	return &cencInfo, nil
-}
-
-// createClearKeyPssh creates a PsshBox using the provided key-id
-func createClearKeyPssh(kid mp4.UUID) (*mp4.PsshBox, error) {
-	systemID, err := mp4.NewUUIDFromString(CommonSystemID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid ClearKey system ID: %w", err)
-	}
-
-	psshBox := &mp4.PsshBox{
-		Version:  1,
-		Flags:    0,
-		SystemID: systemID,
-		KIDs:     []mp4.UUID{kid},
-		Data:     nil,
-	}
-
-	return psshBox, nil
 }
 
 // setLoopDuration set a loop duration for all tracks in the asset
@@ -611,33 +532,8 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 					}
 				}
 			}
-			if ct.cenc != nil {
-				contentProtection := &ContentProtection{
-					Scheme:      ct.cenc.scheme,
-					DefaultKIDs: []string{ct.cenc.kid.String()},
-				}
-
-				drmSystems := make(map[string]DRMSystem)
-				for _, entry := range ct.cenc.psshBoxes {
-					if entry.SystemID.String() != CommonSystemID {
-						continue
-					}
-					license := &DRMService{
-						URL:  "http://localhost:8081/clearkey",
-						Type: "EME-1.0",
-					}
-					sw := bits.NewFixedSliceWriter(int(entry.Size()))
-					err := entry.EncodeSW(sw)
-					if err != nil {
-						return nil, fmt.Errorf("failed to encode pssh box: %w", err)
-					}
-					drmSystems[entry.SystemID.String()] = DRMSystem{
-						License: license,
-						PSSH:    base64.URLEncoding.EncodeToString(sw.Bytes()),
-					}
-				}
-				contentProtection.DRMSystems = drmSystems
-				track.ContentProtection = contentProtection
+			if ct.drm != nil {
+				track.ContentProtection = ct.drm.ContentProtection
 			}
 			track.Namespace = Namespace
 			tracks = append(tracks, track)
@@ -737,7 +633,7 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		return nil, err
 	}
 
-	if t.cenc != nil {
+	if t.drm != nil {
 		encrypted, err := t.encryptFragment(sw.Bytes())
 		if err != nil {
 			return nil, err
@@ -791,7 +687,7 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	decodedFrag.AddChild(moof)
 	decodedFrag.AddChild(mdat)
 
-	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd)
+	err = mp4.EncryptFragment(decodedFrag, t.drm.cenc.key, t.drm.cenc.iv, t.ipd)
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}

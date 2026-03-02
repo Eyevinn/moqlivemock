@@ -207,12 +207,20 @@ The warp-player can then connect using:
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 
 ### Using DRM
-moqlivemock supports the use of ClearKey DRM. To use this add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenc key is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
+moqlivemock supports the use of DRM. Supported DRM systems are Widevine, PlayReady, FairPlay, and ClearKey. To use ClearKey you need to add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenc key is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
 
-Example publisher:
+To use any of the other DRM systems you need to add a CPIX file and a config JSON file (preferably in the gitignored directory `assets/drm/`) and add the flag `-drmpath` which points to the config JSON file. The config JSON file needs to be of the same format as the example file `assets/testdrm/drm_config_test.json`. 
+
+Example ClearKey publisher:
 ```sh
 cd cmd/mlmpub
 go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -fingerprintport 8081
+```
+
+Example commercial DRM publisher:
+```sh
+cd cmd/mlmpub
+go run . -drmpath ../../assets/testdrm/drm_config_test.json #Test drm. Does not actually work.
 ```
 
 The subscriber uses information from the catalog to make a ClearKey request so no extra flags need to be provided except for choosing the protected tracks.

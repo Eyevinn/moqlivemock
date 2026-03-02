@@ -4,6 +4,9 @@ out/
 # Output for test-assets
 assets/output/
 
+#non-clearkey DRM information
+assets/drm/
+
 #logs
 cmd/mlmpub/mlmpub.log
 cmd/mlmsub/mlmsub.log
