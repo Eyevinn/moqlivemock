@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -648,9 +649,12 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		if err != nil {
 			return nil, err
 		}
-		return encrypted, nil
+		sw := bits.NewFixedSliceWriter(int(encrypted.Size()))
+		err = encrypted.EncodeSW(sw)
+		if err != nil {
+			return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
+		}
 	}
-
 	return sw.Bytes(), nil
 }
 
@@ -670,9 +674,81 @@ func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts an encoded fragment and returns the encrypted bytes.
-// For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
-func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
+func (t *ContentTrack) GenerateLOC(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
+	//TODO put this code in a function. It is a repeat
+	f, err := mp4.CreateFragment(chunkNr, trackID)
+	if err != nil {
+		return nil, err
+	}
+	var samples []mp4.FullSample
+	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
+		startTime, origNr := t.calcSample(uint64(sampleNr))
+		orig := t.Samples[origNr]
+		fs := mp4.FullSample{
+			Sample: mp4.Sample{
+				Flags: orig.Flags,
+				Dur:   uint32(t.SampleDur),
+				Size:  uint32(len(orig.Data)),
+			},
+			DecodeTime: startTime,
+			Data:       orig.Data,
+		}
+		f.AddFullSample(fs)
+		samples = append(samples, fs)
+	}
+	f.SetTrunDataOffsets()
+
+	const (
+		CaptureTimestamp  = 2
+		VideoConfig       = 13
+		VideoFrameMarking = 4
+		AudioLevel        = 6
+	)
+
+	if t.drm.cenc != nil {
+		size := f.Size()
+		sw := bits.NewFixedSliceWriter(int(size))
+		err = f.EncodeSW(sw)
+		if err != nil {
+			return nil, err
+		}
+		f, err = t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	var result []byte
+	for i, sample := range samples {
+		var loc []byte
+		if t.drm.cenc != nil {
+			loc = binary.AppendVarint(loc, int64(39)) //Example id. Odd since length field is required.
+			iv := f.Moof.Traf.Senc.IVs[i]
+			ivSize := len(t.drm.cenc.iv)
+			loc = binary.AppendVarint(loc, int64(ivSize))
+			loc = append(loc, iv...)
+
+		}
+		if t.ContentType == "video" {
+			loc = binary.AppendVarint(loc, VideoFrameMarking)
+			videoFlags := 0b11000000       //One sample is sent per LOC so it is both the start and end of a frame. No temporal layers are used.
+			if sample.Flags>>24&0x3 == 2 { //Is it an IDR-frame?
+				videoFlags |= 0b1 << 5
+			}
+			if sample.Flags>>22&0x3 == 2 { //Is it a discardable frame?
+				videoFlags |= 0b1 << 4
+			}
+			loc = binary.AppendVarint(loc, int64(videoFlags))
+		}
+		loc = append(loc, sample.Data...)
+		result = append(result, loc...)
+	}
+	return result, nil
+}
+
+// encryptFragment encrypts an encoded fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+func (t *ContentTrack) encryptFragment(fragmentBytes []byte) (*mp4.Fragment, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
 	var pos uint64 = 0
 	moofBox, err := mp4.DecodeBox(pos, bytesReader)
@@ -701,12 +777,7 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
-	sw := bits.NewFixedSliceWriter(int(decodedFrag.Size()))
-	err = decodedFrag.EncodeSW(sw)
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
-	}
-	return sw.Bytes(), nil
+	return decodedFrag, nil
 }
 
 // DecryptInit decrypts an encoded init segment
@@ -735,7 +806,7 @@ func DecryptInit(initData []byte) ([]byte, mp4.UUID, mp4.DecryptInfo, error) {
 }
 
 // DecryptFragment decrypts an enocoded fragment (moof+mdat) and returns the unencrypted encoding.
-func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) ([]byte, error) {
+func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) (*mp4.Fragment, error) {
 	bytesReader := bytes.NewReader(payload)
 	var pos uint64 = 0
 	moofBox, err := mp4.DecodeBox(pos, bytesReader)
@@ -770,5 +841,5 @@ func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) 
 	if err != nil {
 		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
 	}
-	return encSw.Bytes(), nil
+	return decodedFrag, nil
 }
