@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -892,9 +893,12 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		if err != nil {
 			return nil, err
 		}
-		return encrypted, nil
+		sw = bits.NewFixedSliceWriter(int(encrypted.Size()))
+		err = encrypted.EncodeSW(sw)
+		if err != nil {
+			return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
+		}
 	}
-
 	return sw.Bytes(), nil
 }
 
@@ -914,11 +918,10 @@ func (t *ContentTrack) CalcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts an encoded fragment and returns the encrypted bytes.
-// For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+// encryptFragment encrypts an encoded fragment and returns the decoded fragment.
 // mp4.EncryptFragment returns the next IV to use; we store it on the track so consecutive
 // fragments chain without IV reuse (cenc) or carry the constant IV forward (cbcs).
-func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
+func (t *ContentTrack) encryptFragment(fragmentBytes []byte) (*mp4.Fragment, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
 	var pos uint64 = 0
 	moofBox, err := mp4.DecodeBox(pos, bytesReader)
@@ -951,12 +954,7 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
 	t.currentIV = nextIV
-	sw := bits.NewFixedSliceWriter(int(decodedFrag.Size()))
-	err = decodedFrag.EncodeSW(sw)
-	if err != nil {
-		return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
-	}
-	return sw.Bytes(), nil
+	return decodedFrag, nil
 }
 
 // DecryptInit decrypts an encoded init segment
