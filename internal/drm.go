@@ -3,8 +3,8 @@ package internal
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Dash-Industry-Forum/livesim2/pkg/drm"
@@ -20,27 +20,14 @@ var drmSystemIDs = map[string]string{
 
 // DRMInfo keeps track of all information regarding DRM
 type DRMInfo struct {
-	ContentProtection *ContentProtection
-	cenc              *CENCInfo
+	ContentProtections []ContentProtection
+	cenc               *CENCInfo
 }
 
 // CENCInfo contains information unique to CENC and is not signaled in the catalog
 type CENCInfo struct {
 	key []byte
 	iv  []byte
-}
-
-// MarshalJSON creates a JSON encoding of DRMInfo
-func (d *DRMInfo) MarshalJSON() ([]byte, error) {
-	if d == nil {
-		return []byte("null"), nil
-	}
-	type debugDRMInfo struct {
-		ContentProtection *ContentProtection `json:"contentProtection,omitempty"`
-	}
-	return json.Marshal(debugDRMInfo{
-		ContentProtection: d.ContentProtection,
-	})
 }
 
 // ConfigureDRMFromFile reads a DRM config file and returns a *DRMInfo struct.
@@ -55,45 +42,57 @@ func ConfigureDRMFromFile(configpath string) (*DRMInfo, error) {
 	}
 	pack := drmConfig.Packages[0]
 	cpix := pack.CPIXData
-	drmSystems := make(map[string]DRMSystem)
+	contentKey := cpix.ContentKeys[0]
+	scheme := contentKey.CommonEncryptionScheme
+	var drmSystems []DRMSystem
 	for drmName, URL := range pack.URLs {
 		if drmName == "fairplay" && URL.CertificateURL == "" {
 			return nil, fmt.Errorf("certificate url must be configured for fairplay")
 		}
+
 		sysID, ok := drmSystemIDs[drmName]
 		if !ok {
 			return nil, fmt.Errorf("corresponding systemID for %s not found", drmName)
 		}
-		drmSystems[sysID] = DRMSystem{
-			License: &DRMService{
+		drmSystems = append(drmSystems, DRMSystem{
+			SystemID: sysID,
+			LaURL: &DRMService{
 				URL: URL.LaURL,
 			},
-			Authorization: &DRMService{
+			CertURL: &DRMService{
 				URL: URL.CertificateURL,
 			},
-		}
+		})
 	}
+	var contentProtections []ContentProtection
+	refID := 123456
 	for _, ds := range cpix.DRMSystems {
-		cur, ok := drmSystems[ds.SystemID]
-		if !ok {
+		var system DRMSystem
+		for _, catalogDS := range drmSystems {
+			if ds.SystemID == catalogDS.SystemID {
+				system = catalogDS
+			}
+		}
+		if system == (DRMSystem{}) {
 			return nil, fmt.Errorf("couldn't find existing DRMSystem corresponding to systemID %s", ds.SystemID)
 		}
-		cur.PSSH = strings.TrimSpace(ds.PSSH)
-		drmSystems[ds.SystemID] = cur
-	}
-	contentProtection := &ContentProtection{
-		Scheme:      cpix.ContentKeys[0].CommonEncryptionScheme,
-		DefaultKIDs: []string{cpix.ContentKeys[0].KeyID.String()},
-		DRMSystems:  drmSystems,
+		system.Pssh = strings.TrimSpace(ds.PSSH)
+		contentProtections = append(contentProtections, ContentProtection{
+			RefID:       strconv.Itoa(refID),
+			Scheme:      scheme,
+			DefaultKIDs: []string{contentKey.KeyID.String()},
+			DRMSystem:   &system,
+		})
+		refID += 17011 //unimportant number
 	}
 
 	cenc := &CENCInfo{
-		key: cpix.ContentKeys[0].Key,
-		iv:  cpix.ContentKeys[0].ExplicitIV,
+		key: contentKey.Key,
+		iv:  contentKey.ExplicitIV,
 	}
 	return &DRMInfo{
-		ContentProtection: contentProtection,
-		cenc:              cenc,
+		ContentProtections: contentProtections,
+		cenc:               cenc,
 	}, nil
 
 }
@@ -153,7 +152,6 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string, fingerprintPort int) (
 		key: key,
 		iv:  iv,
 	}
-	drmSystems := make(map[string]DRMSystem)
 	license := &DRMService{
 		URL:  fmt.Sprintf("http://localhost:%d/clearkey", fingerprintPort),
 		Type: "EME-1.0",
@@ -163,18 +161,23 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string, fingerprintPort int) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to encode pssh box: %w", err)
 	}
-	drmSystems[psshBox.SystemID.String()] = DRMSystem{
-		License: license,
-		PSSH:    base64.URLEncoding.EncodeToString(sw.Bytes()),
+	drmSystem := DRMSystem{
+		SystemID: psshBox.SystemID.String(),
+		LaURL:    license,
+		Pssh:     base64.RawStdEncoding.EncodeToString(sw.Bytes()),
 	}
-	contentProtection := &ContentProtection{
+	refID := "654321"
+	var contentProtections []ContentProtection
+	contentProtections = append(contentProtections, ContentProtection{
+		RefID:       refID,
 		Scheme:      scheme,
 		DefaultKIDs: []string{kidUUID.String()},
-		DRMSystems:  drmSystems,
-	}
+		DRMSystem:   &drmSystem,
+	})
+
 	return &DRMInfo{
-		ContentProtection: contentProtection,
-		cenc:              cenc,
+		ContentProtections: contentProtections,
+		cenc:               cenc,
 	}, nil
 }
 

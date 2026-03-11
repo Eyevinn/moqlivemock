@@ -20,21 +20,22 @@ const (
 )
 
 type ContentTrack struct {
-	Name          string
-	ContentType   string
-	Language      string
-	SampleBitrate uint32
-	TimeScale     uint32
-	Duration      uint32
-	GopLength     uint32
-	SampleDur     uint32
-	NrSamples     uint32
-	LoopDur       uint32 // Loop duration in local timescale
-	SampleBatch   int
-	Samples       []mp4.FullSample
-	SpecData      CodecSpecificData
-	drm           *DRMInfo
-	ipd           *mp4.InitProtectData
+	Name                    string
+	ContentType             string
+	Language                string
+	SampleBitrate           uint32
+	TimeScale               uint32
+	Duration                uint32
+	GopLength               uint32
+	SampleDur               uint32
+	NrSamples               uint32
+	LoopDur                 uint32 // Loop duration in local timescale
+	SampleBatch             int
+	Samples                 []mp4.FullSample
+	SpecData                CodecSpecificData
+	contentProtectionRefIDs []string
+	cenc                    *CENCInfo
+	ipd                     *mp4.InitProtectData
 }
 
 type Asset struct {
@@ -42,6 +43,7 @@ type Asset struct {
 	Groups         []TrackGroup
 	LoopDurMS      uint32
 	SubtitleTracks []*SubtitleTrack
+	Drm            *DRMInfo
 }
 
 type CodecSpecificData interface {
@@ -290,6 +292,7 @@ func LoadAssetWithDRM(dirPath string, audioSampleBatch, videoSampleBatch int, dr
 	asset := &Asset{
 		Name:   filepath.Base(dirPath),
 		Groups: trackGroups,
+		Drm:    drm,
 	}
 	if err := asset.setLoopDuration(); err != nil {
 		return nil, fmt.Errorf("could not set loop duration: %w", err)
@@ -336,7 +339,7 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo)
 		}
 		var added []ContentTrack
 		for _, ct := range orig {
-			protectedCt, err := addProtectionToTrack(ct, drm)
+			protectedCt, err := addProtectionInfoToTrack(ct, drm)
 			if err != nil {
 				return err
 			}
@@ -347,26 +350,31 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo)
 	return nil
 }
 
-// addProtectionToTrack adds protection information to a track.
-func addProtectionToTrack(ct ContentTrack, drm *DRMInfo) (ContentTrack, error) {
+// addProtectionInfoToTrack adds protection information to a track.
+func addProtectionInfoToTrack(ct ContentTrack, drm *DRMInfo) (ContentTrack, error) {
 	protectedCt := ct
 	protectedSpecData, err := cloneCodecSpecificData(ct.SpecData)
 	protectedCt.Name = ct.Name + "_protected"
+	protectedCt.cenc = drm.cenc
+	refIDs := make([]string, 0, len(drm.ContentProtections))
+	for _, cp := range drm.ContentProtections {
+		refIDs = append(refIDs, cp.RefID)
+	}
+	protectedCt.contentProtectionRefIDs = refIDs
 	if err != nil {
 		return ContentTrack{}, err
 	}
 	protectedCt.SpecData = protectedSpecData
-	kid, err := mp4.NewUUIDFromString(drm.ContentProtection.DefaultKIDs[0])
+	kid, err := mp4.NewUUIDFromString(drm.ContentProtections[0].DefaultKIDs[0])
 	if err != nil {
 		return ContentTrack{}, fmt.Errorf("unable to parse UUID from string: %w", err)
 	}
 	ipd, err := mp4.InitProtect(protectedCt.SpecData.GetInit(), []byte{},
-		drm.cenc.iv, drm.ContentProtection.Scheme, kid, nil)
+		drm.cenc.iv, drm.ContentProtections[0].Scheme, kid, nil)
 	if err != nil {
 		return ContentTrack{}, fmt.Errorf("unable to add protection data to cloned init for track %s: %w", ct.Name, err)
 	}
 	protectedCt.ipd = ipd
-	protectedCt.drm = drm
 	return protectedCt, nil
 }
 
@@ -532,8 +540,8 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 					}
 				}
 			}
-			if ct.drm != nil {
-				track.ContentProtection = ct.drm.ContentProtection
+			if ct.contentProtectionRefIDs != nil {
+				track.ContentProtectionRefIDs = ct.contentProtectionRefIDs
 			}
 			track.Namespace = Namespace
 			tracks = append(tracks, track)
@@ -586,6 +594,9 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 		GeneratedAt: &generatedAtMS,
 		Tracks:      tracks,
 	}
+	if a.Drm != nil {
+		cat.ContentProtections = a.Drm.ContentProtections
+	}
 	return cat, nil
 }
 
@@ -633,7 +644,7 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		return nil, err
 	}
 
-	if t.drm != nil {
+	if t.contentProtectionRefIDs != nil {
 		encrypted, err := t.encryptFragment(sw.Bytes())
 		if err != nil {
 			return nil, err
@@ -687,7 +698,7 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	decodedFrag.AddChild(moof)
 	decodedFrag.AddChild(mdat)
 
-	err = mp4.EncryptFragment(decodedFrag, t.drm.cenc.key, t.drm.cenc.iv, t.ipd)
+	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd) //TODO: iv needs to be incremented?
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}

@@ -43,6 +43,12 @@ type Catalog struct {
 	// Tracks is an array of track objects.
 	// Required field at the root level for non-delta updates.
 	Tracks []Track `json:"tracks,omitempty"`
+
+	// ContentProtections contains content protection information.
+	// No content protection is information is repeated at the track level,
+	// all tracks must refer to this common field.
+	// Optional field at the root level, only used if content is protected.
+	ContentProtections []ContentProtection `json:"contentProtections,omitempty"`
 }
 
 func (c *Catalog) GetTrackByName(name string) *Track {
@@ -197,23 +203,28 @@ type Track struct {
 	// This field is only included inside a CloneTracks object.
 	ParentName string `json:"parentName,omitempty"`
 
-	// ContentProtection contains DRM-related information.
-	//Optional field at the trck level. Should only be included if the track is DRM protected.
-	ContentProtection *ContentProtection `json:"contentProtection,omitempty"`
+	// ContentProtectionRefIDs defines which content protection information should be used for this track.
+	// The ID is used as a key in the root-level field ContentProtection.
+	// Optional field at the track level, only used when the track is protected.
+	ContentProtectionRefIDs []string `json:"contentProtectionRefIDs,omitempty"`
 }
 
-// ContentProtection represents DRM information for a track.
+// ContentProtection contains all information needed to create DRM request
 type ContentProtection struct {
-	Scheme      string               `json:"scheme,omitempty"`
-	DefaultKIDs []string               `json:"defaultKIDs,omitempty"`
-	DRMSystems  map[string]DRMSystem `json:"drmSystems,omitempty"`
+	RefID       string     `json:"refID,omitempty"`
+	DefaultKIDs []string   `json:"defaultKID,omitempty"`
+	Scheme      string     `json:"scheme,omitempty"`
+	DRMSystem   *DRMSystem `json:"drmSystem,omitempty"`
 }
 
-// DRMSystem represents a specific DRM system configuration.
+// DRMSystem represents information related to a DRM system
 type DRMSystem struct {
-	License       *DRMService `json:"license,omitempty"`
-	Authorization *DRMService `json:"authorization,omitempty"`
-	PSSH          string      `json:"pssh,omitempty"`
+	SystemID   string      `json:"systemID,omitempty"`
+	Robustness string      `json:"robustness,omitempty"`
+	LaURL      *DRMService `json:"laURL,omitempty"`
+	AuthzURL   *DRMService `json:"authzURL,omitempty"`
+	CertURL    *DRMService `json:"certURL,omitempty"`
+	Pssh       string      `json:"pssh,omitempty"`
 }
 
 // DRMService represents a license or authorization service.

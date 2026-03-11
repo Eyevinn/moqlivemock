@@ -178,7 +178,8 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	require.Equal(t, videoInitBefore, videoInitAfter, "original video init data should be unchanged")
 
 	protectedVideo := tracksByType["video"][len(tracksByType["video"])-1]
-	require.NotNil(t, protectedVideo.drm)
+	require.NotNil(t, protectedVideo.cenc)
+	require.NotEmpty(t, protectedVideo.contentProtectionRefIDs)
 	require.NotNil(t, protectedVideo.ipd)
 	protectedVideoInit, err := protectedVideo.SpecData.GenCMAFInitData()
 	require.NoError(t, err)
@@ -316,7 +317,7 @@ func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo) {
 					chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1))
 					if err != nil {
 						t.Fatalf("chunk generation failed for track=%s codec=%s scheme=%s encStatus=%s chunkNr=%d: %v",
-							tr.Name, tr.SpecData.Codec(), drm.ContentProtection.Scheme, encryptionStatus, nr, err)
+							tr.Name, tr.SpecData.Codec(), drm.ContentProtections[0].Scheme, encryptionStatus, nr, err)
 					}
 					_, err = ofh.Write(chunk)
 					require.NoError(t, err)
