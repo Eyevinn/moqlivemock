@@ -270,8 +270,8 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		hd.Vpss,
 		hd.Spss,
 		hd.Ppss,
-		nil,   // DCI
-		true,  // includePS
+		nil,  // DCI
+		true, // includePS
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not set HEVC descriptor: %w", err)
