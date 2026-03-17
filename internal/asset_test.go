@@ -166,10 +166,10 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
-	cenc, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr)
+	drm, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, 8081)
 	require.NoError(t, err)
 
-	err = createProtectedTracks(tracksByType, cenc)
+	err = createProtectedTracks(tracksByType, drm)
 	require.NoError(t, err)
 
 	origVideoAfter := tracksByType["video"][0]
@@ -179,6 +179,7 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 
 	protectedVideo := tracksByType["video"][len(tracksByType["video"])-1]
 	require.NotNil(t, protectedVideo.cenc)
+	require.NotEmpty(t, protectedVideo.contentProtectionRefIDs)
 	require.NotNil(t, protectedVideo.ipd)
 	protectedVideoInit, err := protectedVideo.SpecData.GenCMAFInitData()
 	require.NoError(t, err)
@@ -241,17 +242,28 @@ func TestGen20sCMAFStreams(t *testing.T) {
 	}
 }
 
-func TestDecryptedTracksMatchExactly(t *testing.T) {
+func TestClearKeyDecryptionMatchExcatly(t *testing.T) {
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
-	scheme := "cenc"
-	cenc, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr)
-	require.NoError(t, err)
+	schemes := []string{"cbcs", "cenc"}
+	for _, scheme := range schemes {
+		drm, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, 8081)
+		require.NoError(t, err)
+		checkDecryptedTracksMatchExactly(t, drm)
+	}
+}
 
-	cencAsset, err := LoadAssetWithCENCInfo("../assets/test10s", 1, 1, cenc)
+func TestCommercialDRMDecryptionMatchExactly(t *testing.T) {
+	drm, err := ConfigureDRMFromFile("../assets/testdrm/drm_config_test.json")
 	require.NoError(t, err)
-	require.NotNil(t, cencAsset)
+	checkDecryptedTracksMatchExactly(t, drm)
+}
+
+func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo) {
+	drmAsset, err := LoadAssetWithDRM("../assets/test10s", 1, 1, drm)
+	require.NoError(t, err)
+	require.NotNil(t, drmAsset)
 
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
@@ -264,8 +276,7 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 		trackNr  int
 	}{
 		{"video_400kbps_avc", 0, 0},
-		{"video_600kbps_avc", 0, 1},
-		{"video_600kbps_hevc", 0, 2},
+		{"video_400kbps_hevc", 0, 1},
 		{"audio_128kbps", 1, 0},
 		{"audio_monotonic_128kbps_opus", 1, 1},
 	}
@@ -283,7 +294,7 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 				case "encrypted":
 					protectedName := originalTrack.Name + "_protected"
 					found := false
-					for _, cand := range cencAsset.Groups[tc.groupIdx].Tracks {
+					for _, cand := range drmAsset.Groups[tc.groupIdx].Tracks {
 						if cand.Name == protectedName {
 							tr = cand
 							found = true
@@ -304,7 +315,10 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 				groupNr := uint32(0)
 				for nr := 0; nr < nrSamples; nr++ {
 					chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1))
-					require.NoError(t, err)
+					if err != nil {
+						t.Fatalf("chunk generation failed for track=%s codec=%s scheme=%s encStatus=%s chunkNr=%d: %v",
+							tr.Name, tr.SpecData.Codec(), drm.ContentProtections[0].Scheme, encryptionStatus, nr, err)
+					}
 					_, err = ofh.Write(chunk)
 					require.NoError(t, err)
 				}
@@ -333,7 +347,7 @@ func TestDecryptedTracksMatchExactly(t *testing.T) {
 							sw = bits.NewFixedSliceWriter(int(frag.Size()))
 							err = frag.EncodeSW(sw)
 							require.NoError(t, err)
-							decPayload, err := DecryptFragment(sw.Bytes(), ipd, cenc.key)
+							decPayload, err := DecryptFragment(sw.Bytes(), ipd, drm.cenc.key)
 							require.NoError(t, err)
 
 							fsr := bits.NewFixedSliceReader(decPayload)

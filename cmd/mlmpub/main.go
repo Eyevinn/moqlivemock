@@ -57,6 +57,7 @@ type options struct {
 	iv               string
 	kid              string
 	scheme           string
+	drmConfigPath    string
 	version          bool
 }
 
@@ -84,6 +85,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		"if no key is specified the key id will be used as the key.")
 	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption,"+
 		"either \"cenc\" or \"cbcs\"")
+	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -127,11 +129,16 @@ func runServer(opts *options) error {
 			return err
 		}
 	}
-	cencInfo, err := internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv)
+	var drm *internal.DRMInfo
+	if opts.drmConfigPath != "" {
+		drm, err = internal.ConfigureDRMFromFile(opts.drmConfigPath)
+	} else {
+		drm, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, opts.fingerprintPort)
+	}
 	if err != nil {
 		return err
 	}
-	asset, err := internal.LoadAssetWithCENCInfo(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch, cencInfo)
+	asset, err := internal.LoadAssetWithDRM(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch, drm)
 	if err != nil {
 		return err
 	}

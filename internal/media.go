@@ -106,7 +106,7 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	ad.outInit = mp4.CreateEmptyInit()
 	timeScale := trak.Mdia.Mdhd.Timescale
 	ad.outInit.AddEmptyTrack(timeScale, "video", "und")
-	err := ad.outInit.Moov.Trak.SetAVCDescriptor("avc3", ad.Spss, ad.Ppss, false)
+	err := ad.outInit.Moov.Trak.SetAVCDescriptor("avc3", ad.Spss, ad.Ppss, true)
 	if err != nil {
 		return nil, fmt.Errorf("could not set AVC descriptor: %w", err)
 	}
@@ -270,8 +270,8 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		hd.Vpss,
 		hd.Spss,
 		hd.Ppss,
-		nil,   // DCI
-		false, // includePS
+		nil,  // DCI
+		true, // includePS
 	)
 	if err != nil {
 		return nil, fmt.Errorf("could not set HEVC descriptor: %w", err)
