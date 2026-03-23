@@ -16,7 +16,6 @@ import (
 const (
 	trackID           = 1
 	cmafOverheadBytes = 112                                    // moof + mdat header size for one sample
-	CommonSystemID    = "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b" //https://www.w3.org/TR/eme-initdata-cenc/#clear-key
 )
 
 type ContentTrack struct {
@@ -540,7 +539,7 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 					}
 				}
 			}
-			if ct.contentProtectionRefIDs != nil {
+			if len(ct.contentProtectionRefIDs) > 0 {
 				track.ContentProtectionRefIDs = ct.contentProtectionRefIDs
 			}
 			track.Namespace = Namespace
@@ -644,7 +643,7 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		return nil, err
 	}
 
-	if t.contentProtectionRefIDs != nil {
+	if len(t.contentProtectionRefIDs) > 0 {
 		encrypted, err := t.encryptFragment(sw.Bytes())
 		if err != nil {
 			return nil, err
@@ -698,7 +697,7 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	decodedFrag.AddChild(moof)
 	decodedFrag.AddChild(mdat)
 
-	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd) //TODO: iv needs to be incremented?
+	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd)
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}

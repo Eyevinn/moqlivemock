@@ -12,6 +12,8 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
+const CommonSystemID    = "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b" //https://www.w3.org/TR/eme-initdata-cenc/#clear-key
+
 var drmSystemIDs = map[string]string{
 	"widevine":  "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
 	"playready": "9a04f079-9840-4286-ab92-e65be0885f95",
@@ -65,7 +67,8 @@ func ConfigureDRMFromFile(configpath string) (*DRMInfo, error) {
 		})
 	}
 	var contentProtections []ContentProtection
-	refID := 123456
+	const firstRefID = 1
+	refID := firstRefID
 	for _, ds := range cpix.DRMSystems {
 		var system DRMSystem
 		for _, catalogDS := range drmSystems {
@@ -83,7 +86,7 @@ func ConfigureDRMFromFile(configpath string) (*DRMInfo, error) {
 			DefaultKIDs: []string{contentKey.KeyID.String()},
 			DRMSystem:   &system,
 		})
-		refID += 17011 //unimportant number
+		refID += 1
 	}
 
 	cenc := &CENCInfo{
@@ -166,7 +169,7 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string, fingerprintPort int) (
 		LaURL:    license,
 		Pssh:     base64.RawStdEncoding.EncodeToString(sw.Bytes()),
 	}
-	refID := "654321"
+	refID := "1"
 	var contentProtections []ContentProtection
 	contentProtections = append(contentProtections, ContentProtection{
 		RefID:       refID,
