@@ -126,7 +126,7 @@ func (h *moqHandler) handle(ctx context.Context, conn moqtransport.Connection) {
 	subsTrack := ""
 	for _, track := range h.catalog.Tracks {
 		//If track is encrypted, the InitData needs to be adjusted
-		if track.ContentProtectionRefIDs != nil {
+		if len(track.ContentProtectionRefIDs) > 0 {
 			if h.cenc == nil {
 				h.cenc = &CENC{
 					DecryptInfo: make(map[string]mp4.DecryptInfo),
