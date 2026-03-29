@@ -32,12 +32,7 @@ go mod vendor               # Vendor dependencies
 
 ### MoQ Transport Dependency
 
-Uses a fork of moqtransport with draft-14 support:
-```go
-replace github.com/mengelbart/moqtransport => github.com/Eyevinn/moqtransport v0.5.1-...
-```
-
-The fork maintains API compatibility while updating wire protocol to draft-14:
+Uses `github.com/Eyevinn/moqtransport` (forked from mengelbart/moqtransport) with draft-14 support.
 - Session creation: `&moqtransport.Session{Handler: ..., SubscribeHandler: ...}`
 - Call `session.Run(conn)` to start
 - Subscriptions use separate `SubscribeHandler` interface

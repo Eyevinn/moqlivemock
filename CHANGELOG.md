@@ -114,6 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [msf-00]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/00/
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
-[moqtransport]: https://github.com/mengelbart/moqtransport
+[moqtransport]: https://github.com/Eyevinn/moqtransport
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [wp]: https://github.com/Eyevinn/warp-player

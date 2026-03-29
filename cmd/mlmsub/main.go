@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
-	"github.com/mengelbart/moqtransport/quicmoq"
-	"github.com/mengelbart/moqtransport/webtransportmoq"
+	"github.com/Eyevinn/moqtransport"
+	"github.com/Eyevinn/moqtransport/quicmoq"
+	"github.com/Eyevinn/moqtransport/webtransportmoq"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/webtransport-go"
 )
@@ -210,7 +210,8 @@ func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error)
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"moq-00"},
 	}, &quic.Config{
-		EnableDatagrams: true,
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
 	})
 	if err != nil {
 		return nil, err
@@ -222,6 +223,10 @@ func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection
 	dialer := webtransport.Dialer{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
+		},
+		QUICConfig: &quic.Config{
+			EnableDatagrams:                  true,
+			EnableStreamResetPartialDelivery: true,
 		},
 	}
 	_, session, err := dialer.Dial(ctx, addr, nil)

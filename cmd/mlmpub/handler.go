@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/mengelbart/moqtransport"
-	"github.com/mengelbart/moqtransport/quicmoq"
-	"github.com/mengelbart/moqtransport/webtransportmoq"
+	"github.com/Eyevinn/moqtransport"
+	"github.com/Eyevinn/moqtransport/quicmoq"
+	"github.com/Eyevinn/moqtransport/webtransportmoq"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 	"github.com/quic-go/quic-go"
@@ -46,16 +46,23 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 
 	slog.Info("Starting MoQ server", "addr", h.addr)
 	listener, err := quic.ListenAddr(h.addr, h.tlsConfig, &quic.Config{
-		EnableDatagrams: true,
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
 	})
 	if err != nil {
 		return err
 	}
-	wt := webtransport.Server{
-		H3: http3.Server{
-			Addr:      h.addr,
-			TLSConfig: h.tlsConfig,
+	h3Server := &http3.Server{
+		Addr:      h.addr,
+		TLSConfig: h.tlsConfig,
+		QUICConfig: &quic.Config{
+			EnableDatagrams:                  true,
+			EnableStreamResetPartialDelivery: true,
 		},
+	}
+	webtransport.ConfigureHTTP3Server(h3Server)
+	wt := webtransport.Server{
+		H3: h3Server,
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
@@ -469,6 +476,7 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		InitialMaxRequestID: 100,
 		Qlogger:             qlog.NewQLOGHandler(h.logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
+	slog.Info("starting MoQ session", "perspective", conn.Perspective())
 	err := session.Run(conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
@@ -478,10 +486,12 @@ func (h *moqHandler) handle(conn moqtransport.Connection) {
 		}
 		return
 	}
+	slog.Info("MoQ session established, announcing namespace", "namespace", h.namespace)
 	if err := session.Announce(context.Background(), h.namespace); err != nil {
 		slog.Error("failed to announce namespace", "namespace", h.namespace, "error", err)
 		return
 	}
+	slog.Info("namespace announced successfully", "namespace", h.namespace)
 }
 
 func tupleEqual(a, b []string) bool {
