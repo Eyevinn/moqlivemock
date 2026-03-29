@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CENC encryption support (`cenc` and `cbcs` schemes) for video and audio tracks
+- ClearKey DRM with key/IV via CLI flags (`-kid`, `-cenckey`, `-iv`, `-scheme`)
+- Commercial DRM support via CPIX config file (`-drmpath`), including Widevine and FairPlay
+- DRM information included in the MSF/CMSF catalog
+
+### Changed
+
+- CI: added coverage workflow, updated Go to 1.25, aligned workflows with hi264
+
 ## [0.5.0] - 2026-01-27
 
 ### Changed
