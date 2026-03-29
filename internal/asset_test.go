@@ -7,6 +7,7 @@ import (
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -258,6 +259,51 @@ func TestCommercialDRMDecryptionMatchExactly(t *testing.T) {
 	drm, err := ConfigureDRMFromFile("../assets/testdrm/drm_config_test.json")
 	require.NoError(t, err)
 	checkDecryptedTracksMatchExactly(t, drm)
+}
+
+func TestGetSubtitleTrackByName(t *testing.T) {
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+
+	err = asset.AddSubtitleTracks([]string{"en", "sv"}, []string{"en"})
+	require.NoError(t, err)
+
+	t.Run("found wvtt", func(t *testing.T) {
+		st := asset.GetSubtitleTrackByName("subs_wvtt_en")
+		require.NotNil(t, st)
+		assert.Equal(t, "subs_wvtt_en", st.Name)
+		assert.Equal(t, SubtitleFormatWVTT, st.Format)
+		assert.Equal(t, "en", st.Language)
+	})
+
+	t.Run("found stpp", func(t *testing.T) {
+		st := asset.GetSubtitleTrackByName("subs_stpp_en")
+		require.NotNil(t, st)
+		assert.Equal(t, SubtitleFormatSTPP, st.Format)
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		assert.Nil(t, asset.GetSubtitleTrackByName("nonexistent"))
+	})
+}
+
+func TestAddSubtitleTracks(t *testing.T) {
+	asset := &Asset{}
+
+	err := asset.AddSubtitleTracks([]string{"en", "sv"}, []string{"fr"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(asset.SubtitleTracks))
+	assert.Equal(t, "subs_wvtt_en", asset.SubtitleTracks[0].Name)
+	assert.Equal(t, "subs_wvtt_sv", asset.SubtitleTracks[1].Name)
+	assert.Equal(t, "subs_stpp_fr", asset.SubtitleTracks[2].Name)
+}
+
+func TestAddSubtitleTracksEmpty(t *testing.T) {
+	asset := &Asset{}
+
+	err := asset.AddSubtitleTracks([]string{}, []string{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(asset.SubtitleTracks))
 }
 
 func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo) {
