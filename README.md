@@ -87,7 +87,7 @@ To receive subtitles with the mlmsub subscriber:
 
 ## Requirements
 
-* Go 1.23 or later
+* Go 1.24 or later
 
 ## Installation and Usage
 
@@ -231,9 +231,28 @@ cd cmd/mlmsub
 go run . -videoname video_400kbps_avc_protected -audioname audio_monotonic_128kbps_aac_protected -muxout - | ffplay -
 ```
 
+## QUIC / WebTransport Configuration
+
+Since `quic-go` v0.59.0 and `webtransport-go` v0.10.0, the QUIC config must enable
+`EnableStreamResetPartialDelivery` in addition to `EnableDatagrams`. Without it,
+WebTransport connections will fail with `ERR_METHOD_NOT_SUPPORTED` in the browser.
+
+For WebTransport servers, `webtransport.ConfigureHTTP3Server(h3Server)` must also be
+called before serving connections. This sets the `ENABLE_WEBTRANSPORT` HTTP/3 setting
+that browsers require during the WebTransport handshake.
+
+Example QUIC config:
+
+```go
+&quic.Config{
+    EnableDatagrams:                  true,
+    EnableStreamResetPartialDelivery: true,
+}
+```
+
 ## Development
 
-Use plain Go environment, with go 1.23 or later.
+Use plain Go environment, with go 1.24 or later.
 The Makefile helps out with some tasks.
 
 ## Contributing
@@ -265,5 +284,5 @@ Want to know more about Eyevinn and how it is to work here. Contact us at work@e
 [moqt-14]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-14
 [MSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
 [CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
-[moqtransport]: https://github.com/mengelbart/moqtransport
+[moqtransport]: https://github.com/Eyevinn/moqtransport
 [warp-player]: https://github.com/Eyevinn/warp-player
