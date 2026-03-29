@@ -1,0 +1,4 @@
+# Dependabot disabled in favor of govulncheck and latest-deps workflows.
+# See https://words.filippo.io/dependabot/
+version: 2
+updates: []
