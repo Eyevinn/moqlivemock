@@ -9,10 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `build-linux` Makefile target for cross-compiling mlmpub to linux/amd64
 - CENC encryption support (`cenc` and `cbcs` schemes) for video and audio tracks
 - ClearKey DRM with key/IV via CLI flags (`-kid`, `-cenckey`, `-iv`, `-scheme`)
 - Commercial DRM support via CPIX config file (`-drmpath`), including Widevine and FairPlay
 - DRM information included in the MSF/CMSF catalog
+
+### Fixed
+
+- Safari 26.4 WebTransport support by adding newer SETTINGS codepoints
+  ([warp-player#88](https://github.com/Eyevinn/warp-player/issues/88))
 
 ### Changed
 

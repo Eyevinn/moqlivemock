@@ -61,6 +61,12 @@ func (h *moqHandler) runServer(ctx context.Context) error {
 		},
 	}
 	webtransport.ConfigureHTTP3Server(h3Server)
+	// Add newer WebTransport setting codepoints for Safari 26.4+ compatibility.
+	// webtransport-go only sends the old draft-02 setting (0x2b603742).
+	// Safari requires the draft-13/14 or draft-15 codepoint to recognize WebTransport support.
+	// See https://github.com/Eyevinn/warp-player/issues/88
+	h3Server.AdditionalSettings[0x14e9cd29] = 1 // SETTINGS_WT_MAX_SESSIONS (draft-13/14)
+	h3Server.AdditionalSettings[0x2c7cf000] = 1 // SETTINGS_WT_ENABLED (draft-15)
 	wt := webtransport.Server{
 		H3: h3Server,
 		CheckOrigin: func(r *http.Request) bool {
