@@ -12,7 +12,7 @@ import (
 func TestCatalogGetTrackByName(t *testing.T) {
 	cat := &Catalog{
 		Tracks: []Track{
-			{Name: "video_400kbps_avc", Codec: "avc3"},
+			{Name: "video_400kbps_avc", Codec: "avc1"},
 			{Name: "audio_128kbps_aac", Codec: "mp4a"},
 		},
 	}
@@ -20,7 +20,7 @@ func TestCatalogGetTrackByName(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		track := cat.GetTrackByName("video_400kbps_avc")
 		require.NotNil(t, track)
-		assert.Equal(t, "avc3", track.Codec)
+		assert.Equal(t, "avc1", track.Codec)
 	})
 
 	t.Run("not found", func(t *testing.T) {
