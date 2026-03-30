@@ -64,6 +64,13 @@ Configuration via mlmpub flags:
 
 Track naming: `subs_wvtt_{lang}`, `subs_stpp_{lang}`
 
+### Video Codecs
+
+Video tracks use `avc1` (H.264) and `hvc1` (HEVC) sample descriptors. These store
+parameter sets (SPS/PPS for AVC, VPS/SPS/PPS for HEVC) in the init segment rather
+than inlining them in each sample. This is required for FairPlay DRM compatibility
+in Safari 26.4+.
+
 ## Testing
 
 The `internal/` package contains unit tests. Run with:

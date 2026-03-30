@@ -86,27 +86,12 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	if len(ad.Spss) != 1 || len(ad.Ppss) != 1 {
 		return nil, fmt.Errorf("not exactly one SPS and PPS nalus found")
 	}
-	for i := range samples {
-		if avc.GetNaluType(samples[i].Data[4]) == avc.NALU_IDR {
-			// Insert SPS and PPS
-			totSize := 4 + len(ad.Spss[0]) + 4 + len(ad.Ppss[0]) + len(samples[i].Data)
-			newData := make([]byte, 0, totSize)
-			binary.BigEndian.PutUint32(work, uint32(len(ad.Spss[0])))
-			newData = append(newData, work...)
-			newData = append(newData, ad.Spss[0]...)
-			binary.BigEndian.PutUint32(work, uint32(len(ad.Ppss[0])))
-			newData = append(newData, work...)
-			newData = append(newData, ad.Ppss[0]...)
-			newData = append(newData, samples[i].Data...)
-			samples[i].Data = newData
-		}
-	}
-
-	// Generate an output init segment with avc3 sample descriptor
+	// Generate an output init segment with avc1 sample descriptor
+	// With avc1, SPS/PPS are in the init segment, not in samples
 	ad.outInit = mp4.CreateEmptyInit()
 	timeScale := trak.Mdia.Mdhd.Timescale
 	ad.outInit.AddEmptyTrack(timeScale, "video", "und")
-	err := ad.outInit.Moov.Trak.SetAVCDescriptor("avc3", ad.Spss, ad.Ppss, true)
+	err := ad.outInit.Moov.Trak.SetAVCDescriptor("avc1", ad.Spss, ad.Ppss, true)
 	if err != nil {
 		return nil, fmt.Errorf("could not set AVC descriptor: %w", err)
 	}
@@ -114,7 +99,7 @@ func initAVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*AVCData, err
 	if err != nil {
 		return nil, fmt.Errorf("could not decode SPS: %w", err)
 	}
-	ad.codec = avc.CodecString("avc3", sps)
+	ad.codec = avc.CodecString("avc1", sps)
 	ad.width = uint32(sps.Width)
 	ad.height = uint32(sps.Height)
 	return ad, nil
@@ -236,37 +221,14 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		}
 	}
 
-	// Insert VPS/SPS/PPS before IRAP samples (NALU type 16–23)
-	for i := range samples {
-		if len(samples[i].Data) < 5 {
-			continue
-		}
-
-		if hevc.IsRAPSample(samples[i].Data) {
-			newData := make([]byte, 0)
-
-			for _, ps := range [][]byte{
-				hd.Vpss[0],
-				hd.Spss[0],
-				hd.Ppss[0],
-			} {
-				binary.BigEndian.PutUint32(work, uint32(len(ps)))
-				newData = append(newData, work...)
-				newData = append(newData, ps...)
-			}
-
-			newData = append(newData, samples[i].Data...)
-			samples[i].Data = newData
-		}
-	}
-
-	// Create CMAF-compliant init segment (hev1)
+	// Create CMAF-compliant init segment (hvc1)
+	// With hvc1, VPS/SPS/PPS are in the init segment, not in samples
 	hd.outInit = mp4.CreateEmptyInit()
 	timeScale := trak.Mdia.Mdhd.Timescale
 	hd.outInit.AddEmptyTrack(timeScale, "video", "und")
 
 	err := hd.outInit.Moov.Trak.SetHEVCDescriptor(
-		"hev1",
+		"hvc1",
 		hd.Vpss,
 		hd.Spss,
 		hd.Ppss,
@@ -283,7 +245,7 @@ func initHEVCData(init *mp4.InitSegment, samples []mp4.FullSample) (*HEVCData, e
 		return nil, fmt.Errorf("could not parse HEVC SPS: %w", err)
 	}
 
-	hd.codec = hevc.CodecString("hev1", sps)
+	hd.codec = hevc.CodecString("hvc1", sps)
 	hd.width = uint32(sps.PicWidthInLumaSamples)
 	hd.height = uint32(sps.PicHeightInLumaSamples)
 

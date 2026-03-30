@@ -13,6 +13,10 @@ audio tracks, and dynamically-generated subtitle tracks (WVTT and STPP),
 as well as a client that can receive these streams and even multiplex
 video and audio for playback with ffplay like `mlmsub -muxout - | ffplay -`.
 
+Video tracks use `avc1` (H.264) and `hvc1` (HEVC) sample descriptors with
+parameter sets stored in the init segment, which is required for FairPlay
+DRM support in Safari 26.4+.
+
 The input media is 10s of video and audio which is then disassembled
 into frames. One or more frames are then combined into a MoQ object as a CMAF chunk.
 How many frames are combined is configurable via the `-audiobatch` and `-videobatch` options.

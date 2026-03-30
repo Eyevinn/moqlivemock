@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Switched video sample descriptors from `avc3`/`hev1` to `avc1`/`hvc1` to support
+  FairPlay streaming in Safari 26.4+. With `avc1`/`hvc1`, parameter sets (SPS/PPS
+  for AVC, VPS/SPS/PPS for HEVC) are stored in the init segment rather than
+  inlined in each sample
+
+### Changed
+
 - CI: added coverage workflow, updated Go to 1.25, aligned workflows with hi264
 
 ## [0.5.0] - 2026-01-27
