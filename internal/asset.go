@@ -15,7 +15,7 @@ import (
 
 const (
 	trackID           = 1
-	cmafOverheadBytes = 112                                    // moof + mdat header size for one sample
+	cmafOverheadBytes = 112 // moof + mdat header size for one sample
 )
 
 type ContentTrack struct {

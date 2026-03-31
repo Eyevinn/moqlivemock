@@ -12,7 +12,7 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
-const CommonSystemID    = "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b" //https://www.w3.org/TR/eme-initdata-cenc/#clear-key
+const CommonSystemID = "1077efec-c0b2-4d02-ace3-3c1e52e2fb4b" //https://www.w3.org/TR/eme-initdata-cenc/#clear-key
 
 var drmSystemIDs = map[string]string{
 	"widevine":  "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
