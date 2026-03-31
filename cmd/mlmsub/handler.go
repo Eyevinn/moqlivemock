@@ -13,8 +13,8 @@ import (
 	"strings"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/Eyevinn/moqtransport"
+	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
 )

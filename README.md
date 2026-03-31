@@ -213,7 +213,7 @@ The warp-player can then connect using:
 ### Using DRM
 moqlivemock supports the use of DRM. Supported DRM systems are Widevine, PlayReady, FairPlay (untested) and ClearKey. To use ClearKey you need to add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenc key is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
 
-To use any of the other DRM systems you need to add a CPIX file and a config JSON file (preferably in the gitignored directory `assets/drm/`) and add the flag `-drmpath` which points to the config JSON file. The config JSON file needs to be of the same format as the example file `assets/testdrm/drm_config_test.json`. 
+To use any of the other DRM systems you need to add a CPIX file and a config JSON file (preferably in the gitignored directory `assets/drm/`) and add the flag `-drmpath` which points to the config JSON file. The config JSON file needs to be of the same format as the example file `assets/testdrm/drm_config_test.json`.
 
 Example ClearKey publisher:
 ```sh

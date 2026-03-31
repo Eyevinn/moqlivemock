@@ -6,27 +6,29 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go-version: ["1.23", "1.25"]
+        go-version:
+          - stable
+          - oldstable
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
-
-      - name: Download dependencies
-        run: go mod download
 
       - name: Build
         run: go build ./...
 
       - name: Test
-        run: go test ./...
+        run: go test -race ./...

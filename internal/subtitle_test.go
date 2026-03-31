@@ -271,6 +271,7 @@ func TestGenSubtitleGroupWvtt(t *testing.T) {
 
 	if mg == nil {
 		t.Fatal("GenSubtitleGroup returned nil")
+		return
 	}
 
 	if len(mg.MoQObjects) != 1 {
@@ -317,6 +318,7 @@ func TestGenSubtitleGroupStpp(t *testing.T) {
 
 	if mg == nil {
 		t.Fatal("GenSubtitleGroup returned nil")
+		return
 	}
 
 	if len(mg.MoQObjects) != 1 {
