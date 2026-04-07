@@ -15,7 +15,7 @@ build-linux:
 	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o out/mlmpub-linux ./cmd/mlmpub
 
 test:
-	go test ./...
+	go test -race ./...
 
 coverage:
 	go test -coverpkg=./... -coverprofile=coverage.out ./...
@@ -32,7 +32,7 @@ check-licenses:
 pre-commit-install: venv/bin/pre-commit
 	venv/bin/pre-commit install
 
-pre-commit: venv/bin/pre-commit
+pre-commit: venv/bin/pre-commit test
 	venv/bin/pre-commit run --all-files
 
 venv/bin/pre-commit venv/bin/codespell:

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Deterministic integration tests using in-memory transport and `synctest` (catalog, video, audio, subtitles, muxing)
+- `internal/pub` package with exported publisher handler logic
+- `internal/sub` package with exported subscriber handler, CMAF muxer, and DRM decryption logic
 - `build-linux` Makefile target for cross-compiling mlmpub to linux/amd64
 - CENC encryption support (`cenc` and `cbcs` schemes) for video and audio tracks
 - ClearKey DRM with key/IV via CLI flags (`-kid`, `-cenckey`, `-iv`, `-scheme`)
@@ -22,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Refactored `cmd/mlmpub` and `cmd/mlmsub` into thin wrappers over `internal/pub` and `internal/sub`
+- Bumped Go version to 1.25
+- Publisher goroutines now use proper context propagation instead of `context.TODO()`
 - Switched video sample descriptors from `avc3`/`hev1` to `avc1`/`hvc1` to support
   FairPlay streaming in Safari 26.4+. With `avc1`/`hvc1`, parameter sets (SPS/PPS
   for AVC, VPS/SPS/PPS for HEVC) are stored in the init segment rather than

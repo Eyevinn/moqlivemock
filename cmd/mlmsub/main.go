@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,11 +14,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/quicmoq"
-	"github.com/Eyevinn/moqtransport/webtransportmoq"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/webtransport-go"
+	"github.com/Eyevinn/moqlivemock/internal/sub"
 )
 
 const (
@@ -143,7 +138,7 @@ func runWithOptions(opts *options) error {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-sigs
-		fmt.Fprintf(os.Stderr, "\nReceived signal, cancelling...\n")
+		fmt.Fprintf(os.Stderr, "\nReceived signal, shutting down...\n")
 		cancel()
 	}()
 
@@ -166,14 +161,12 @@ func runClient(ctx context.Context, opts *options) error {
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
-	h := &moqHandler{
-		quic:      !useWebTransport,
-		addr:      opts.addr,
-		namespace: []string{internal.Namespace},
-		logfh:     logfh,
-		videoname: opts.videoname,
-		audioname: opts.audioname,
-		subsname:  opts.subsname,
+	h := &sub.Handler{
+		Namespace: []string{internal.Namespace},
+		Logfh:     logfh,
+		VideoName: opts.videoname,
+		AudioName: opts.audioname,
+		SubsName:  opts.subsname,
 	}
 
 	outs := make(map[string]io.Writer)
@@ -202,36 +195,5 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	return h.runClient(ctx, useWebTransport, outs)
-}
-
-func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
-	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"moq-00"},
-	}, &quic.Config{
-		EnableDatagrams:                  true,
-		EnableStreamResetPartialDelivery: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return quicmoq.NewClient(conn), nil
-}
-
-func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection, error) {
-	dialer := webtransport.Dialer{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-		QUICConfig: &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-		},
-	}
-	_, session, err := dialer.Dial(ctx, addr, nil)
-	if err != nil {
-		return nil, err
-	}
-	return webtransportmoq.NewClient(session), nil
+	return runClientWithDial(ctx, opts.addr, useWebTransport, h, outs)
 }

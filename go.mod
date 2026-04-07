@@ -1,6 +1,6 @@
 module github.com/Eyevinn/moqlivemock
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/Dash-Industry-Forum/livesim2 v1.9.0
