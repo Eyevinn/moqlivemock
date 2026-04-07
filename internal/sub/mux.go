@@ -1,4 +1,4 @@
-package main
+package sub
 
 import (
 	"encoding/base64"
@@ -17,7 +17,8 @@ var trackIDs = map[string]uint32{
 	"audio": 2,
 }
 
-type cmafMux struct {
+// CmafMux multiplexes video and audio CMAF tracks into a single output.
+type CmafMux struct {
 	mu         sync.Mutex
 	init       *mp4.InitSegment
 	inits      map[string]*mp4.InitSegment
@@ -25,15 +26,17 @@ type cmafMux struct {
 	w          io.Writer
 }
 
-func newCmafMux(w io.Writer) *cmafMux {
-	return &cmafMux{
+// NewCmafMux creates a new CMAF multiplexer writing to w.
+func NewCmafMux(w io.Writer) *CmafMux {
+	return &CmafMux{
 		w:          w,
 		inits:      map[string]*mp4.InitSegment{},
 		timeScales: map[string]int64{},
 	}
 }
 
-func (m *cmafMux) addInit(initData string, contentType string) error {
+// AddInit adds an init segment for the given content type (video or audio).
+func (m *CmafMux) AddInit(initData string, contentType string) error {
 	if m.inits[contentType] != nil {
 		return fmt.Errorf("init already added for %s", contentType)
 	}
@@ -56,7 +59,7 @@ func (m *cmafMux) addInit(initData string, contentType string) error {
 	return m.muxInit()
 }
 
-func (m *cmafMux) muxInit() error {
+func (m *CmafMux) muxInit() error {
 	if m.inits["video"] == nil || m.inits["audio"] == nil {
 		return nil
 	}
@@ -71,7 +74,8 @@ func (m *cmafMux) muxInit() error {
 	return m.init.Encode(m.w)
 }
 
-func (m *cmafMux) muxSample(sample []byte, mediaType string) error {
+// MuxSample muxes a CMAF media segment into the output.
+func (m *CmafMux) MuxSample(sample []byte, mediaType string) error {
 	m.mu.Lock()
 	if m.init == nil {
 		m.mu.Unlock()

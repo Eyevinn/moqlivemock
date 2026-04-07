@@ -19,10 +19,13 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/pub"
 )
 
 const (
@@ -120,6 +123,17 @@ func runServer(opts *options) error {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
 		return nil
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigs
+		fmt.Fprintf(os.Stderr, "\nReceived signal, shutting down...\n")
+		cancel()
+	}()
 	tlsConfig, err := generateTLSConfigWithCertAndKey(opts.certFile, opts.keyFile)
 	if err != nil {
 		slog.Warn("failed to generate TLS config from cert file and key, generating in memory certs", "error", err)
@@ -171,17 +185,21 @@ func runServer(opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
-	h := &moqHandler{
+	h := &pub.Handler{
+		Namespace: []string{internal.Namespace},
+		Asset:     asset,
+		Catalog:   catalog,
+		Logfh:     logfh,
+	}
+
+	s := &server{
 		addr:            opts.addr,
 		tlsConfig:       tlsConfig,
-		namespace:       []string{internal.Namespace},
-		asset:           asset,
-		catalog:         catalog,
-		logfh:           logfh,
+		handler:         h,
 		fingerprintPort: opts.fingerprintPort,
 	}
 
-	return h.runServer(context.TODO())
+	return s.runServer(ctx)
 }
 
 // parseLanguages parses a comma-separated string of language codes.
