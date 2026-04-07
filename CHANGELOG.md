@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- FETCH support for catalog retrieval as an alternative to SUBSCRIBE (`-fetchcatalog` flag in mlmsub)
+- Configurable MoQ namespace via `-namespace` flag in mlmsub
+- Default port (443) when no port is specified in mlmsub address
 - Deterministic integration tests using in-memory transport and `synctest` (catalog, video, audio, subtitles, muxing)
 - `internal/pub` package with exported publisher handler logic
 - `internal/sub` package with exported subscriber handler, CMAF muxer, and DRM decryption logic

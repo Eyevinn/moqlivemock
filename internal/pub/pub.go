@@ -32,6 +32,7 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	session := &moqtransport.Session{
 		Handler:             h.getHandler(),
 		SubscribeHandler:    h.getSubscribeHandler(ctx),
+		FetchHandler:        h.getFetchHandler(),
 		InitialMaxRequestID: 100,
 		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
@@ -67,6 +68,55 @@ func (h *Handler) getHandler() moqtransport.Handler {
 			return
 		}
 	})
+}
+
+func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
+	return moqtransport.FetchHandlerFunc(
+		func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
+			if !tupleEqual(m.Namespace, h.Namespace) {
+				slog.Warn("fetch: unexpected namespace",
+					"received", m.Namespace,
+					"expected", h.Namespace)
+				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "non-matching namespace")
+				if err != nil {
+					slog.Error("failed to reject fetch", "error", err)
+				}
+				return
+			}
+			if m.Track != "catalog" {
+				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "only catalog is fetchable")
+				if err != nil {
+					slog.Error("failed to reject fetch", "error", err)
+				}
+				return
+			}
+			err := w.Accept()
+			if err != nil {
+				slog.Error("failed to accept fetch", "error", err)
+				return
+			}
+			fs, err := w.FetchStream()
+			if err != nil {
+				slog.Error("failed to get fetch stream", "error", err)
+				return
+			}
+			catalogJSON, err := json.Marshal(h.Catalog)
+			if err != nil {
+				slog.Error("failed to marshal catalog", "error", err)
+				return
+			}
+			_, err = fs.WriteObject(0, 0, 0, 0, catalogJSON)
+			if err != nil {
+				slog.Error("failed to write catalog via fetch", "error", err)
+				return
+			}
+			err = fs.Close()
+			if err != nil {
+				slog.Error("failed to close fetch stream", "error", err)
+				return
+			}
+			slog.Info("served catalog via FETCH")
+		})
 }
 
 func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.SubscribeHandler {

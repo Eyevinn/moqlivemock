@@ -141,6 +141,35 @@ func TestCatalogExchange(t *testing.T) {
 	})
 }
 
+func TestFetchCatalog(t *testing.T) {
+	asset, catalog := loadTestAsset(t)
+
+	synctest.Test(t, func(t *testing.T) {
+		sConn, cConn := memConnPair()
+
+		ph := newPubHandler(asset, catalog)
+		go ph.Handle(t.Context(), sConn)
+
+		catalogBuf := newSyncBuffer()
+		sh := &sub.Handler{
+			Namespace: []string{internal.Namespace},
+			Outs:      map[string]io.Writer{"catalog": catalogBuf},
+			Logfh:     io.Discard,
+			VideoName: "NONE",
+			AudioName: "NONE",
+			UseFetch:  true,
+		}
+		go func() { _ = sh.RunWithConn(t.Context(), cConn) }()
+
+		catalogBuf.WaitForLen(1)
+
+		assert.Contains(t, catalogBuf.String(), "video_", "catalog should contain video tracks")
+		assert.Contains(t, catalogBuf.String(), "audio_", "catalog should contain audio tracks")
+
+		shutdown(sConn, cConn)
+	})
+}
+
 func TestVideoAudioReceive(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
