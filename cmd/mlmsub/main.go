@@ -48,8 +48,10 @@ type options struct {
 	videoname  string
 	audioname  string
 	subsname   string
-	loglevel   string
-	version    bool
+	namespace    string
+	loglevel     string
+	fetchCatalog bool
+	version      bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -73,7 +75,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.videoname, "videoname", "_avc", "Substring to match for video track (default AVC)")
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
+	fs.StringVar(&opts.namespace, "namespace", internal.Namespace, "MoQ namespace to use")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
+	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Use FETCH instead of SUBSCRIBE for catalog")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -162,11 +166,12 @@ func runClient(ctx context.Context, opts *options) error {
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
 	h := &sub.Handler{
-		Namespace: []string{internal.Namespace},
+		Namespace: []string{opts.namespace},
 		Logfh:     logfh,
 		VideoName: opts.videoname,
 		AudioName: opts.audioname,
 		SubsName:  opts.subsname,
+		UseFetch:  opts.fetchCatalog,
 	}
 
 	outs := make(map[string]io.Writer)

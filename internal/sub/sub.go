@@ -30,6 +30,7 @@ type Handler struct {
 	VideoName string
 	AudioName string
 	SubsName  string
+	UseFetch  bool
 
 	catalog *internal.Catalog
 	mux     *CmafMux
@@ -97,7 +98,11 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 		return
 	}
-	err = h.subscribeToCatalog(ctx, session, h.Namespace)
+	if h.UseFetch {
+		err = h.fetchCatalog(ctx, session, h.Namespace)
+	} else {
+		err = h.subscribeToCatalog(ctx, session, h.Namespace)
+	}
 	if err != nil {
 		slog.Error("failed to subscribe to catalog", "error", err)
 		err = conn.CloseWithError(0, "internal error")
@@ -326,6 +331,51 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 		}
 	}()
 
+	return nil
+}
+
+func (h *Handler) fetchCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
+	rt, err := s.Fetch(ctx, namespace, "catalog")
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+
+	o, err := rt.ReadObject(ctx)
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+
+	err = json.Unmarshal(o.Payload, &h.catalog)
+	if err != nil {
+		return err
+	}
+	slog.Info("fetched catalog",
+		"groupID", o.GroupID,
+		"subGroupID", o.SubGroupID,
+		"payloadLength", len(o.Payload),
+	)
+	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
+		fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
+	}
+	if h.Outs["catalog"] != nil {
+		indented, err := json.MarshalIndent(h.catalog, "", "  ")
+		if err != nil {
+			slog.Error("failed to marshal catalog", "error", err)
+		} else {
+			_, err = h.Outs["catalog"].Write(indented)
+			if err != nil {
+				slog.Error("failed to write catalog", "error", err)
+			}
+			_, err = h.Outs["catalog"].Write([]byte("\n"))
+			if err != nil {
+				slog.Error("failed to write catalog newline", "error", err)
+			}
+		}
+	}
 	return nil
 }
 
