@@ -494,7 +494,6 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			switch ct.ContentType {
 			case "video":
 				track.Role = "video"
-				track.MimeType = "video/mp4"
 				track.Framerate = Ptr(frameRate)
 				switch sd := ct.SpecData.(type) {
 				case *AVCData:
@@ -514,7 +513,6 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 				}
 			case "audio":
 				track.Role = "audio"
-				track.MimeType = "audio/mp4"
 				switch sd := ct.SpecData.(type) {
 				case *AACData:
 					if sd.sampleRate != 0 {
@@ -562,9 +560,6 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			initData = base64.StdEncoding.EncodeToString(data)
 		}
 
-		// Subtitles are encapsulated in MP4 (CMAF)
-		mimeType := "application/mp4"
-
 		// Determine altGroup based on format
 		altGroup := wvttAltGroup
 		if st.Format == SubtitleFormatSTPP {
@@ -581,7 +576,6 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			AltGroup:    &altGroup,
 			InitData:    initData,
 			Codec:       st.SpecData.Codec(),
-			MimeType:    mimeType,
 			Timescale:   Ptr(int(st.TimeScale)),
 			Language:    st.Language,
 		}

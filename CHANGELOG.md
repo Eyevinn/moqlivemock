@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Use `role` instead of `mimeType` in catalog per CMSF/MSF spec
 - Refactored `cmd/mlmpub` and `cmd/mlmsub` into thin wrappers over `internal/pub` and `internal/sub`
 - Bumped Go version to 1.25
 - Publisher goroutines now use proper context propagation instead of `context.TODO()`
