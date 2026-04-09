@@ -128,7 +128,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			}
 		}
 		// Select video track
-		if strings.HasPrefix(track.MimeType, "video") {
+		if track.Role == "video" {
 			if h.VideoName != "" {
 				if videoTrack == "" && strings.Contains(track.Name, h.VideoName) {
 					videoTrack = track.Name
@@ -155,7 +155,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 
 		// Select audio track
-		if strings.HasPrefix(track.MimeType, "audio") {
+		if track.Role == "audio" {
 			if h.AudioName != "" {
 				if audioTrack == "" && strings.Contains(track.Name, h.AudioName) {
 					audioTrack = track.Name
@@ -182,7 +182,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 
 		// Select subtitle track (wvtt or stpp codec)
-		if track.MimeType == "application/mp4" {
+		if track.Role == "subtitle" {
 			if h.SubsName != "" {
 				if subsTrack == "" && strings.Contains(track.Name, h.SubsName) {
 					subsTrack = track.Name
@@ -400,12 +400,17 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 				return
 			}
 			if o.ObjectID == 0 {
-				slog.Info("group start", "track", trackname, "groupID", o.GroupID, "payloadLength", len(o.Payload))
+				slog.Info("group start",
+					"track", trackname,
+					"groupID", o.GroupID,
+					"subGroupID", o.SubGroupID,
+					"payloadLength", len(o.Payload))
 			} else {
 				slog.Debug("object",
 					"track", trackname,
 					"objectID", o.ObjectID,
 					"groupID", o.GroupID,
+					"subGroupID", o.SubGroupID,
 					"payloadLength", len(o.Payload))
 			}
 			if h.cenc != nil {

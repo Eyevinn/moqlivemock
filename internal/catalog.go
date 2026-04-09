@@ -147,10 +147,6 @@ type Track struct {
 	// Optional field at the track level.
 	Codec string `json:"codec,omitempty"`
 
-	// MimeType defines the mime type of the track.
-	// Optional field at the track level.
-	MimeType string `json:"mimeType,omitempty"`
-
 	// Framerate defines the video framerate of the track, expressed as frames per second.
 	// Optional field at the track level.
 	Framerate *float64 `json:"framerate,omitempty"`
