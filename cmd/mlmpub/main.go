@@ -53,7 +53,7 @@ type options struct {
 	qlogfile         string
 	audioSampleBatch int
 	videoSampleBatch int
-	fingerprintPort  int
+	sidePort         int
 	subsWvttLangs    string
 	subsStppLangs    string
 	cencKey          string
@@ -80,7 +80,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
-	fs.IntVar(&opts.fingerprintPort, "fingerprintport", 0, "Port for HTTP fingerprint server (0 to disable)")
+	fs.IntVar(&opts.sidePort, "sideport", 0, "Port for HTTP side server serving /fingerprint and /clearkey (0 to disable)")
 	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.kid, "kid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
@@ -90,7 +90,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption,"+
 		"either \"cenc\" or \"cbcs\"")
 	fs.StringVar(&opts.laURL, "laurl", "", "ClearKey/ECCP license acquisition URL announced in catalog."+
-		" Falls back to http://localhost:{fingerprintport}/clearkey if not set.")
+		" Falls back to http://localhost:{sideport}/clearkey if not set.")
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
@@ -157,8 +157,8 @@ func runServer(opts *options) error {
 
 	// Parse ClearKey/ECCP config (explicit key flags)
 	laURL := opts.laURL
-	if laURL == "" && opts.fingerprintPort > 0 {
-		laURL = fmt.Sprintf("http://localhost:%d/clearkey", opts.fingerprintPort)
+	if laURL == "" && opts.sidePort > 0 {
+		laURL = fmt.Sprintf("http://localhost:%d/clearkey", opts.sidePort)
 	}
 	var eccp *internal.DRMInfo
 	eccp, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, laURL)
@@ -244,7 +244,7 @@ func runServer(opts *options) error {
 		addr:            opts.addr,
 		tlsConfig:       tlsConfig,
 		handler:         h,
-		fingerprintPort: opts.fingerprintPort,
+		sidePort: opts.sidePort,
 	}
 
 	return s.runServer(ctx)

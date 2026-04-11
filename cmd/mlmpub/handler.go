@@ -24,13 +24,13 @@ type server struct {
 	addr            string
 	tlsConfig       *tls.Config
 	handler         *pub.Handler
-	fingerprintPort int
+	sidePort int
 }
 
 func (s *server) runServer(ctx context.Context) error {
-	// Start HTTP server for fingerprint if port is specified
-	if s.fingerprintPort > 0 {
-		go s.startFingerprintServer()
+	// Start HTTP side server for /fingerprint and /clearkey
+	if s.sidePort > 0 {
+		go s.startSideServer()
 	}
 
 	slog.Info("Starting MoQ server", "addr", s.addr)
@@ -85,7 +85,7 @@ func (s *server) runServer(ctx context.Context) error {
 	}
 }
 
-func (s *server) startFingerprintServer() {
+func (s *server) startSideServer() {
 	// Validate certificate for WebTransport requirements
 	if err := s.validateCertificateForWebTransport(); err != nil {
 		slog.Warn("Certificate does not meet WebTransport fingerprint requirements", "error", err)
@@ -172,10 +172,10 @@ func (s *server) startFingerprintServer() {
 		slog.Info("Served ClearKey license")
 	}))
 
-	addr := fmt.Sprintf(":%d", s.fingerprintPort)
-	slog.Info("Starting fingerprint HTTP server", "addr", addr)
+	addr := fmt.Sprintf(":%d", s.sidePort)
+	slog.Info("Starting HTTP side server", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
-		slog.Error("fingerprint server failed", "error", err)
+		slog.Error("side server failed", "error", err)
 	}
 }
 
