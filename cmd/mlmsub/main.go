@@ -75,7 +75,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.videoname, "videoname", "_avc", "Substring to match for video track (default AVC)")
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
-	fs.StringVar(&opts.namespace, "namespace", internal.Namespace, "MoQ namespace to use")
+	fs.StringVar(&opts.namespace, "namespace", "cmsf/clear", "MoQ namespace to use")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Use FETCH instead of SUBSCRIBE for catalog")
 

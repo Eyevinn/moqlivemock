@@ -87,24 +87,27 @@ func loadTestAsset(t *testing.T) (*internal.Asset, *internal.Catalog) {
 	err = asset.AddSubtitleTracks([]string{"en"}, nil)
 	require.NoError(t, err)
 
-	catalog, err := asset.GenCMAFCatalogEntry(time.Now().UnixMilli())
+	catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone,time.Now().UnixMilli())
 	require.NoError(t, err)
 
 	return asset, catalog
 }
 
+const testNamespace = "cmsf/clear"
+
 func newPubHandler(asset *internal.Asset, catalog *internal.Catalog) *pub.Handler {
 	return &pub.Handler{
-		Namespace: []string{internal.Namespace},
-		Asset:     asset,
-		Catalog:   catalog,
-		Logfh:     io.Discard,
+		Namespaces: []pub.NamespaceEntry{
+			{Namespace: []string{testNamespace}, Catalog: catalog},
+		},
+		Asset: asset,
+		Logfh: io.Discard,
 	}
 }
 
 func newSubHandler(outs map[string]io.Writer) *sub.Handler {
 	return &sub.Handler{
-		Namespace: []string{internal.Namespace},
+		Namespace: []string{testNamespace},
 		Outs:      outs,
 		Logfh:     io.Discard,
 		VideoName: "_avc",
@@ -152,7 +155,7 @@ func TestFetchCatalog(t *testing.T) {
 
 		catalogBuf := newSyncBuffer()
 		sh := &sub.Handler{
-			Namespace: []string{internal.Namespace},
+			Namespace: []string{testNamespace},
 			Outs:      map[string]io.Writer{"catalog": catalogBuf},
 			Logfh:     io.Discard,
 			VideoName: "NONE",
@@ -205,7 +208,7 @@ func TestSubtitleReceive(t *testing.T) {
 
 		subsBuf := newSyncBuffer()
 		sh := &sub.Handler{
-			Namespace: []string{internal.Namespace},
+			Namespace: []string{testNamespace},
 			Outs:      map[string]io.Writer{"subs": subsBuf},
 			Logfh:     io.Discard,
 			VideoName: "NONE",

@@ -18,6 +18,15 @@ const (
 	cmafOverheadBytes = 112 // moof + mdat header size for one sample
 )
 
+// ProtectionType identifies how a track is encrypted.
+type ProtectionType int
+
+const (
+	ProtectionNone ProtectionType = iota
+	ProtectionDRM  // Commercial DRM (Widevine/PlayReady/FairPlay via CPIX)
+	ProtectionECCP // ClearKey / ECCP (explicit key over HTTP)
+)
+
 type ContentTrack struct {
 	Name                    string
 	ContentType             string
@@ -32,6 +41,7 @@ type ContentTrack struct {
 	SampleBatch             int
 	Samples                 []mp4.FullSample
 	SpecData                CodecSpecificData
+	Protection              ProtectionType
 	contentProtectionRefIDs []string
 	cenc                    *CENCInfo
 	ipd                     *mp4.InitProtectData
@@ -43,6 +53,7 @@ type Asset struct {
 	LoopDurMS      uint32
 	SubtitleTracks []*SubtitleTrack
 	Drm            *DRMInfo
+	Eccp           *DRMInfo
 }
 
 type CodecSpecificData interface {
@@ -267,21 +278,33 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 // LoadAsset opens a directory, reads all *.mp4 files, creates ContentTrack from each,
 // groups them by contentType, and returns a pointer to an Asset.
 func LoadAsset(dirPath string, audioSampleBatch, videoSampleBatch int) (*Asset, error) {
-	return LoadAssetWithDRM(dirPath, audioSampleBatch, videoSampleBatch, nil)
+	return LoadAssetWithProtection(dirPath, audioSampleBatch, videoSampleBatch, nil, nil)
 }
 
-// LoadAssetWithDRM creates an asset from the *.mp4 files in the specified dirPath.
-// If CENCInfo is not nil, a separate track with content protection applied is created
-// for all existing video and audio tracks.
+// LoadAssetWithDRM creates an asset with a single DRM config (backward compatibility).
 func LoadAssetWithDRM(dirPath string, audioSampleBatch, videoSampleBatch int, drm *DRMInfo) (*Asset, error) {
+	return LoadAssetWithProtection(dirPath, audioSampleBatch, videoSampleBatch, drm, nil)
+}
+
+// LoadAssetWithProtection creates an asset from the *.mp4 files in the specified dirPath.
+// If drm is not nil, protected tracks with "_drm" suffix are created (commercial DRM via CPIX).
+// If eccp is not nil, protected tracks with "_eccp" suffix are created (ClearKey/ECCP).
+// Both can be provided simultaneously to create two independent sets of encrypted tracks.
+func LoadAssetWithProtection(dirPath string, audioSampleBatch, videoSampleBatch int, drm, eccp *DRMInfo) (*Asset, error) {
 	tracksByType, err := parseTracks(dirPath, audioSampleBatch, videoSampleBatch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tracks: %w", err)
 	}
 	if drm != nil {
-		err = createProtectedTracks(tracksByType, drm)
+		err = createProtectedTracks(tracksByType, drm, "_drm", ProtectionDRM)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create protected tracks: %w", err)
+			return nil, fmt.Errorf("failed to create DRM protected tracks: %w", err)
+		}
+	}
+	if eccp != nil {
+		err = createProtectedTracks(tracksByType, eccp, "_eccp", ProtectionECCP)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ECCP protected tracks: %w", err)
 		}
 	}
 	trackGroups, err := generateTrackGroups(tracksByType)
@@ -292,6 +315,7 @@ func LoadAssetWithDRM(dirPath string, audioSampleBatch, videoSampleBatch int, dr
 		Name:   filepath.Base(dirPath),
 		Groups: trackGroups,
 		Drm:    drm,
+		Eccp:   eccp,
 	}
 	if err := asset.setLoopDuration(); err != nil {
 		return nil, fmt.Errorf("could not set loop duration: %w", err)
@@ -328,8 +352,10 @@ func parseTracks(dirPath string, audioSampleBatch, videoSampleBatch int) (map[st
 	return tracksByType, nil
 }
 
-// createProtectedTracks creates duplicate protected versions of all existing tracks and adds them to the map.
-func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo) error {
+// createProtectedTracks creates duplicate protected versions of all existing clear tracks
+// and adds them to the map. The suffix (e.g. "_drm", "_eccp") and protectionType distinguish
+// different protection schemes.
+func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo, suffix string, prot ProtectionType) error {
 	types := []string{"video", "audio"}
 	for _, typ := range types {
 		orig, ok := tracksByType[typ]
@@ -338,7 +364,11 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo)
 		}
 		var added []ContentTrack
 		for _, ct := range orig {
-			protectedCt, err := addProtectionInfoToTrack(ct, drm)
+			// Only create protected versions of clear tracks
+			if ct.Protection != ProtectionNone {
+				continue
+			}
+			protectedCt, err := addProtectionInfoToTrack(ct, drm, suffix, prot)
 			if err != nil {
 				return err
 			}
@@ -349,20 +379,21 @@ func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo)
 	return nil
 }
 
-// addProtectionInfoToTrack adds protection information to a track.
-func addProtectionInfoToTrack(ct ContentTrack, drm *DRMInfo) (ContentTrack, error) {
+// addProtectionInfoToTrack adds protection information to a track with the given suffix and type.
+func addProtectionInfoToTrack(ct ContentTrack, drm *DRMInfo, suffix string, prot ProtectionType) (ContentTrack, error) {
 	protectedCt := ct
 	protectedSpecData, err := cloneCodecSpecificData(ct.SpecData)
-	protectedCt.Name = ct.Name + "_protected"
+	if err != nil {
+		return ContentTrack{}, err
+	}
+	protectedCt.Name = ct.Name + suffix
+	protectedCt.Protection = prot
 	protectedCt.cenc = drm.cenc
 	refIDs := make([]string, 0, len(drm.ContentProtections))
 	for _, cp := range drm.ContentProtections {
 		refIDs = append(refIDs, cp.RefID)
 	}
 	protectedCt.contentProtectionRefIDs = refIDs
-	if err != nil {
-		return ContentTrack{}, err
-	}
 	protectedCt.SpecData = protectedSpecData
 	kid, err := mp4.NewUUIDFromString(drm.ContentProtections[0].DefaultKIDs[0])
 	if err != nil {
@@ -457,14 +488,23 @@ func (a *Asset) setLoopDuration() error {
 
 // GenCMAFCatalogEntry generates an MSF/CMSF catalog entry for this asset, populating all available fields.
 // Conforms to draft-ietf-moq-msf-00 and draft-ietf-moq-cmsf-00, except for the extra contentProtection field.
+//
+// The namespace parameter sets the Track.Namespace field in each catalog track entry.
+// The prot parameter selects which tracks to include: ProtectionNone for clear tracks,
+// ProtectionDRM for commercial DRM tracks, ProtectionECCP for ClearKey/ECCP tracks.
+// Subtitle tracks are always included regardless of the filter.
 // The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
 // to be set as the catalog's generatedAt value.
-func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
+func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
 	for _, group := range a.Groups {
 		altGroup := int(group.AltGroupID)
 		for _, ct := range group.Tracks {
+			if ct.Protection != prot {
+				continue
+			}
+
 			initData := ""
 			if ct.SpecData != nil {
 				data, err := ct.SpecData.GenCMAFInitData()
@@ -479,6 +519,7 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 
 			track := Track{
 				Name:        ct.Name,
+				Namespace:   namespace,
 				Packaging:   "cmaf",
 				IsLive:      true,
 				RenderGroup: &renderGroup,
@@ -540,7 +581,6 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			if len(ct.contentProtectionRefIDs) > 0 {
 				track.ContentProtectionRefIDs = ct.contentProtectionRefIDs
 			}
-			track.Namespace = Namespace
 			tracks = append(tracks, track)
 		}
 	}
@@ -568,7 +608,7 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 
 		track := Track{
 			Name:        st.Name,
-			Namespace:   Namespace,
+			Namespace:   namespace,
 			Packaging:   "cmaf",
 			IsLive:      true,
 			Role:        "subtitle",
@@ -587,8 +627,15 @@ func (a *Asset) GenCMAFCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 		GeneratedAt: &generatedAtMS,
 		Tracks:      tracks,
 	}
-	if a.Drm != nil {
-		cat.ContentProtections = a.Drm.ContentProtections
+	switch prot {
+	case ProtectionDRM:
+		if a.Drm != nil {
+			cat.ContentProtections = a.Drm.ContentProtections
+		}
+	case ProtectionECCP:
+		if a.Eccp != nil {
+			cat.ContentProtections = a.Eccp.ContentProtections
+		}
 	}
 	return cat, nil
 }

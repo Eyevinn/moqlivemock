@@ -146,13 +146,13 @@ func TestLoadAsset(t *testing.T) {
 				"loop duration should be 10s in timescale")
 		}
 	}
-	cat, err := asset.GenCMAFCatalogEntry(1234567890000)
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone,1234567890000)
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 	require.Equal(t, 12, len(cat.Tracks))
 	// Check that all tracks have the namespace set
 	for _, track := range cat.Tracks {
-		require.Equal(t, Namespace, track.Namespace)
+		require.Equal(t, "cmsf/clear", track.Namespace)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	drm, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, 8081)
 	require.NoError(t, err)
 
-	err = createProtectedTracks(tracksByType, drm)
+	err = createProtectedTracks(tracksByType, drm, "_drm", ProtectionDRM)
 	require.NoError(t, err)
 
 	origVideoAfter := tracksByType["video"][0]
@@ -249,16 +249,16 @@ func TestClearKeyDecryptionMatchExcatly(t *testing.T) {
 	ivStr := "41112233445566778899aabbccddeeff"
 	schemes := []string{"cbcs", "cenc"}
 	for _, scheme := range schemes {
-		drm, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, 8081)
+		eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, 8081)
 		require.NoError(t, err)
-		checkDecryptedTracksMatchExactly(t, drm)
+		checkDecryptedTracksMatchExactly(t, eccp, "_eccp")
 	}
 }
 
 func TestCommercialDRMDecryptionMatchExactly(t *testing.T) {
 	drm, err := ConfigureDRMFromFile("../assets/testdrm/drm_config_test.json")
 	require.NoError(t, err)
-	checkDecryptedTracksMatchExactly(t, drm)
+	checkDecryptedTracksMatchExactly(t, drm, "_drm")
 }
 
 func TestGetSubtitleTrackByName(t *testing.T) {
@@ -306,8 +306,14 @@ func TestAddSubtitleTracksEmpty(t *testing.T) {
 	assert.Equal(t, 0, len(asset.SubtitleTracks))
 }
 
-func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo) {
-	drmAsset, err := LoadAssetWithDRM("../assets/test10s", 1, 1, drm)
+func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo, suffix string) {
+	var drmAsset *Asset
+	var err error
+	if suffix == "_eccp" {
+		drmAsset, err = LoadAssetWithProtection("../assets/test10s", 1, 1, nil, drm)
+	} else {
+		drmAsset, err = LoadAssetWithProtection("../assets/test10s", 1, 1, drm, nil)
+	}
 	require.NoError(t, err)
 	require.NotNil(t, drmAsset)
 
@@ -338,7 +344,7 @@ func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo) {
 				case "original":
 					tr = originalTrack
 				case "encrypted":
-					protectedName := originalTrack.Name + "_protected"
+					protectedName := originalTrack.Name + suffix
 					found := false
 					for _, cand := range drmAsset.Groups[tc.groupIdx].Tracks {
 						if cand.Name == protectedName {
