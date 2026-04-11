@@ -423,8 +423,16 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 	var groups []TrackGroup
 	groupID := uint32(1)
 	// Add video group(s) first
+	// Sort by codec (avc before hvc) then by bitrate ascending.
+	// This ensures AVC tracks appear first, which matters because
+	// HEVC with CENC is not fully supported in Widevine/Chrome.
 	if videoTracks, ok := tracksByType["video"]; ok {
 		sort.Slice(videoTracks, func(i, j int) bool {
+			ci := videoTracks[i].SpecData.Codec()
+			cj := videoTracks[j].SpecData.Codec()
+			if ci != cj {
+				return ci < cj
+			}
 			return videoTracks[i].SampleBitrate < videoTracks[j].SampleBitrate
 		})
 		for i := 0; i < len(videoTracks); i++ {
