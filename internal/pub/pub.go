@@ -17,16 +17,21 @@ const (
 	MediaPriority = 128
 )
 
-// Handler handles MoQ publisher sessions. It serves a catalog and publishes
-// media tracks (video, audio, subtitles) to subscribers.
-type Handler struct {
+// NamespaceEntry pairs an announcement namespace with its catalog.
+type NamespaceEntry struct {
 	Namespace []string
-	Asset     *internal.Asset
 	Catalog   *internal.Catalog
-	Logfh     io.Writer
 }
 
-// Handle runs a MoQ session on the given connection, announces the namespace,
+// Handler handles MoQ publisher sessions. It serves catalogs and publishes
+// media tracks (video, audio, subtitles) to subscribers across multiple namespaces.
+type Handler struct {
+	Namespaces []NamespaceEntry
+	Asset      *internal.Asset
+	Logfh      io.Writer
+}
+
+// Handle runs a MoQ session on the given connection, announces all namespaces,
 // and serves subscriptions. The context controls the lifetime of publishing goroutines.
 func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	session := &moqtransport.Session{
@@ -46,12 +51,14 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 		return
 	}
-	slog.Info("MoQ session established, announcing namespace", "namespace", h.Namespace)
-	if err := session.Announce(ctx, h.Namespace); err != nil {
-		slog.Error("failed to announce namespace", "namespace", h.Namespace, "error", err)
-		return
+	for _, ns := range h.Namespaces {
+		slog.Info("announcing namespace", "namespace", ns.Namespace)
+		if err := session.Announce(ctx, ns.Namespace); err != nil {
+			slog.Error("failed to announce namespace", "namespace", ns.Namespace, "error", err)
+			return
+		}
+		slog.Info("namespace announced successfully", "namespace", ns.Namespace)
 	}
-	slog.Info("namespace announced successfully", "namespace", h.Namespace)
 	// Block until context is cancelled to keep the session alive
 	<-ctx.Done()
 }
@@ -70,13 +77,22 @@ func (h *Handler) getHandler() moqtransport.Handler {
 	})
 }
 
+// findNamespace returns the NamespaceEntry matching the given namespace tuple, or nil.
+func (h *Handler) findNamespace(ns []string) *NamespaceEntry {
+	for i := range h.Namespaces {
+		if tupleEqual(ns, h.Namespaces[i].Namespace) {
+			return &h.Namespaces[i]
+		}
+	}
+	return nil
+}
+
 func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 	return moqtransport.FetchHandlerFunc(
 		func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
-			if !tupleEqual(m.Namespace, h.Namespace) {
-				slog.Warn("fetch: unexpected namespace",
-					"received", m.Namespace,
-					"expected", h.Namespace)
+			nsEntry := h.findNamespace(m.Namespace)
+			if nsEntry == nil {
+				slog.Warn("fetch: unknown namespace", "received", m.Namespace)
 				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "non-matching namespace")
 				if err != nil {
 					slog.Error("failed to reject fetch", "error", err)
@@ -100,7 +116,7 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 				slog.Error("failed to get fetch stream", "error", err)
 				return
 			}
-			catalogJSON, err := json.Marshal(h.Catalog)
+			catalogJSON, err := json.Marshal(nsEntry.Catalog)
 			if err != nil {
 				slog.Error("failed to marshal catalog", "error", err)
 				return
@@ -115,17 +131,16 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 				slog.Error("failed to close fetch stream", "error", err)
 				return
 			}
-			slog.Info("served catalog via FETCH")
+			slog.Info("served catalog via FETCH", "namespace", m.Namespace)
 		})
 }
 
 func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.SubscribeHandler {
 	return moqtransport.SubscribeHandlerFunc(
 		func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-			if !tupleEqual(m.Namespace, h.Namespace) {
-				slog.Warn("got unexpected subscription namespace",
-					"received", m.Namespace,
-					"expected", h.Namespace)
+			nsEntry := h.findNamespace(m.Namespace)
+			if nsEntry == nil {
+				slog.Warn("got unexpected subscription namespace", "received", m.Namespace)
 				err := w.Reject(0, "non-matching namespace")
 				if err != nil {
 					slog.Error("failed to reject subscription", "error", err)
@@ -143,7 +158,7 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 					slog.Error("failed to open subgroup", "error", err)
 					return
 				}
-				json, err := json.Marshal(h.Catalog)
+				json, err := json.Marshal(nsEntry.Catalog)
 				if err != nil {
 					slog.Error("failed to marshal catalog", "error", err)
 					return
@@ -167,20 +182,20 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 					slog.Error("failed to accept subscription", "error", err)
 					return
 				}
-				slog.Info("got subtitle subscription", "track", st.Name)
+				slog.Info("got subtitle subscription", "track", st.Name, "namespace", m.Namespace)
 				go PublishSubtitleTrack(ctx, w, st)
 				return
 			}
 
-			// Check for video/audio tracks
-			for _, track := range h.Catalog.Tracks {
+			// Check for video/audio tracks in this namespace's catalog
+			for _, track := range nsEntry.Catalog.Tracks {
 				if m.Track == track.Name {
 					err := w.Accept()
 					if err != nil {
 						slog.Error("failed to accept subscription", "error", err)
 						return
 					}
-					slog.Info("got subscription", "track", track.Name)
+					slog.Info("got subscription", "track", track.Name, "namespace", m.Namespace)
 					go PublishTrack(ctx, w, h.Asset, track.Name)
 					return
 				}

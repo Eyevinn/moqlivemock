@@ -143,16 +143,23 @@ func runServer(opts *options) error {
 			return err
 		}
 	}
+	// Parse commercial DRM config (CPIX)
 	var drm *internal.DRMInfo
 	if opts.drmConfigPath != "" {
 		drm, err = internal.ConfigureDRMFromFile(opts.drmConfigPath)
-	} else {
-		drm, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, opts.fingerprintPort)
+		if err != nil {
+			return err
+		}
 	}
+
+	// Parse ClearKey/ECCP config (explicit key flags)
+	var eccp *internal.DRMInfo
+	eccp, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, opts.fingerprintPort)
 	if err != nil {
 		return err
 	}
-	asset, err := internal.LoadAssetWithDRM(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch, drm)
+
+	asset, err := internal.LoadAssetWithProtection(opts.asset, opts.audioSampleBatch, opts.videoSampleBatch, drm, eccp)
 	if err != nil {
 		return err
 	}
@@ -169,9 +176,44 @@ func runServer(opts *options) error {
 	}
 	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
 
-	catalog, err := asset.GenCMAFCatalogEntry(time.Now().UnixMilli())
+	now := time.Now().UnixMilli()
+
+	// Always create the clear namespace
+	clearCatalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, now)
 	if err != nil {
 		return err
+	}
+	namespaces := []pub.NamespaceEntry{
+		{Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog},
+	}
+
+	// Add commercial DRM namespace if configured
+	if drm != nil {
+		drmCatalog, err := asset.GenCMAFCatalogEntry("cmsf/drm-"+opts.scheme, internal.ProtectionDRM, now)
+		if err != nil {
+			return err
+		}
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace: []string{"cmsf/drm-" + opts.scheme},
+			Catalog:   drmCatalog,
+		})
+	}
+
+	// Add ClearKey/ECCP namespace if configured
+	if eccp != nil {
+		eccpCatalog, err := asset.GenCMAFCatalogEntry("cmsf/eccp-"+opts.scheme, internal.ProtectionECCP, now)
+		if err != nil {
+			return err
+		}
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace: []string{"cmsf/eccp-" + opts.scheme},
+			Catalog:   eccpCatalog,
+		})
+	}
+
+	for _, ns := range namespaces {
+		slog.Info("configured namespace", "namespace", ns.Namespace,
+			"tracks", len(ns.Catalog.Tracks))
 	}
 
 	var logfh io.Writer
@@ -186,10 +228,9 @@ func runServer(opts *options) error {
 		defer fh.Close()
 	}
 	h := &pub.Handler{
-		Namespace: []string{internal.Namespace},
-		Asset:     asset,
-		Catalog:   catalog,
-		Logfh:     logfh,
+		Namespaces: namespaces,
+		Asset:      asset,
+		Logfh:      logfh,
 	}
 
 	s := &server{
