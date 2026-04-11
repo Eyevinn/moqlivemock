@@ -282,6 +282,10 @@ func (c *memConn) Perspective() moqtransport.Perspective {
 	return c.perspective
 }
 
+func (c *memConn) NegotiatedALPN() string {
+	return "moq-00" // in-memory connections use draft-14 negotiation
+}
+
 // memStream implements moqtransport.Stream (bidirectional).
 type memStream struct {
 	id uint64

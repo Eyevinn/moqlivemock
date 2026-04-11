@@ -76,11 +76,15 @@ func (s *server) runServer(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if conn.ConnectionState().TLS.NegotiatedProtocol == "h3" {
+		alpn := conn.ConnectionState().TLS.NegotiatedProtocol
+		switch alpn {
+		case "h3":
 			go serveQUICConn(&wt, conn)
-		}
-		if conn.ConnectionState().TLS.NegotiatedProtocol == "moq-00" {
+		case "moq-00", "moqt-16":
 			go s.handler.Handle(ctx, quicmoq.NewServer(conn))
+		default:
+			slog.Warn("unknown ALPN, closing connection", "alpn", alpn)
+			conn.CloseWithError(0, "unsupported protocol")
 		}
 	}
 }

@@ -39,6 +39,7 @@ type options struct {
 	addr         string
 	trackname    string
 	duration     int
+	draft        int
 	muxout       string
 	videoOut     string
 	audioOut     string
@@ -78,6 +79,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.namespace, "namespace", "cmsf/clear", "MoQ namespace to use")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Use FETCH instead of SUBSCRIBE for catalog")
+	fs.IntVar(&opts.draft, "draft", 14, "MoQ Transport draft version (14 or 16)")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -200,5 +202,13 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	return runClientWithDial(ctx, opts.addr, useWebTransport, h, outs)
+	var alpn string
+	switch opts.draft {
+	case 16:
+		alpn = "moqt-16"
+	default:
+		alpn = "moq-00"
+	}
+
+	return runClientWithDial(ctx, opts.addr, useWebTransport, alpn, h, outs)
 }
