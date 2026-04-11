@@ -241,10 +241,10 @@ func runServer(opts *options) error {
 	}
 
 	s := &server{
-		addr:            opts.addr,
-		tlsConfig:       tlsConfig,
-		handler:         h,
-		sidePort: opts.sidePort,
+		addr:      opts.addr,
+		tlsConfig: tlsConfig,
+		handler:   h,
+		sidePort:  opts.sidePort,
 	}
 
 	return s.runServer(ctx)

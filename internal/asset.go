@@ -23,8 +23,8 @@ type ProtectionType int
 
 const (
 	ProtectionNone ProtectionType = iota
-	ProtectionDRM  // Commercial DRM (Widevine/PlayReady/FairPlay via CPIX)
-	ProtectionECCP // ClearKey / ECCP (explicit key over HTTP)
+	ProtectionDRM                 // Commercial DRM (Widevine/PlayReady/FairPlay via CPIX)
+	ProtectionECCP                // ClearKey / ECCP (explicit key over HTTP)
 )
 
 type ContentTrack struct {
@@ -290,7 +290,8 @@ func LoadAssetWithDRM(dirPath string, audioSampleBatch, videoSampleBatch int, dr
 // If drm is not nil, protected tracks with "_drm" suffix are created (commercial DRM via CPIX).
 // If eccp is not nil, protected tracks with "_eccp" suffix are created (ClearKey/ECCP).
 // Both can be provided simultaneously to create two independent sets of encrypted tracks.
-func LoadAssetWithProtection(dirPath string, audioSampleBatch, videoSampleBatch int, drm, eccp *DRMInfo) (*Asset, error) {
+func LoadAssetWithProtection(dirPath string, audioSampleBatch, videoSampleBatch int,
+	drm, eccp *DRMInfo) (*Asset, error) {
 	tracksByType, err := parseTracks(dirPath, audioSampleBatch, videoSampleBatch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tracks: %w", err)
@@ -355,7 +356,8 @@ func parseTracks(dirPath string, audioSampleBatch, videoSampleBatch int) (map[st
 // createProtectedTracks creates duplicate protected versions of all existing clear tracks
 // and adds them to the map. The suffix (e.g. "_drm", "_eccp") and protectionType distinguish
 // different protection schemes.
-func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo, suffix string, prot ProtectionType) error {
+func createProtectedTracks(tracksByType map[string][]ContentTrack, drm *DRMInfo, suffix string,
+	prot ProtectionType) error {
 	types := []string{"video", "audio"}
 	for _, typ := range types {
 		orig, ok := tracksByType[typ]

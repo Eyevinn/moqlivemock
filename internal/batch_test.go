@@ -148,7 +148,7 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			}
 
 			// Test that the catalog bitrates are calculated correctly based on batch size
-			catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone,1234567890000)
+			catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 			require.NoError(t, err)
 			require.NotNil(t, catalog)
 

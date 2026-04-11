@@ -149,7 +149,7 @@ type memConn struct {
 	cancel      context.CancelFunc
 	cancelPeer  context.CancelFunc
 	peer        *memConn
-	biAccept    chan moqtransport.Stream       // peer-opened bidirectional streams
+	biAccept    chan moqtransport.Stream        // peer-opened bidirectional streams
 	uniAccept   chan moqtransport.ReceiveStream // peer-opened unidirectional streams
 	streamID    atomic.Uint64
 
@@ -292,9 +292,9 @@ type memStream struct {
 func (s *memStream) Read(p []byte) (int, error)  { return s.r.Read(p) }
 func (s *memStream) Write(p []byte) (int, error) { return s.w.Write(p) }
 func (s *memStream) Close() error                { return s.w.Close() }
-func (s *memStream) Stop(uint32)                  { _ = s.r.CloseWithError(io.EOF) }
-func (s *memStream) Reset(uint32)                 { _ = s.w.CloseWithError(io.ErrClosedPipe) }
-func (s *memStream) StreamID() uint64             { return s.id }
+func (s *memStream) Stop(uint32)                 { _ = s.r.CloseWithError(io.EOF) }
+func (s *memStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
+func (s *memStream) StreamID() uint64            { return s.id }
 
 // memSendStream implements moqtransport.SendStream (write-only).
 type memSendStream struct {
@@ -304,8 +304,8 @@ type memSendStream struct {
 
 func (s *memSendStream) Write(p []byte) (int, error) { return s.w.Write(p) }
 func (s *memSendStream) Close() error                { return s.w.Close() }
-func (s *memSendStream) Reset(uint32)                 { _ = s.w.CloseWithError(io.ErrClosedPipe) }
-func (s *memSendStream) StreamID() uint64             { return s.id }
+func (s *memSendStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
+func (s *memSendStream) StreamID() uint64            { return s.id }
 
 // memReceiveStream implements moqtransport.ReceiveStream (read-only).
 type memReceiveStream struct {
@@ -314,5 +314,5 @@ type memReceiveStream struct {
 }
 
 func (s *memReceiveStream) Read(p []byte) (int, error) { return s.r.Read(p) }
-func (s *memReceiveStream) Stop(uint32)                 { _ = s.r.CloseWithError(io.EOF) }
-func (s *memReceiveStream) StreamID() uint64            { return s.id }
+func (s *memReceiveStream) Stop(uint32)                { _ = s.r.CloseWithError(io.EOF) }
+func (s *memReceiveStream) StreamID() uint64           { return s.id }

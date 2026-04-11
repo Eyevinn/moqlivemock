@@ -36,18 +36,18 @@ Usage of %s:
 `
 
 type options struct {
-	addr       string
-	trackname  string
-	duration   int
-	muxout     string
-	videoOut   string
-	audioOut   string
-	subsOut    string
-	catalogOut string
-	qlogfile   string
-	videoname  string
-	audioname  string
-	subsname   string
+	addr         string
+	trackname    string
+	duration     int
+	muxout       string
+	videoOut     string
+	audioOut     string
+	subsOut      string
+	catalogOut   string
+	qlogfile     string
+	videoname    string
+	audioname    string
+	subsname     string
 	namespace    string
 	loglevel     string
 	fetchCatalog bool
