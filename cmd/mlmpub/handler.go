@@ -21,10 +21,10 @@ import (
 )
 
 type server struct {
-	addr            string
-	tlsConfig       *tls.Config
-	handler         *pub.Handler
-	sidePort int
+	addr      string
+	tlsConfig *tls.Config
+	handler   *pub.Handler
+	sidePort  int
 }
 
 func (s *server) runServer(ctx context.Context) error {

@@ -87,7 +87,7 @@ func loadTestAsset(t *testing.T) (*internal.Asset, *internal.Catalog) {
 	err = asset.AddSubtitleTracks([]string{"en"}, nil)
 	require.NoError(t, err)
 
-	catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone,time.Now().UnixMilli())
+	catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, time.Now().UnixMilli())
 	require.NoError(t, err)
 
 	return asset, catalog

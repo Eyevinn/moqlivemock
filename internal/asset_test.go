@@ -153,7 +153,7 @@ func TestLoadAsset(t *testing.T) {
 				"loop duration should be 10s in timescale")
 		}
 	}
-	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone,1234567890000)
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 	require.Equal(t, 12, len(cat.Tracks))
