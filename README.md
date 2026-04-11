@@ -44,16 +44,32 @@ This project uses [moqtransport][moqtransport] for the MoQ transport layer.
 As the MoQ transport layer is still work in progress, this project is also
 work in progress. Currently a fork is used to align to [draft-14 of MOQT][moqt-14].
 
+## Namespaces
+
+mlmpub announces one or more namespaces depending on the configured protection modes.
+Each namespace has its own MSF catalog containing only the relevant tracks:
+
+| Namespace | Condition | Track suffix | Description |
+|-----------|-----------|--------------|-------------|
+| `cmsf/clear` | Always | *(none)* | Unencrypted tracks |
+| `cmsf/drm-{scheme}` | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
+| `cmsf/eccp-{scheme}` | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
+
+Both DRM and ECCP can be active simultaneously — they use independent encryption keys
+and produce separate sets of protected tracks.
+
+Subtitle tracks are included in all namespaces since they are not encrypted.
+
 ## Session setup
 
-The first things that happens after the session establishment is that the namespace is
-announced by the server. The client next subscribes to the MSF catalog.
-Once it has the catalog, it can subscribe to media.
+After session establishment, the server announces all configured namespaces.
+The client subscribes to the MSF catalog in the desired namespace.
+Once it has the catalog, it can subscribe to media tracks listed in that catalog.
 
-The bundled `mlmsub` client subscribes to the first video and audio track from the catalog
-or tracks that match the `-videoname`, `-audioname`. For subtitles, see below.
-It should later be possible to switch bitrate by unsubscribing to one
-track and subscribing to another, with no repeated or lost frames.
+The bundled `mlmsub` client connects to a single namespace (default: `cmsf/clear`,
+configurable via `-namespace`). It subscribes to the first video and audio track
+from the catalog or tracks that match `-videoname`, `-audioname`.
+For subtitles, see below.
 
 ## Subtitle Tracks
 
@@ -181,7 +197,7 @@ useful when running the server locally.
 
 **Run mlmpub with fingerprint support**:
 ```sh
-> go run . -fingerprintport 8081
+> go run . -sideport 8081
 ```
 
 This will automatically generate a WebTransport-compatible certificate with:
@@ -193,12 +209,12 @@ Alternatively, you can use your own certificate (e.g., generated with the includ
 ```sh
 cd cmd/mlmpub
 ./generate-webtransport-cert.sh
-go run . -cert cert-fp.pem -key key-fp.pem -fingerprintport 8081
+go run . -cert cert-fp.pem -key key-fp.pem -sideport 8081
 ```
 
 This will:
 - Start the MoQ server on port 4443 (default address is `0.0.0.0:4443`, listening on all interfaces)
-- Start an HTTP server on port 8081 that serves the certificate's SHA-256 fingerprint
+- Start an HTTP side server on port 8081 serving `/fingerprint` and `/clearkey`
 - Validate that the certificate meets WebTransport requirements
 
 The warp-player can then connect using:
@@ -206,33 +222,69 @@ The warp-player can then connect using:
 - Fingerprint URL: `http://localhost:8081/fingerprint` or `http://127.0.0.1:8081/fingerprint`
 
 **Notes**:
-- The fingerprint server is disabled by default (`-fingerprintport 0`).
-  Only enable it when using certificates that meet WebTransport's strict requirements.
+- The side server is disabled by default (`-sideport 0`).
+  Enable it when using certificate fingerprints or ClearKey/ECCP encryption.
 - If no certificate files are provided, mlmpub will generate WebTransport-compatible certificates automatically.
 
 ### Using DRM
-moqlivemock supports the use of DRM. Supported DRM systems are Widevine, PlayReady, FairPlay (untested) and ClearKey. To use ClearKey you need to add the `-kid`, `-iv`, and `-cenckey` flags with relevant values to the publisher. If no cenc key is provided the key-id will be used as the cenc key. The ClearKey license server is hosted on the fingerprint server on the path `/clearkey` so you also need to enable the fingerprint server with the  `-fingerprintport` flag.
 
-To use any of the other DRM systems you need to add a CPIX file and a config JSON file (preferably in the gitignored directory `assets/drm/`) and add the flag `-drmpath` which points to the config JSON file. The config JSON file needs to be of the same format as the example file `assets/testdrm/drm_config_test.json`.
+moqlivemock supports two independent content protection modes that can run simultaneously:
 
-Example ClearKey publisher:
+#### ClearKey / ECCP (explicit key)
+
+Use `-kid`, `-iv`, and optionally `-cenckey` flags. If no cenc key is provided, the
+key-id is used as the key. The ClearKey license endpoint is served at `/clearkey` on
+the side server, so `-sideport` must be set. For production behind a reverse proxy,
+use `-laurl` to specify the external license URL announced in the catalog.
+
 ```sh
-cd cmd/mlmpub
-go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -fingerprintport 8081
+# Local development
+go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -scheme cbcs -sideport 8081
+
+# Behind a reverse proxy (e.g. Caddy forwarding /clearkey → localhost:8081/clearkey)
+go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -scheme cbcs \
+         -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-Example commercial DRM publisher:
+This announces namespace `cmsf/eccp-cbcs` with tracks like `video_400kbps_avc_eccp`.
+
+#### Commercial DRM (CPIX)
+
+Use `-drmpath` pointing to a config JSON file in the same format as `assets/testdrm/drm_config_test.json`.
+Supported systems: Widevine, PlayReady, FairPlay.
+
 ```sh
-cd cmd/mlmpub
-go run . -drmpath ../../assets/testdrm/drm_config_test.json #Test DRM. Does not contain a real DRM key.
+go run . -drmpath ../../assets/testdrm/drm_config_test.json
 ```
 
-The subscriber uses information from the catalog to make a ClearKey request so no extra flags need to be provided except for choosing the protected tracks.
+This announces namespace `cmsf/drm-{scheme}` with tracks like `video_400kbps_avc_drm`.
 
-Example subscriber:
+#### Both simultaneously
+
+Both modes can be active at the same time, each with independent encryption keys:
+
 ```sh
-cd cmd/mlmsub
-go run . -videoname video_400kbps_avc_protected -audioname audio_monotonic_128kbps_aac_protected -muxout - | ffplay -
+go run . -drmpath ../../assets/drm/drm_config.json \
+         -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccddeeff -scheme cbcs \
+         -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
+```
+
+This announces three namespaces: `cmsf/clear`, `cmsf/drm-cbcs`, and `cmsf/eccp-cbcs`.
+
+#### Subscriber examples
+
+The subscriber uses information from the catalog to make license requests,
+so no extra flags are needed except choosing the right namespace and track names:
+
+```sh
+# Clear content (default namespace)
+go run . -muxout - | ffplay -
+
+# ECCP-protected content
+go run . -namespace cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - | ffplay -
+
+# DRM-protected content
+go run . -namespace cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
 ```
 
 ## QUIC / WebTransport Configuration
