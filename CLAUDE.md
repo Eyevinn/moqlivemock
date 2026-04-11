@@ -37,11 +37,31 @@ Uses `github.com/Eyevinn/moqtransport` (forked from mengelbart/moqtransport) wit
 - Call `session.Run(conn)` to start
 - Subscriptions use separate `SubscribeHandler` interface
 
+### Multi-Namespace Architecture
+
+mlmpub announces one or more namespaces, each with its own catalog:
+- `cmsf/clear` — always present, clear (unencrypted) tracks
+- `cmsf/drm-{scheme}` — when `-drmpath` is set, commercial DRM tracks (`_drm` suffix)
+- `cmsf/eccp-{scheme}` — when `-kid`/`-iv` are set, ClearKey/ECCP tracks (`_eccp` suffix)
+
+Key types in `internal/pub/pub.go`:
+- `NamespaceEntry` — pairs a namespace tuple with its catalog
+- `Handler.Namespaces []NamespaceEntry` — all announced namespaces
+
+Key types in `internal/asset.go`:
+- `ProtectionType` — enum: `ProtectionNone`, `ProtectionDRM`, `ProtectionECCP`
+- `ContentTrack.Protection` — identifies how a track is encrypted
+- `Asset.Drm` / `Asset.Eccp` — independent DRM configs
+
+`GenCMAFCatalogEntry(namespace, protectionType, timestamp)` generates a catalog
+filtered to the specified protection type.
+
 ### Handler Pattern
 
 Publishers implement:
 - `Handler` - for ANNOUNCE messages
 - `SubscribeHandler` - for SUBSCRIBE messages (returns `*SubscribeResponseWriter`)
+- `FetchHandler` - for FETCH messages (returns `*FetchResponseWriter`)
 
 Subscribers implement:
 - `Handler` - for ANNOUNCE messages (accept/reject)
@@ -63,6 +83,23 @@ Configuration via mlmpub flags:
 - `-subsstpp "en,sv"` - comma-separated STPP languages (default: "en")
 
 Track naming: `subs_wvtt_{lang}`, `subs_stpp_{lang}`
+
+### Content Protection
+
+Two independent encryption modes, both optional and can be active simultaneously:
+
+**ClearKey/ECCP** (explicit key flags):
+- `-kid` — key ID (32 hex chars)
+- `-iv` — initialization vector (16 or 32 hex chars)
+- `-cenckey` — encryption key (32 hex chars, defaults to kid if omitted)
+- `-scheme` — `cenc` or `cbcs`
+- `-laurl` — external license URL for the catalog (falls back to `http://localhost:{sideport}/clearkey`)
+- `-sideport` — HTTP port serving `/fingerprint` and `/clearkey` endpoints
+
+**Commercial DRM** (CPIX config file):
+- `-drmpath` — path to config JSON (format: `assets/testdrm/drm_config_test.json`)
+
+Track naming: clear tracks have no suffix, DRM tracks get `_drm`, ECCP tracks get `_eccp`.
 
 ### Video Codecs
 
