@@ -60,6 +60,7 @@ type options struct {
 	iv               string
 	kid              string
 	scheme           string
+	laURL            string
 	drmConfigPath    string
 	version          bool
 }
@@ -88,6 +89,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		"if no key is specified the key id will be used as the key.")
 	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption,"+
 		"either \"cenc\" or \"cbcs\"")
+	fs.StringVar(&opts.laURL, "laurl", "", "ClearKey/ECCP license acquisition URL announced in catalog."+
+		" Falls back to http://localhost:{fingerprintport}/clearkey if not set.")
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
@@ -153,8 +156,12 @@ func runServer(opts *options) error {
 	}
 
 	// Parse ClearKey/ECCP config (explicit key flags)
+	laURL := opts.laURL
+	if laURL == "" && opts.fingerprintPort > 0 {
+		laURL = fmt.Sprintf("http://localhost:%d/clearkey", opts.fingerprintPort)
+	}
 	var eccp *internal.DRMInfo
-	eccp, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, opts.fingerprintPort)
+	eccp, err = internal.ParseCENCflags(opts.scheme, opts.kid, opts.cencKey, opts.iv, laURL)
 	if err != nil {
 		return err
 	}

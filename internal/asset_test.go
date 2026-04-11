@@ -167,7 +167,7 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
-	drm, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, 8081)
+	drm, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
 	require.NoError(t, err)
 
 	err = createProtectedTracks(tracksByType, drm, "_drm", ProtectionDRM)
@@ -249,7 +249,7 @@ func TestClearKeyDecryptionMatchExcatly(t *testing.T) {
 	ivStr := "41112233445566778899aabbccddeeff"
 	schemes := []string{"cbcs", "cenc"}
 	for _, scheme := range schemes {
-		eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, 8081)
+		eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
 		require.NoError(t, err)
 		checkDecryptedTracksMatchExactly(t, eccp, "_eccp")
 	}

@@ -102,12 +102,13 @@ func ConfigureDRMFromFile(configpath string) (*DRMInfo, error) {
 
 // ParseCENCflags converts the string CENC-related parameters into a ClearKey-compliant *DRMInfo struct.
 // If all flags are empty (except scheme) nil is returned.
-func ParseCENCflags(scheme, kidStr, keyStr, ivStr string, fingerprintPort int) (*DRMInfo, error) {
+// The laURL parameter is the license acquisition URL announced in the catalog.
+func ParseCENCflags(scheme, kidStr, keyStr, ivStr, laURL string) (*DRMInfo, error) {
 	if kidStr == "" && keyStr == "" && ivStr == "" {
 		return nil, nil
 	}
-	if fingerprintPort <= 0 {
-		return nil, fmt.Errorf("invalid or non-configured fingerprintport: %d", fingerprintPort)
+	if laURL == "" {
+		return nil, fmt.Errorf("laurl must be configured for ClearKey/ECCP encryption")
 	}
 
 	kid, err := mp4.UnpackKey(kidStr)
@@ -156,7 +157,7 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr string, fingerprintPort int) (
 		iv:  iv,
 	}
 	license := &DRMService{
-		URL:  fmt.Sprintf("http://localhost:%d/clearkey", fingerprintPort),
+		URL:  laURL,
 		Type: "EME-1.0",
 	}
 	sw := bits.NewFixedSliceWriter(int(psshBox.Size()))
