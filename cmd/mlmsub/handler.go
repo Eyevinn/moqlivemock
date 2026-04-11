@@ -16,14 +16,14 @@ import (
 )
 
 func runClientWithDial(
-	ctx context.Context, addr string, useWebTransport bool, h *sub.Handler, outs map[string]io.Writer,
+	ctx context.Context, addr string, useWebTransport bool, alpn string, h *sub.Handler, outs map[string]io.Writer,
 ) error {
 	var conn moqtransport.Connection
 	var err error
 	if useWebTransport {
 		conn, err = dialWebTransport(ctx, addr)
 	} else {
-		conn, err = dialQUIC(ctx, addr)
+		conn, err = dialQUIC(ctx, addr, alpn)
 	}
 	if err != nil {
 		return err
@@ -51,11 +51,11 @@ func ensureURLPort(rawURL, defaultPort string) string {
 	return rawURL
 }
 
-func dialQUIC(ctx context.Context, addr string) (moqtransport.Connection, error) {
+func dialQUIC(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
 	addr = ensurePort(addr, "443")
 	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
 		InsecureSkipVerify: true,
-		NextProtos:         []string{"moq-00"},
+		NextProtos:         []string{alpn},
 	}, &quic.Config{
 		EnableDatagrams:                  true,
 		EnableStreamResetPartialDelivery: true,
