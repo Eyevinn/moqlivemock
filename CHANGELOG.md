@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-11
+
+Full [MOQ Transport draft-14][moqt-d14] compliance release.
+
 ### Added
 
 - FETCH support for catalog retrieval as an alternative to SUBSCRIBE (`-fetchcatalog` flag in mlmsub)
@@ -23,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Object ID delta encoding in subgroup streams per draft-14 spec (moqtransport v0.6.2)
+- Inverted Unannounce condition that returned error for known namespaces (moqtransport v0.6.3)
 - Safari 26.4 WebTransport support by adding newer SETTINGS codepoints
   ([warp-player#88](https://github.com/Eyevinn/warp-player/issues/88))
 
@@ -31,14 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use `role` instead of `mimeType` in catalog per CMSF/MSF spec
 - Refactored `cmd/mlmpub` and `cmd/mlmsub` into thin wrappers over `internal/pub` and `internal/sub`
 - Bumped Go version to 1.25
+- Bumped moqtransport to v0.6.3
 - Publisher goroutines now use proper context propagation instead of `context.TODO()`
 - Switched video sample descriptors from `avc3`/`hev1` to `avc1`/`hvc1` to support
   FairPlay streaming in Safari 26.4+. With `avc1`/`hvc1`, parameter sets (SPS/PPS
   for AVC, VPS/SPS/PPS for HEVC) are stored in the init segment rather than
   inlined in each sample
-
-### Changed
-
 - CI: added coverage workflow, updated Go to 1.25, aligned workflows with hi264
 
 ## [0.5.0] - 2026-01-27
@@ -126,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...HEAD
+[0.6.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.2.0...v0.3.0
