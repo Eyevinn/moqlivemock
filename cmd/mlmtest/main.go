@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -32,6 +33,8 @@ var testCases = []testCase{
 	{"announce-only", testAnnounceOnly},
 	{"publish-namespace-done", testPublishNamespaceDone},
 	{"subscribe-error", testSubscribeError},
+	{"announce-subscribe", testAnnounceSubscribe},
+	{"subscribe-before-announce", testSubscribeBeforeAnnounce},
 }
 
 func main() {
@@ -221,5 +224,106 @@ func testSubscribeError(ctx context.Context, relay string, tlsSkipVerify bool) e
 		return fmt.Errorf("timed out waiting for REQUEST_ERROR")
 	}
 	_ = s.Close()
+	return nil
+}
+
+// runPublisherSession creates a session that announces a namespace and accepts subscriptions.
+func runPublisherSession(ctx context.Context, relay string, tlsSkipVerify bool, namespace []string) (*moqtransport.Session, error) {
+	conn, err := dial(ctx, relay, tlsSkipVerify)
+	if err != nil {
+		return nil, err
+	}
+	s := &moqtransport.Session{
+		InitialMaxRequestID: 64,
+		Handler: moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
+			if r.Method == moqtransport.MessageAnnounce {
+				_ = w.Accept()
+			}
+		}),
+		SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+			_ = w.Accept()
+		}),
+	}
+	if err := s.Run(conn); err != nil {
+		return nil, fmt.Errorf("publisher session setup: %w", err)
+	}
+	if err := s.Announce(ctx, namespace); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
+	}
+	return s, nil
+}
+
+// testAnnounceSubscribe: publisher announces, subscriber subscribes, both succeed.
+func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool) error {
+	ns := []string{"moq-test", "interop"}
+
+	// Publisher: connect, setup, announce
+	pub, err := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	if err != nil {
+		return fmt.Errorf("publisher: %w", err)
+	}
+	defer pub.Close()
+
+	// Subscriber: connect, setup, subscribe
+	conn, err := dial(ctx, relay, tlsSkipVerify)
+	if err != nil {
+		return fmt.Errorf("subscriber dial: %w", err)
+	}
+	sub, err := runSession(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("subscriber session: %w", err)
+	}
+	defer sub.Close()
+
+	_, subErr := sub.Subscribe(ctx, ns, "test-track")
+	if subErr != nil {
+		return fmt.Errorf("SUBSCRIBE: %w", subErr)
+	}
+	return nil
+}
+
+// testSubscribeBeforeAnnounce: subscriber subscribes first, publisher 500ms later.
+// Either SUBSCRIBE_OK or REQUEST_ERROR is valid.
+func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerify bool) error {
+	ns := []string{"moq-test", "interop"}
+
+	// Subscriber: connect first
+	subConn, err := dial(ctx, relay, tlsSkipVerify)
+	if err != nil {
+		return fmt.Errorf("subscriber dial: %w", err)
+	}
+	sub, err := runSession(ctx, subConn)
+	if err != nil {
+		return fmt.Errorf("subscriber session: %w", err)
+	}
+	defer sub.Close()
+
+	// Subscribe in background (may block waiting for publisher)
+	var subErr error
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, subErr = sub.Subscribe(ctx, ns, "test-track")
+	}()
+
+	// Wait 500ms, then publisher connects and announces
+	time.Sleep(500 * time.Millisecond)
+
+	pub, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	if pubErr != nil {
+		return fmt.Errorf("publisher: %w", pubErr)
+	}
+	defer pub.Close()
+
+	// Wait for subscriber result
+	wg.Wait()
+
+	// Either SUBSCRIBE_OK or REQUEST_ERROR is acceptable
+	if subErr != nil && strings.Contains(subErr.Error(), "context deadline exceeded") {
+		return fmt.Errorf("subscriber timed out (neither OK nor ERROR received)")
+	}
+	// subErr == nil means SUBSCRIBE_OK, non-nil means REQUEST_ERROR — both valid
 	return nil
 }
