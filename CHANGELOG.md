@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-11
+
+### Added
+
+- Multi-namespace support: `cmsf/clear` (always), `cmsf/drm-{scheme}` (CPIX), `cmsf/eccp-{scheme}` (ClearKey)
+- Independent encryption for DRM and ECCP tracks with separate keys (`_drm` and `_eccp` suffixes)
+- `-laurl` flag for external ClearKey license URL (for reverse proxy deployments)
+- `-sideport` flag replacing `-fingerprintport`, serving both `/fingerprint` and `/clearkey`
+
+### Changed
+
+- Namespace prefix changed from `moqlivemock` to `cmsf/clear` (and `cmsf/drm-*`, `cmsf/eccp-*`)
+- Video tracks sorted AVC before HEVC for Widevine compatibility in Chrome
+- Protected track suffix changed from `_protected` to `_drm` (commercial DRM) and `_eccp` (ClearKey)
+- Default namespace in mlmsub changed to `cmsf/clear`
+- `ParseCENCflags` now takes a license URL string instead of a port number
+
 ## [0.6.0] - 2026-04-11
 
 Full [MOQ Transport draft-14][moqt-d14] compliance release.
@@ -130,7 +147,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...HEAD
+[0.6.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.3.0...v0.4.0
