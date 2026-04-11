@@ -107,20 +107,27 @@ func TestLoadAsset(t *testing.T) {
 		}
 	}
 
-	// Check that video tracks are in bitrate order (ascending)
+	// Check that video tracks are sorted by codec (avc before hvc) then by bitrate ascending
+	var videoCodecs []string
 	var videoBitrates []int
 	var videoNames []string
 	for _, group := range asset.Groups {
 		if len(group.Tracks) > 0 && group.Tracks[0].ContentType == "video" {
 			for _, track := range group.Tracks {
+				videoCodecs = append(videoCodecs, track.SpecData.Codec())
 				videoBitrates = append(videoBitrates, int(track.SampleBitrate))
 				videoNames = append(videoNames, track.Name)
 			}
 		}
 	}
 	for i := 1; i < len(videoBitrates); i++ {
-		require.LessOrEqual(t, videoBitrates[i-1], videoBitrates[i],
-			"video tracks not in bitrate order: got %v (%v)", videoBitrates, videoNames)
+		if videoCodecs[i-1] == videoCodecs[i] {
+			require.LessOrEqual(t, videoBitrates[i-1], videoBitrates[i],
+				"video tracks not in bitrate order within codec: got %v (%v)", videoBitrates, videoNames)
+		} else {
+			require.LessOrEqual(t, videoCodecs[i-1], videoCodecs[i],
+				"video tracks not in codec order: got %v (%v)", videoCodecs, videoNames)
+		}
 	}
 
 	// Check that video group has a lower altGroupID than audio group
