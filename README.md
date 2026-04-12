@@ -40,9 +40,10 @@ All streams are aligned to UTC wall-clock time at two levels:
 LOC is currently not supported, but one possible scenario is to send LOC over the wire and
 then reassamble CMAF on the receiving side again.
 
-This project uses [moqtransport][moqtransport] for the MoQ transport layer.
-As the MoQ transport layer is still work in progress, this project is also
-work in progress. Currently a fork is used to align to [draft-14 of MOQT][moqt-14].
+This project uses [moqtransport][moqtransport] for the MoQ transport layer,
+supporting both draft-14 and draft-16 of MOQT. Draft-16 uses ALPN-based version
+negotiation (`moqt-16`) and `WT-Available-Protocols` for WebTransport. Draft-14
+(`moq-00`) is supported for backward compatibility.
 
 ## Namespaces
 
@@ -107,7 +108,7 @@ To receive subtitles with the mlmsub subscriber:
 
 ## Requirements
 
-* Go 1.24 or later
+* Go 1.25 or later
 
 ## Installation and Usage
 
@@ -119,10 +120,11 @@ go mod tidy
 
 to get up and running.
 
-There are two commands
+There are three commands
 
 * `mlmpub` is the server and publisher
 * `mlmsub` is the client and subscriber
+* `mlmtest` is an interop test client for the [moq-interop-runner][interop-runner]
 
 The content used is in the `assets/test10s` directory, and was
 generated using the tools in `utils/contentgen`.
@@ -308,7 +310,7 @@ Example QUIC config:
 
 ## Development
 
-Use plain Go environment, with go 1.24 or later.
+Use plain Go environment, with go 1.25 or later.
 The Makefile helps out with some tasks.
 
 ## Contributing
@@ -342,3 +344,4 @@ Want to know more about Eyevinn and how it is to work here. Contact us at work@e
 [CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [warp-player]: https://github.com/Eyevinn/warp-player
+[interop-runner]: https://github.com/englishm/moq-interop-runner

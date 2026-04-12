@@ -33,7 +33,8 @@ go mod vendor               # Vendor dependencies
 
 ### MoQ Transport Dependency
 
-Uses `github.com/Eyevinn/moqtransport` (forked from mengelbart/moqtransport) with draft-14 support.
+Uses `github.com/Eyevinn/moqtransport` (forked from mengelbart/moqtransport) with draft-14 and draft-16 support.
+Version negotiation uses ALPN (`moqt-16` for draft-16, `moq-00` for draft-14) and `WT-Available-Protocols` for WebTransport.
 - Session creation: `&moqtransport.Session{Handler: ..., SubscribeHandler: ...}`
 - Call `session.Run(conn)` to start
 - Subscriptions use separate `SubscribeHandler` interface
@@ -112,7 +113,7 @@ in Safari 26.4+.
 ### Interop Testing (mlmtest)
 
 `mlmtest` is an interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner).
-It connects to a relay as a MoQ draft-16 client and runs protocol-level test cases, outputting TAP v14 results.
+It connects to a server/relay and runs protocol-level test cases with both draft-14 and draft-16, outputting TAP v14 results.
 
 **Test cases:**
 1. `setup-only` — connect, exchange SETUP, close
@@ -148,6 +149,7 @@ go test ./internal/...
 
 IETF draft specifications are stored in `references/` for offline reference:
 
-- `draft-ietf-moq-transport-14.txt` - MoQ Transport protocol (draft-14), the wire protocol used by this project
+- `draft-ietf-moq-transport-14.txt` - MoQ Transport protocol (draft-14)
+- `draft-ietf-moq-transport-16.txt` - MoQ Transport protocol (draft-16), the primary wire protocol used by this project
 - `draft-ietf-moq-msf-00.txt` - MoQ Streaming Format (MSF), defines how media is mapped to MoQ tracks/groups/objects
 - `draft-ietf-moq-cmsf-00.txt` - CMAF MoQ Streaming Format (CMSF), defines CMAF-based media packaging for MoQ
