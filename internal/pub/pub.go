@@ -59,6 +59,11 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 		slog.Info("namespace announced successfully", "namespace", ns.Namespace)
 	}
+	// Announce interop test namespace for moq-interop-runner compatibility
+	slog.Info("announcing interop namespace", "namespace", interopNamespace)
+	if err := session.Announce(ctx, interopNamespace); err != nil {
+		slog.Warn("failed to announce interop namespace", "error", err)
+	}
 	// Block until context is cancelled to keep the session alive
 	<-ctx.Done()
 }
