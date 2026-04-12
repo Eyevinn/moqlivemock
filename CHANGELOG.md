@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-12
+
+MoQ Transport draft-16 support and [moq-interop-runner](https://github.com/englishm/moq-interop-runner) preparation.
+
+### Added
+
+- MoQ Transport draft-16 support via moqtransport v0.7.0
+  - ALPN-based version negotiation (`moqt-16` for draft-16, `moq-00` for draft-14)
+  - Delta-encoded parameters and version-aware message formats
+  - WebTransport protocol negotiation via `WT-Available-Protocols` / `WT-Protocol` headers (per draft-16 Section 3.1)
+- `mlmtest` interop test client for [moq-interop-runner][interop-runner]
+  - 6 test cases: setup-only, announce-only, publish-namespace-done, subscribe-error, announce-subscribe, subscribe-before-announce
+  - TAP v14 output, dual draft-14/16 support via `-draft` flag and `DRAFT` env var
+  - `Dockerfile.mlmtest` and GitHub Actions workflow for GHCR publishing
+- `-draft` flag in mlmsub for draft-14/16 selection
+- Interop namespace `["moq-test", "interop"]` in mlmpub: accepts ANNOUNCE and SUBSCRIBE from clients, and announces it to subscribers
+- Integration tests for mlmtest (all 6 test cases with both draft-14 and draft-16)
+- Unit tests for pub package (interop namespace helpers)
+
+### Changed
+
+- Bumped moqtransport to v0.7.0 (draft-16 wire format)
+- mlmpub advertises both `moqt-16` and `moq-00` ALPNs for raw QUIC
+- mlmpub WebTransport server advertises `ApplicationProtocols: ["moqt-16", "moq-00"]`
+- mlmsub WebTransport dialer passes ALPN based on `-draft` flag
+
 ## [0.6.1] - 2026-04-11
 
 ### Added
@@ -147,7 +173,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...HEAD
+[0.7.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...v0.5.0
@@ -162,4 +189,5 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
+[interop-runner]: https://github.com/englishm/moq-interop-runner
 [wp]: https://github.com/Eyevinn/warp-player
