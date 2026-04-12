@@ -63,10 +63,24 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	<-ctx.Done()
 }
 
+// interopNamespace is the namespace used by the moq-interop-runner test cases.
+var interopNamespace = []string{"moq-test", "interop"}
+
+func isInteropNamespace(ns []string) bool {
+	return tupleEqual(ns, interopNamespace)
+}
+
 func (h *Handler) getHandler() moqtransport.Handler {
 	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
 		switch r.Method {
 		case moqtransport.MessageAnnounce:
+			if isInteropNamespace(r.Namespace) {
+				slog.Info("accepting interop announcement", "namespace", r.Namespace)
+				if err := w.Accept(); err != nil {
+					slog.Error("failed to accept interop announcement", "error", err)
+				}
+				return
+			}
 			slog.Warn("got unexpected announcement", "namespace", r.Namespace)
 			err := w.Reject(0, "publisher doesn't take announcements")
 			if err != nil {
@@ -138,6 +152,14 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.SubscribeHandler {
 	return moqtransport.SubscribeHandlerFunc(
 		func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
+			// Accept interop test subscriptions (control-plane only, no media)
+			if isInteropNamespace(m.Namespace) {
+				slog.Info("accepting interop subscription", "namespace", m.Namespace, "track", m.Track)
+				if err := w.Accept(); err != nil {
+					slog.Error("failed to accept interop subscription", "error", err)
+				}
+				return
+			}
 			nsEntry := h.findNamespace(m.Namespace)
 			if nsEntry == nil {
 				slog.Warn("got unexpected subscription namespace", "received", m.Namespace)

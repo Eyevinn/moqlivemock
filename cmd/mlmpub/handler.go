@@ -61,6 +61,7 @@ func (s *server) runServer(ctx context.Context) error {
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
+		ApplicationProtocols: []string{"moqt-16", "moq-00"},
 	}
 	http.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
 		session, err := wt.Upgrade(w, r)
@@ -84,7 +85,7 @@ func (s *server) runServer(ctx context.Context) error {
 			go s.handler.Handle(ctx, quicmoq.NewServer(conn))
 		default:
 			slog.Warn("unknown ALPN, closing connection", "alpn", alpn)
-			conn.CloseWithError(0, "unsupported protocol")
+			_ = conn.CloseWithError(0, "unsupported protocol")
 		}
 	}
 }
