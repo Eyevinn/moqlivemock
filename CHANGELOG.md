@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MoQ Transport draft-16 support via moqtransport v0.7.0
+  - ALPN-based version negotiation (`moqt-16` for draft-16, `moq-00` for draft-14)
+  - Delta-encoded parameters and version-aware message formats
+  - WebTransport protocol negotiation via `WT-Available-Protocols` / `WT-Protocol` headers (per draft-16 Section 3.1)
+- `mlmtest` interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner)
+  - 6 test cases: setup-only, announce-only, publish-namespace-done, subscribe-error, announce-subscribe, subscribe-before-announce
+  - TAP v14 output, dual draft-14/16 support via `-draft` flag and `DRAFT` env var
+  - `Dockerfile.mlmtest` and GitHub Actions workflow for GHCR publishing
+- `-draft` flag in mlmsub for draft-14/16 selection
+- Interop namespace `["moq-test", "interop"]` in mlmpub: accepts ANNOUNCE and SUBSCRIBE from clients, and announces it to subscribers
+- Integration tests for mlmtest (all 6 test cases with both draft-14 and draft-16)
+- Unit tests for pub package (interop namespace helpers)
+
+### Changed
+
+- Bumped moqtransport to v0.7.0 (draft-16 wire format)
+- mlmpub advertises both `moqt-16` and `moq-00` ALPNs for raw QUIC
+- mlmpub WebTransport server advertises `ApplicationProtocols: ["moqt-16", "moq-00"]`
+- mlmsub WebTransport dialer passes ALPN based on `-draft` flag
+
 ## [0.6.1] - 2026-04-11
 
 ### Added
