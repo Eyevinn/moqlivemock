@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/Dash-Industry-Forum/livesim2 v1.9.0
-	github.com/Eyevinn/moqtransport v0.6.3
+	github.com/Eyevinn/moqtransport v0.7.0
 	github.com/Eyevinn/mp4ff v0.51.0
 	github.com/mengelbart/qlog v0.1.0
 	github.com/quic-go/quic-go v0.59.0

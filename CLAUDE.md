@@ -24,6 +24,7 @@ go mod vendor               # Vendor dependencies
 
 - `cmd/mlmpub/` - Publisher application serving media tracks (video, audio, subtitles)
 - `cmd/mlmsub/` - Subscriber application receiving media
+- `cmd/mlmtest/` - Interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner)
 - `internal/` - Shared internal packages:
   - `asset.go` - Asset loading and track management
   - `catalog.go` - MSF/CMSF catalog generation
@@ -107,6 +108,34 @@ Video tracks use `avc1` (H.264) and `hvc1` (HEVC) sample descriptors. These stor
 parameter sets (SPS/PPS for AVC, VPS/SPS/PPS for HEVC) in the init segment rather
 than inlining them in each sample. This is required for FairPlay DRM compatibility
 in Safari 26.4+.
+
+### Interop Testing (mlmtest)
+
+`mlmtest` is an interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner).
+It connects to a relay as a MoQ draft-16 client and runs protocol-level test cases, outputting TAP v14 results.
+
+**Test cases:**
+1. `setup-only` — connect, exchange SETUP, close
+2. `announce-only` — PUBLISH_NAMESPACE, wait for REQUEST_OK, close
+3. `publish-namespace-done` — PUBLISH_NAMESPACE, REQUEST_OK, PUBLISH_NAMESPACE_DONE, close
+4. `subscribe-error` — SUBSCRIBE to non-existent track, expect REQUEST_ERROR
+5. `announce-subscribe` — publisher announces, subscriber subscribes via relay
+6. `subscribe-before-announce` — subscriber subscribes first, publisher announces 500ms later
+
+**Usage:**
+```bash
+# Run all tests against a relay
+go run ./cmd/mlmtest -r moqt://relay:443 -tls-disable-verify
+
+# Run a specific test
+go run ./cmd/mlmtest -r moqt://relay:443 -t setup-only
+
+# List available tests
+go run ./cmd/mlmtest -l
+
+# Environment variables (used by moq-interop-runner)
+RELAY_URL=moqt://relay:443 TESTCASE=setup-only TLS_DISABLE_VERIFY=1 go run ./cmd/mlmtest
+```
 
 ## Testing
 

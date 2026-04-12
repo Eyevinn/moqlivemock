@@ -21,7 +21,7 @@ func runClientWithDial(
 	var conn moqtransport.Connection
 	var err error
 	if useWebTransport {
-		conn, err = dialWebTransport(ctx, addr)
+		conn, err = dialWebTransport(ctx, addr, alpn)
 	} else {
 		conn, err = dialQUIC(ctx, addr, alpn)
 	}
@@ -66,7 +66,7 @@ func dialQUIC(ctx context.Context, addr string, alpn string) (moqtransport.Conne
 	return quicmoq.NewClient(conn), nil
 }
 
-func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection, error) {
+func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
 	dialer := webtransport.Dialer{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -75,6 +75,7 @@ func dialWebTransport(ctx context.Context, addr string) (moqtransport.Connection
 			EnableDatagrams:                  true,
 			EnableStreamResetPartialDelivery: true,
 		},
+		ApplicationProtocols: []string{alpn},
 	}
 	_, session, err := dialer.Dial(ctx, ensureURLPort(addr, "443"), nil)
 	if err != nil {
