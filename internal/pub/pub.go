@@ -21,6 +21,7 @@ const (
 type NamespaceEntry struct {
 	Namespace []string
 	Catalog   *internal.Catalog
+	Packaging string // "cmaf" or "loc"
 }
 
 // Handler handles MoQ publisher sessions. It serves catalogs and publishes
@@ -222,8 +223,13 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 						slog.Error("failed to accept subscription", "error", err)
 						return
 					}
-					slog.Info("got subscription", "track", track.Name, "namespace", m.Namespace)
-					go PublishTrack(ctx, w, h.Asset, track.Name)
+					slog.Info("got subscription", "track", track.Name, "namespace", m.Namespace,
+						"packaging", nsEntry.Packaging)
+					if nsEntry.Packaging == "loc" {
+						go PublishLOCTrack(ctx, w, h.Asset, track.Name)
+					} else {
+						go PublishTrack(ctx, w, h.Asset, track.Name)
+					}
 					return
 				}
 			}
@@ -272,6 +278,48 @@ func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 			return
 		}
 		slog.Debug("published MoQ group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+		groupNr++
+	}
+}
+
+// PublishLOCTrack publishes LOC media track data (raw frames, one per object) in MoQ groups,
+// pacing delivery to wall-clock time.
+func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
+	ct := asset.GetTrackByName(trackName)
+	if ct == nil {
+		slog.Error("track not found", "track", trackName)
+		return
+	}
+	now := time.Now().UnixMilli()
+	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
+	groupNr := currGroupNr + 1 // Start stream on next group
+	slog.Info("publishing LOC track", "track", trackName, "group", groupNr)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority)
+		if err != nil {
+			slog.Error("failed to open subgroup", "error", err)
+			return
+		}
+		mg, err := internal.GenLOCGroup(ct, groupNr, internal.MoqGroupDurMS)
+		if err != nil {
+			slog.Error("failed to generate LOC group", "track", ct.Name, "group", groupNr, "error", err)
+			return
+		}
+		slog.Info("writing LOC group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+		err = internal.WriteMoQGroup(ctx, ct, mg, sg.WriteObject)
+		if err != nil {
+			slog.Error("failed to write LOC group", "error", err)
+			return
+		}
+		err = sg.Close()
+		if err != nil {
+			slog.Error("failed to close subgroup", "error", err)
+			return
+		}
+		slog.Debug("published LOC group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
 		groupNr++
 	}
 }

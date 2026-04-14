@@ -650,6 +650,99 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 	return cat, nil
 }
 
+// GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
+// Conforms to draft-ietf-moq-msf-00 with packaging="loc" per draft-ietf-moq-loc-02.
+//
+// Only AVC video and AAC/Opus audio tracks with ProtectionNone are included.
+// No initData is set (LOC sends video config in-band with keyframes).
+// AVC tracks use "avc3" codec prefix since parameter sets are in the payload.
+func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
+	var tracks []Track
+	renderGroup := 1
+	for _, group := range a.Groups {
+		altGroup := int(group.AltGroupID)
+		for _, ct := range group.Tracks {
+			if ct.Protection != ProtectionNone {
+				continue
+			}
+			// LOC only supports AVC video and AAC/Opus audio
+			switch ct.SpecData.(type) {
+			case *AVCData:
+				// OK - AVC video
+			case *AACData:
+				// OK - AAC audio
+			case *OpusData:
+				// OK - Opus audio
+			default:
+				continue // Skip HEVC, AC-3, EC-3
+			}
+
+			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
+
+			// For LOC, use avc3 codec string (param sets in payload, not init)
+			codec := ct.SpecData.Codec()
+			if _, ok := ct.SpecData.(*AVCData); ok {
+				codec = "avc3" + codec[4:] // Replace "avc1" prefix with "avc3"
+			}
+			// MSF examples use lowercase "opus"
+			if _, ok := ct.SpecData.(*OpusData); ok {
+				codec = "opus"
+			}
+
+			track := Track{
+				Name:        ct.Name,
+				Packaging:   "loc",
+				IsLive:      true,
+				RenderGroup: &renderGroup,
+				AltGroup:    &altGroup,
+				Codec:       codec,
+				Bitrate:     Ptr(int(ct.SampleBitrate)),
+				Language:    ct.Language,
+			}
+
+			switch ct.ContentType {
+			case "video":
+				track.Role = "video"
+				track.Framerate = Ptr(frameRate)
+				if sd, ok := ct.SpecData.(*AVCData); ok {
+					if sd.width != 0 {
+						track.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						track.Height = Ptr(int(sd.height))
+					}
+				}
+			case "audio":
+				track.Role = "audio"
+				switch sd := ct.SpecData.(type) {
+				case *AACData:
+					if sd.sampleRate != 0 {
+						track.SampleRate = Ptr(int(sd.sampleRate))
+					}
+					if sd.channelConfig != "" {
+						track.ChannelConfig = sd.channelConfig
+					}
+				case *OpusData:
+					if sd.sampleRate != 0 {
+						track.SampleRate = Ptr(int(sd.sampleRate))
+					}
+					if sd.channelConfig != "" {
+						track.ChannelConfig = sd.channelConfig
+					}
+				}
+			}
+			tracks = append(tracks, track)
+		}
+	}
+
+	cat := &Catalog{
+		Version:     1,
+		GeneratedAt: &generatedAtMS,
+		Tracks:      tracks,
+	}
+	return cat, nil
+}
+
 func calcCmafBitrate(sampleBitrate uint32, frameRate float64, sampleBatch int) int {
 	objectRate := frameRate / float64(sampleBatch)
 	cmafChunkOverhead := cmafOverheadBytes + (sampleBatch-1)*8
