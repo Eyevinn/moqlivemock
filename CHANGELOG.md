@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `-discover` flag in mlmsub to list announced namespaces on a relay and exit
+- `-accept-any` flag in mlmsub to accept any announced namespace (for connecting to external relays)
+- `-catalog-track` flag in mlmsub to configure catalog track name (e.g. `catalog.json` for moq-dev hang format)
+- Multi-element namespace support in mlmsub `-namespace` flag (space-separated, e.g. `"demo bbb"`)
+- Raw catalog payload logging on parse failure for debugging non-CMSF catalog formats
+
 ## [0.7.0] - 2026-04-12
 
 MoQ Transport draft-16 support and [moq-interop-runner](https://github.com/englishm/moq-interop-runner) preparation.

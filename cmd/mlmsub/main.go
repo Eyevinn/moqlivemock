@@ -52,6 +52,9 @@ type options struct {
 	namespace    string
 	loglevel     string
 	fetchCatalog bool
+	acceptAny    bool
+	discover     bool
+	catalogTrack string
 	version      bool
 }
 
@@ -79,6 +82,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.namespace, "namespace", "cmsf/clear", "MoQ namespace to use")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Use FETCH instead of SUBSCRIBE for catalog")
+	fs.BoolVar(&opts.acceptAny, "accept-any", false, "Accept any announced namespace")
+	fs.BoolVar(&opts.discover, "discover", false, "Discovery mode: list announced namespaces and exit")
+	fs.StringVar(&opts.catalogTrack, "catalog-track", "catalog", "Catalog track name (e.g. 'catalog' or 'catalog.json')")
 	fs.IntVar(&opts.draft, "draft", 14, "MoQ Transport draft version (14 or 16)")
 
 	err := fs.Parse(args[1:])
@@ -167,13 +173,21 @@ func runClient(ctx context.Context, opts *options) error {
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
+	namespace := strings.Fields(opts.namespace)
+	if len(namespace) == 0 {
+		namespace = []string{opts.namespace}
+	}
+
 	h := &sub.Handler{
-		Namespace: []string{opts.namespace},
-		Logfh:     logfh,
-		VideoName: opts.videoname,
-		AudioName: opts.audioname,
-		SubsName:  opts.subsname,
-		UseFetch:  opts.fetchCatalog,
+		Namespace:    namespace,
+		Logfh:        logfh,
+		VideoName:    opts.videoname,
+		AudioName:    opts.audioname,
+		SubsName:     opts.subsname,
+		UseFetch:     opts.fetchCatalog,
+		AcceptAny:    opts.acceptAny,
+		Discover:     opts.discover,
+		CatalogTrack: opts.catalogTrack,
 	}
 
 	outs := make(map[string]io.Writer)
