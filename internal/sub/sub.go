@@ -304,8 +304,8 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 		rs.Close()
 		// Still write raw catalog to output
 		if h.Outs["catalog"] != nil {
-			h.Outs["catalog"].Write(o.Payload)
-			h.Outs["catalog"].Write([]byte("\n"))
+			_, _ = h.Outs["catalog"].Write(o.Payload)
+			_, _ = h.Outs["catalog"].Write([]byte("\n"))
 		}
 		return err
 	}
