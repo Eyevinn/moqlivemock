@@ -24,13 +24,16 @@ const (
 // Handler handles MoQ subscriber sessions. It subscribes to a catalog,
 // selects tracks, and reads media data.
 type Handler struct {
-	Namespace []string
-	Outs      map[string]io.Writer
-	Logfh     io.Writer
-	VideoName string
-	AudioName string
-	SubsName  string
-	UseFetch  bool
+	Namespace    []string
+	Outs         map[string]io.Writer
+	Logfh        io.Writer
+	VideoName    string
+	AudioName    string
+	SubsName     string
+	UseFetch     bool
+	AcceptAny    bool   // Accept any announced namespace
+	Discover     bool   // Discovery mode: list namespaces and exit
+	CatalogTrack string // Catalog track name (default "catalog")
 
 	catalog *internal.Catalog
 	mux     *CmafMux
@@ -43,16 +46,46 @@ func (h *Handler) RunWithConn(ctx context.Context, conn moqtransport.Connection)
 	if h.Outs["mux"] != nil {
 		h.mux = NewCmafMux(h.Outs["mux"])
 	}
+	if h.CatalogTrack == "" {
+		h.CatalogTrack = "catalog"
+	}
+	if h.Discover {
+		return h.runDiscover(ctx, conn)
+	}
 	h.handle(ctx, conn)
 	<-ctx.Done()
 	slog.Info("end of RunWithConn")
 	return ctx.Err()
 }
 
+func (h *Handler) runDiscover(ctx context.Context, conn moqtransport.Connection) error {
+	session := &moqtransport.Session{
+		Handler:             h.getHandler(),
+		SubscribeHandler:    h.getSubscribeHandler(),
+		InitialMaxRequestID: initialMaxRequestID,
+		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+	}
+	err := session.Run(conn)
+	if err != nil {
+		return fmt.Errorf("session init: %w", err)
+	}
+	slog.Info("connected, waiting for namespace announcements...")
+	<-ctx.Done()
+	return nil
+}
+
 func (h *Handler) getHandler() moqtransport.Handler {
 	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
 		switch r.Method {
 		case moqtransport.MessageAnnounce:
+			if h.AcceptAny || h.Discover {
+				slog.Info("discovered namespace", "namespace", r.Namespace)
+				err := w.Accept()
+				if err != nil {
+					slog.Error("failed to accept announcement", "error", err)
+				}
+				return
+			}
 			if !tupleEqual(r.Namespace, h.Namespace) {
 				slog.Warn("got unexpected announcement namespace",
 					"received", r.Namespace,
@@ -98,6 +131,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		}
 		return
 	}
+
 	if h.UseFetch {
 		err = h.fetchCatalog(ctx, session, h.Namespace)
 	} else {
@@ -245,7 +279,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 }
 
 func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	rs, err := s.Subscribe(ctx, namespace, "catalog")
+	rs, err := s.Subscribe(ctx, namespace, h.CatalogTrack)
 	if err != nil {
 		return err
 	}
@@ -258,16 +292,23 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 		return err
 	}
 
-	err = json.Unmarshal(o.Payload, &h.catalog)
-	if err != nil {
-		rs.Close()
-		return err
-	}
 	slog.Info("received catalog",
 		"groupID", o.GroupID,
 		"subGroupID", o.SubGroupID,
 		"payloadLength", len(o.Payload),
 	)
+	slog.Debug("raw catalog payload", "data", string(o.Payload))
+	err = json.Unmarshal(o.Payload, &h.catalog)
+	if err != nil {
+		slog.Warn("failed to parse catalog as CMSF, dumping raw", "error", err, "raw", string(o.Payload))
+		rs.Close()
+		// Still write raw catalog to output
+		if h.Outs["catalog"] != nil {
+			h.Outs["catalog"].Write(o.Payload)
+			h.Outs["catalog"].Write([]byte("\n"))
+		}
+		return err
+	}
 	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
 		fmt.Fprintf(os.Stderr, "catalog: %s\n", h.catalog.String())
 	}
@@ -335,7 +376,7 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 }
 
 func (h *Handler) fetchCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	rt, err := s.Fetch(ctx, namespace, "catalog")
+	rt, err := s.Fetch(ctx, namespace, h.CatalogTrack)
 	if err != nil {
 		return err
 	}
