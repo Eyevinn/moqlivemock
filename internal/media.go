@@ -134,6 +134,25 @@ func (d *AVCData) GetInit() *mp4.InitSegment {
 	return d.outInit
 }
 
+// GenLOCVideoConfig returns SPS and PPS NALUs as length-prefixed data
+// suitable for prepending to IDR frames in LOC payloads.
+// Format: [4-byte-len][SPS] [4-byte-len][PPS]
+func (d *AVCData) GenLOCVideoConfig() []byte {
+	var buf []byte
+	work := make([]byte, 4)
+	for _, sps := range d.Spss {
+		binary.BigEndian.PutUint32(work, uint32(len(sps)))
+		buf = append(buf, work...)
+		buf = append(buf, sps...)
+	}
+	for _, pps := range d.Ppss {
+		binary.BigEndian.PutUint32(work, uint32(len(pps)))
+		buf = append(buf, work...)
+		buf = append(buf, pps...)
+	}
+	return buf
+}
+
 func (d *AVCData) Clone() (CodecSpecificData, error) {
 	clonedInit, err := cloneInitSegment(d.outInit)
 	if err != nil {
