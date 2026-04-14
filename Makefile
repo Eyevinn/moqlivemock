@@ -37,7 +37,9 @@ pre-commit: venv/bin/pre-commit test
 
 venv/bin/pre-commit venv/bin/codespell:
 	python3 -m venv venv
-	venv/bin/pip install pre-commit codespell
+	venv/bin/pip install --upgrade pip
+	venv/bin/pip install pre-commit==4.2.0
+	venv/bin/pip install codespell
 
 codespell: venv/bin/codespell
 	venv/bin/codespell -S venv,references,coverage.html,'*.mp4' -L ue,trun,truns
