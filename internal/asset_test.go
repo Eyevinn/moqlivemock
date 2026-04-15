@@ -262,6 +262,62 @@ func TestClearKeyDecryptionMatchExcatly(t *testing.T) {
 	}
 }
 
+func TestCompressDecompressProtectedInitPreservesProtectionFields(t *testing.T) {
+	kidStr := "39112233445566778899aabbccddeeff"
+	keyStr := "40112233445566778899aabbccddeeff"
+	ivStr := "41112233445566778899aabbccddeeff"
+	eccp, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
+	require.NoError(t, err)
+
+	asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
+	require.NoError(t, err)
+
+	var protectedTrack *ContentTrack
+	for groupIdx := range asset.Groups {
+		for trackIdx := range asset.Groups[groupIdx].Tracks {
+			track := &asset.Groups[groupIdx].Tracks[trackIdx]
+			if track.Protection != ProtectionNone && track.ContentType == "video" {
+				protectedTrack = track
+				break
+			}
+		}
+		if protectedTrack != nil {
+			break
+		}
+	}
+	require.NotNil(t, protectedTrack)
+
+	initData, err := protectedTrack.SpecData.GenCMAFInitData()
+	require.NoError(t, err)
+	originalFile, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
+	require.NoError(t, err)
+	require.NotNil(t, originalFile.Init)
+
+	_, originalSampleEntry, err := getPrimarySampleEntry(originalFile.Init.Moov)
+	require.NoError(t, err)
+	originalTenc := getSampleEntryTenc(originalSampleEntry)
+	require.NotNil(t, originalTenc)
+	require.Equal(t, byte(1), originalTenc.DefaultIsProtected)
+
+	compressed, err := CompressMoov(originalFile.Init.Moov)
+	require.NoError(t, err)
+
+	timescale := int(protectedTrack.TimeScale)
+	width := int(originalFile.Init.Moov.Trak.Tkhd.Width >> 16)
+	height := int(originalFile.Init.Moov.Trak.Tkhd.Height >> 16)
+	trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height}
+	decompressedInit, err := DecompressInit(compressed, trackInfo)
+	require.NoError(t, err)
+
+	_, rebuiltSampleEntry, err := getPrimarySampleEntry(decompressedInit.Moov)
+	require.NoError(t, err)
+	rebuiltTenc := getSampleEntryTenc(rebuiltSampleEntry)
+	require.NotNil(t, rebuiltTenc)
+
+	require.Equal(t, originalFile.Init.Moov.Trak.Tkhd.Flags, decompressedInit.Moov.Trak.Tkhd.Flags)
+	require.Equal(t, originalTenc.DefaultIsProtected, rebuiltTenc.DefaultIsProtected)
+}
+
 func TestCommercialDRMDecryptionMatchExactly(t *testing.T) {
 	drm, err := ConfigureDRMFromFile("../assets/testdrm/drm_config_test.json")
 	require.NoError(t, err)

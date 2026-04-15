@@ -756,7 +756,7 @@ func (t *ContentTrack) GenerateLOC(chunkNr uint32, startNr, endNr uint64) ([]byt
 		AudioLevel        = 6
 	)
 
-	if t.drm.cenc != nil {
+	if t.cenc != nil {
 		size := f.Size()
 		sw := bits.NewFixedSliceWriter(int(size))
 		err = f.EncodeSW(sw)
@@ -773,10 +773,10 @@ func (t *ContentTrack) GenerateLOC(chunkNr uint32, startNr, endNr uint64) ([]byt
 	var result []byte
 	for i, sample := range samples {
 		var loc []byte
-		if t.drm.cenc != nil {
+		if t.cenc != nil {
 			loc = binary.AppendVarint(loc, int64(39)) //Example id. Odd since length field is required.
 			iv := f.Moof.Traf.Senc.IVs[i]
-			ivSize := len(t.drm.cenc.iv)
+			ivSize := len(t.cenc.iv)
 			loc = binary.AppendVarint(loc, int64(ivSize))
 			loc = append(loc, iv...)
 
