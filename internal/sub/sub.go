@@ -53,7 +53,11 @@ func (h *Handler) RunWithConn(ctx context.Context, conn moqtransport.Connection)
 	if h.Discover {
 		return h.runDiscover(ctx, conn)
 	}
-	h.handle(ctx, conn)
+	if IsMoqMINamespace(h.Namespace) {
+		h.handleMoqMI(ctx, conn)
+	} else {
+		h.handle(ctx, conn)
+	}
 	<-ctx.Done()
 	slog.Info("end of RunWithConn")
 	return ctx.Err()
@@ -116,14 +120,23 @@ func (h *Handler) getSubscribeHandler() moqtransport.SubscribeHandler {
 		})
 }
 
-func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
+// startSession creates and runs a MoQ subscriber session on the given connection,
+// returning the running session on success.
+func (h *Handler) startSession(conn moqtransport.Connection) (*moqtransport.Session, error) {
 	session := &moqtransport.Session{
 		Handler:             h.getHandler(),
 		SubscribeHandler:    h.getSubscribeHandler(),
 		InitialMaxRequestID: initialMaxRequestID,
 		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := session.Run(conn)
+	if err := session.Run(conn); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
+	session, err := h.startSession(conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")

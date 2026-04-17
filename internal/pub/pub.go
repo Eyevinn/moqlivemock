@@ -21,7 +21,11 @@ const (
 type NamespaceEntry struct {
 	Namespace []string
 	Catalog   *internal.Catalog
-	Packaging string // "cmaf" or "loc"
+	Packaging string // "cmaf", "loc", or "moqmi"
+	// MoqMITracks, when Packaging == "moqmi", maps moqmi-convention track names
+	// (e.g. "video0", "audio0") to asset track names. moqmi has no catalog, so
+	// this map provides the server-side binding to real asset tracks.
+	MoqMITracks MoqMITrackMap
 }
 
 // Handler handles MoQ publisher sessions. It serves catalogs and publishes
@@ -119,6 +123,14 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 				}
 				return
 			}
+			if nsEntry.Packaging == "moqmi" {
+				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist),
+					"moq-mi has no catalog")
+				if err != nil {
+					slog.Error("failed to reject moq-mi fetch", "error", err)
+				}
+				return
+			}
 			if m.Track != "catalog" {
 				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "only catalog is fetchable")
 				if err != nil {
@@ -173,6 +185,34 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 				if err != nil {
 					slog.Error("failed to reject subscription", "error", err)
 				}
+				return
+			}
+			// moq-mi namespaces are catalogless and use fixed convention track names.
+			if nsEntry.Packaging == "moqmi" {
+				if m.Track == "catalog" {
+					err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist,
+						"moq-mi has no catalog")
+					if err != nil {
+						slog.Error("failed to reject catalog subscription for moq-mi", "error", err)
+					}
+					return
+				}
+				assetTrack := ResolveMoqMITrack(nsEntry.MoqMITracks, m.Track)
+				if assetTrack == "" {
+					err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist,
+						"unknown moq-mi track")
+					if err != nil {
+						slog.Error("failed to reject moq-mi subscription", "error", err)
+					}
+					return
+				}
+				if err := w.Accept(); err != nil {
+					slog.Error("failed to accept moq-mi subscription", "error", err)
+					return
+				}
+				slog.Info("got moq-mi subscription", "track", m.Track,
+					"assetTrack", assetTrack, "namespace", m.Namespace)
+				go PublishMoqMITrack(ctx, w, h.Asset, assetTrack, m.Track)
 				return
 			}
 			if m.Track == "catalog" {
