@@ -74,7 +74,7 @@ func GenLOCGroup(track *ContentTrack, groupNr uint64, constantDurMS uint32) (*Mo
 	}
 
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
-		_, origNr := track.calcSample(sampleNr)
+		_, origNr := track.CalcSample(sampleNr)
 		sample := track.Samples[origNr]
 
 		var payload []byte
