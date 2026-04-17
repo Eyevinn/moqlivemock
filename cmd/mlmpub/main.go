@@ -207,6 +207,18 @@ func runServer(opts *options) error {
 		})
 	}
 
+	// Add moq-mi namespace (catalogless; fixed track names video0/audio0)
+	// if the asset has compatible clear AVC video and AAC-LC / Opus audio.
+	if mmTracks, mmErr := pub.BuildMoqMITrackMap(asset); mmErr != nil {
+		slog.Info("skipping moq-mi namespace", "reason", mmErr)
+	} else {
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace:   []string{"moq-mi/clear"},
+			Packaging:   "moqmi",
+			MoqMITracks: mmTracks,
+		})
+	}
+
 	// Add commercial DRM namespace if configured
 	if drm != nil {
 		drmCatalog, err := asset.GenCMAFCatalogEntry("cmsf/drm-"+opts.scheme, internal.ProtectionDRM, now)
@@ -234,8 +246,13 @@ func runServer(opts *options) error {
 	}
 
 	for _, ns := range namespaces {
+		tracks := 0
+		if ns.Catalog != nil {
+			tracks = len(ns.Catalog.Tracks)
+		}
 		slog.Info("configured namespace", "namespace", ns.Namespace,
-			"tracks", len(ns.Catalog.Tracks))
+			"packaging", ns.Packaging, "tracks", tracks,
+			"moqmiTracks", len(ns.MoqMITracks))
 	}
 
 	var logfh io.Writer
