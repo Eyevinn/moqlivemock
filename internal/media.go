@@ -153,6 +153,21 @@ func (d *AVCData) GenLOCVideoConfig() []byte {
 	return buf
 }
 
+// GenAVCDecoderConfigurationRecord returns the encoded AVCDecoderConfigurationRecord
+// (ISO/IEC 14496-15 §5.3.3.1) for this track's SPS/PPS. This is the payload for
+// the moqmi Video H264 AVCC Extradata extension header (0x0D).
+func (d *AVCData) GenAVCDecoderConfigurationRecord() ([]byte, error) {
+	dcr, err := avc.CreateAVCDecConfRec(d.Spss, d.Ppss, true)
+	if err != nil {
+		return nil, fmt.Errorf("create AVCDecoderConfigurationRecord: %w", err)
+	}
+	var buf bytes.Buffer
+	if err := dcr.Encode(&buf); err != nil {
+		return nil, fmt.Errorf("encode AVCDecoderConfigurationRecord: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 func (d *AVCData) Clone() (CodecSpecificData, error) {
 	clonedInit, err := cloneInitSegment(d.outInit)
 	if err != nil {
@@ -342,6 +357,12 @@ func (d *AACData) Clone() (CodecSpecificData, error) {
 	return &clone, nil
 }
 
+// SampleRate returns the AAC sample rate in Hz.
+func (d *AACData) SampleRate() uint32 { return d.sampleRate }
+
+// ChannelConfig returns the AAC channel configuration string (decimal integer).
+func (d *AACData) ChannelConfig() string { return d.channelConfig }
+
 // initAACData recreates an AAC init segment from an existing init segment.
 func initAACData(init *mp4.InitSegment) (*AACData, error) {
 	ad := &AACData{
@@ -416,6 +437,12 @@ func (d *OpusData) Clone() (CodecSpecificData, error) {
 	clone.outInit = clonedInit
 	return &clone, nil
 }
+
+// SampleRate returns the Opus input sample rate in Hz.
+func (d *OpusData) SampleRate() uint32 { return d.sampleRate }
+
+// ChannelConfig returns the Opus channel configuration string (decimal integer).
+func (d *OpusData) ChannelConfig() string { return d.channelConfig }
 
 // initOpusData recreates an Opus init segment from an existing init segment.
 func initOpusData(init *mp4.InitSegment) (*OpusData, error) {

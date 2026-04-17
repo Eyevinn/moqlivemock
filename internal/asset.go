@@ -766,7 +766,7 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		return nil, err
 	}
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
-		startTime, origNr := t.calcSample(uint64(sampleNr))
+		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
 		fs := mp4.FullSample{
 			Sample: mp4.Sample{
@@ -798,8 +798,8 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	return sw.Bytes(), nil
 }
 
-// calcSample calculates the start time and original sample number for a given output sample number.
-func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
+// CalcSample calculates the start time and original sample number for a given output sample number.
+func (t *ContentTrack) CalcSample(nr uint64) (startTime, origNr uint64) {
 	sampleDur := uint64(t.SampleDur)
 	startTime = nr * uint64(t.SampleDur)
 	nrWraps := startTime / uint64(t.LoopDur)
