@@ -700,7 +700,7 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		if err != nil {
 			return nil, err
 		}
-		sw := bits.NewFixedSliceWriter(int(encrypted.Size()))
+		sw = bits.NewFixedSliceWriter(int(encrypted.Size()))
 		err = encrypted.EncodeSW(sw)
 		if err != nil {
 			return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
@@ -857,7 +857,7 @@ func DecryptInit(initData []byte) ([]byte, mp4.UUID, mp4.DecryptInfo, error) {
 }
 
 // DecryptFragment decrypts an enocoded fragment (moof+mdat) and returns the unencrypted encoding.
-func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) (*mp4.Fragment, error) {
+func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) ([]byte, error) {
 	bytesReader := bytes.NewReader(payload)
 	var pos uint64 = 0
 	moofBox, err := mp4.DecodeBox(pos, bytesReader)
@@ -892,5 +892,5 @@ func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) 
 	if err != nil {
 		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
 	}
-	return decodedFrag, nil
+	return encSw.Bytes(), nil
 }

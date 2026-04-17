@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -96,6 +97,7 @@ var moovFieldIDs = struct {
 	//schm
 	schemeType locFieldID
 	//tenc
+	tencVersion              locFieldID
 	default_crypt_byte_block locFieldID //TODO: There are default values for this.
 	default_skip_byte_block  locFieldID //here too. Might be same variable.
 	defaultKID               locFieldID
@@ -121,6 +123,7 @@ var moovFieldIDs = struct {
 	chnl:                     7,
 	codecConfigurationBox:    1,
 	schemeType:               18,
+	tencVersion:              36,
 	default_crypt_byte_block: 20,
 	default_skip_byte_block:  22,
 	defaultKID:               11,
@@ -132,27 +135,12 @@ var moovFieldIDs = struct {
 	defaultSampleFlags:       32,
 }
 
-func createVideoFramemarkingProperty(sample mp4.FullSample) []byte {
-	locHeader := binary.AppendVarint(nil, VideoFrameMarking)
-	videoFlags := 0b11000000       //One sample is sent per LOC so it is both the start and end of a frame. No temporal layers are used.
-	if sample.Flags>>24&0x3 == 2 { //Is it an IDR-frame?
-		videoFlags |= 0b1 << 5
-	}
-	if sample.Flags>>22&0x3 == 2 { //Is it a discardable frame?
-		videoFlags |= 0b1 << 4
-	}
-	locHeader = binary.AppendVarint(locHeader, int64(videoFlags))
-	return locHeader
-}
-
 func createMoofLOCProperty(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
 	locPayload, err := CompressMoof(moof, moov)
 	if err != nil {
 		return nil, err
 	}
-	locHeader := prependVarintSize(locPayload)
-	locHeader = append(binary.AppendVarint(nil, MoofHeader), locHeader...)
-	return locHeader, nil
+	return createSizedLOCProperty(MoofHeader, locPayload), nil
 }
 
 func createMoovLOCProperty(moov *mp4.MoovBox) ([]byte, error) {
@@ -160,52 +148,11 @@ func createMoovLOCProperty(moov *mp4.MoovBox) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	locHeader := prependVarintSize(locPayload)
-	locHeader = append(binary.AppendVarint(nil, MoovHeader), locHeader...)
-	return locHeader, nil
+	return createSizedLOCProperty(MoovHeader, locPayload), nil
 }
 
 func convertLOCtoCMAF(loc []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.Fragment, error) {
-	frag := mp4.NewFragment()
-	pos := 0
-	for pos < len(loc) {
-		id, deltaPos := binary.Varint(loc[pos:])
-		if deltaPos <= 0 {
-			return nil, fmt.Errorf("invalid loc property id at offset %d", pos)
-		}
-		pos += deltaPos
-		if id%2 == 0 {
-			_, deltaPos := binary.Varint(loc[pos:])
-			if deltaPos <= 0 {
-				return nil, fmt.Errorf("invalid loc property value for id=%d", id)
-			}
-			pos += deltaPos
-			continue
-		}
-
-		length, deltaPos := binary.Varint(loc[pos:])
-		if deltaPos <= 0 {
-			return nil, fmt.Errorf("invalid loc property length for id=%d", id)
-		}
-		pos += deltaPos
-		if length < 0 || pos+int(length) > len(loc) {
-			return nil, fmt.Errorf("loc property id=%d exceeds payload length", id)
-		}
-
-		payload := loc[pos : pos+int(length)]
-		pos += int(length)
-
-		switch id {
-		case MoofHeader:
-			moof, err := DecompressMoof(payload, seqnum, moov)
-			if err != nil {
-				return nil, fmt.Errorf("unable to decompress moof: %w", err)
-			}
-			frag.Moof = moof
-		}
-	}
-
-	return frag, nil
+	return new(MoofDeltaDecompressor).ConvertLOCtoCMAF(loc, seqnum, moov)
 }
 
 func CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
@@ -213,13 +160,7 @@ func CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to extract important moof fields: %w", err)
 	}
-	locPayload := make([]byte, 0)
-	for key := range importantFields {
-		value := importantFields[key]
-		locPayload = binary.AppendVarint(locPayload, int64(key))
-		locPayload = append(locPayload, value...)
-	}
-	return locPayload, nil
+	return encodeFields(importantFields), nil
 }
 
 func CompressMoov(moov *mp4.MoovBox) ([]byte, error) {
@@ -227,13 +168,7 @@ func CompressMoov(moov *mp4.MoovBox) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to extract important moov fields: %w", err)
 	}
-	locHeader := make([]byte, 0)
-	for key := range importantFields {
-		value := importantFields[key]
-		locHeader = binary.AppendVarint(locHeader, int64(key))
-		locHeader = append(locHeader, value...)
-	}
-	return locHeader, nil
+	return encodeFields(importantFields), nil
 }
 
 func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locFieldID][]byte, error) {
@@ -290,15 +225,15 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locFi
 			compositionTimeOffsets = binary.AppendVarint(compositionTimeOffsets, int64(sample.CompositionTimeOffset))
 		}
 		if len(durations) > 0 {
-			importantFields[moofFieldIDs.SampleDurations] = prependVarintSize(durations)
+			importantFields[moofFieldIDs.SampleDurations] = durations
 		}
 		if len(flags) > 0 {
-			importantFields[moofFieldIDs.SampleFlags] = prependVarintSize(flags)
+			importantFields[moofFieldIDs.SampleFlags] = flags
 		}
 		if len(sizes) > 0 {
-			importantFields[moofFieldIDs.SampleSizes] = prependVarintSize(sizes)
+			importantFields[moofFieldIDs.SampleSizes] = sizes
 		}
-		importantFields[moofFieldIDs.SampleCompositionTimeOffsets] = prependVarintSize(compositionTimeOffsets)
+		importantFields[moofFieldIDs.SampleCompositionTimeOffsets] = compositionTimeOffsets
 	}
 
 	senc, perSampleIVSize, err := getParsedSencBox(moof, moov)
@@ -312,9 +247,11 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locFi
 		if perSampleIVSize > 0 && len(senc.IVs) > 0 {
 			allIVs := make([]byte, 0)
 			for _, iv := range senc.IVs {
-				allIVs = append(allIVs, iv...)
+				for _, value := range iv {
+					allIVs = binary.AppendVarint(allIVs, int64(value))
+				}
 			}
-			importantFields[moofFieldIDs.InitializationVector] = prependVarintSize(allIVs)
+			importantFields[moofFieldIDs.InitializationVector] = allIVs
 		}
 		if len(senc.SubSamples) > 0 {
 			totalSubsamples := 0
@@ -332,9 +269,9 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locFi
 					bytesOfProtectedData = binary.AppendVarint(bytesOfProtectedData, int64(subSample.BytesOfProtectedData))
 				}
 			}
-			importantFields[moofFieldIDs.SubsampleCount] = prependVarintSize(subSampleCounts)
-			importantFields[moofFieldIDs.BytesOfClearData] = prependVarintSize(bytesOfClearData)
-			importantFields[moofFieldIDs.BytesOfProtectedData] = prependVarintSize(bytesOfProtectedData)
+			importantFields[moofFieldIDs.SubsampleCount] = subSampleCounts
+			importantFields[moofFieldIDs.BytesOfClearData] = bytesOfClearData
+			importantFields[moofFieldIDs.BytesOfProtectedData] = bytesOfProtectedData
 		}
 	}
 	return importantFields, nil
@@ -344,12 +281,16 @@ func DecompressMoof(data []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty compressed moof data")
 	}
-	if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
-		return nil, fmt.Errorf("moov or trex not defined")
-	}
 	fieldValues, err := separateFields(data)
 	if err != nil {
 		return nil, err
+	}
+	return decompressMoofFields(fieldValues, seqnum, moov)
+}
+
+func decompressMoofFields(fieldValues map[locFieldID][]byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+	if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
+		return nil, fmt.Errorf("moov or trex not defined")
 	}
 	frag, err := mp4.CreateFragment(seqnum, 1)
 	if err != nil {
@@ -389,9 +330,6 @@ func DecompressMoof(data []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox
 	}
 
 	ivSizeValue, ok := readVarint(moofFieldIDs.PerSampleIVSize, fieldValues)
-	if err != nil {
-		return nil, err
-	}
 	if ok {
 		perSampleIVSize = uint8(ivSizeValue)
 	}
@@ -488,23 +426,13 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		moov.Mvhd.Timescale = uint32(movieTimescale)
 	}
 
-	trak, err := ensurePrimarySampleEntry(init, fieldValues, track)
+	trak, err := ensurePrimarySampleEntry(init, fieldValues)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create trak: %w", err)
 	}
 	if track.Timescale == nil {
 		return nil, fmt.Errorf("No timescale found in MSF track")
 	}
-
-	trak.Mdia.Mdhd.Timescale = uint32(*track.Timescale)
-	if track.Width == nil {
-		return nil, fmt.Errorf("No width found in MSF track")
-	}
-	trak.Tkhd.Width = mp4.Fixed32(*track.Width << 16)
-	if track.Height == nil {
-		return nil, fmt.Errorf("No timescale found in MSF track")
-	}
-	trak.Tkhd.Height = mp4.Fixed32(*track.Height << 16)
 
 	tkhdFlags, ok := readVarint(moovFieldIDs.tkhdFlags, fieldValues)
 	if ok {
@@ -517,7 +445,23 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		elstEntry.MediaTime = mediaTime
 	}
 
+	if(track.Timescale == nil){
+		return nil, fmt.Errorf("No timescale found in MSF track")
+	}
+	trak.Mdia.Mdhd.Timescale = uint32(*track.Timescale)
+
 	sampleEntry := trak.Mdia.Minf.Stbl.Stsd.Children[0]
+	if _, isVideo := sampleEntry.(*mp4.VisualSampleEntryBox); isVideo {
+		if track.Width == nil {
+			return nil, fmt.Errorf("No width found in MSF track")
+		}
+		trak.Tkhd.Width = mp4.Fixed32(*track.Width << 16)
+		if track.Height == nil {
+			return nil, fmt.Errorf("No height found in MSF track")
+		}
+		trak.Tkhd.Height = mp4.Fixed32(*track.Height << 16)
+	}
+
 	switch entry := sampleEntry.(type) {
 	case *mp4.VisualSampleEntryBox:
 		if track.Width != nil {
@@ -527,21 +471,17 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 			entry.Height = uint16(*track.Height)
 		}
 	case *mp4.AudioSampleEntryBox:
-		if track.SampleRate != nil {
-			entry.SampleRate = uint16(*track.SampleRate)
+		if track.SampleRate == nil {
+			return nil, fmt.Errorf("No height found in MSF track")
 		}
+		entry.SampleRate = uint16(*track.SampleRate)
 	}
 
-	//TODO might be replaceable by channelConfiguration in MSF
+	//might be replaceable by channelConfiguration in MSF
 	channelCount, ok := readVarint(moovFieldIDs.channelCount, fieldValues)
 	if ok {
 		if audioEntry, ok := sampleEntry.(*mp4.AudioSampleEntryBox); ok {
 			audioEntry.ChannelCount = uint16(channelCount)
-		}
-	}
-	if track.SampleRate != nil {
-		if audioEntry, ok := sampleEntry.(*mp4.AudioSampleEntryBox); ok {
-			audioEntry.SampleRate = uint16(*track.SampleRate)
 		}
 	}
 
@@ -597,6 +537,11 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 	}
 
 	tenc := getSampleEntryTenc(sampleEntry)
+
+	tencVersion, ok := readVarint(moovFieldIDs.tencVersion, fieldValues)
+	if ok && tenc != nil {
+		tenc.Version = byte(tencVersion)
+	}
 
 	defaultCryptByteBlock, ok := readVarint(moovFieldIDs.default_crypt_byte_block, fieldValues)
 	if ok && tenc != nil {
@@ -682,6 +627,33 @@ func separateFields(data []byte) (map[locFieldID][]byte, error) {
 	return fieldValues, nil
 }
 
+func createSizedLOCProperty(headerID int64, payload []byte) []byte {
+	locHeader := prependVarintSize(payload)
+	locHeader = append(binary.AppendVarint(nil, headerID), locHeader...)
+	return locHeader
+}
+
+func encodeFields(fields map[locFieldID][]byte) []byte {
+	keys := make([]locFieldID, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	locPayload := make([]byte, 0)
+	for _, key := range keys {
+		value := fields[key]
+		locPayload = binary.AppendVarint(locPayload, int64(key))
+		if key%2 == 1 {
+			locPayload = binary.AppendVarint(locPayload, int64(len(value)))
+		}
+		locPayload = append(locPayload, value...)
+	}
+	return locPayload
+}
+
 func extractImportantMoovFields(moov *mp4.MoovBox) (map[locFieldID][]byte, error) {
 	importantFields := make(map[locFieldID][]byte)
 	if moov == nil {
@@ -759,15 +731,16 @@ func extractImportantMoovFields(moov *mp4.MoovBox) (map[locFieldID][]byte, error
 
 		if sinf.Schi != nil && sinf.Schi.Tenc != nil {
 			tenc := sinf.Schi.Tenc
+			importantFields[moovFieldIDs.tencVersion] = binary.AppendVarint(nil, int64(tenc.Version))
 			importantFields[moovFieldIDs.default_crypt_byte_block] = binary.AppendVarint(nil, int64(tenc.DefaultCryptByteBlock))
 			importantFields[moovFieldIDs.default_skip_byte_block] = binary.AppendVarint(nil, int64(tenc.DefaultSkipByteBlock))
 			if len(tenc.DefaultKID) == 16 {
-				importantFields[moovFieldIDs.defaultKID] = prependVarintSize(append([]byte(nil), tenc.DefaultKID...))
+				importantFields[moovFieldIDs.defaultKID] = append([]byte(nil), tenc.DefaultKID...)
 			}
 			importantFields[moovFieldIDs.DefaultPerSampleIVSize] = binary.AppendVarint(nil, int64(tenc.DefaultPerSampleIVSize))
 			if len(tenc.DefaultConstantIV) > 0 {
 				importantFields[moovFieldIDs.defaultConstantIVSize] = binary.AppendVarint(nil, int64(len(tenc.DefaultConstantIV)))
-				importantFields[moovFieldIDs.defaultConstantIV] = prependVarintSize(append([]byte(nil), tenc.DefaultConstantIV...))
+				importantFields[moovFieldIDs.defaultConstantIV] = append([]byte(nil), tenc.DefaultConstantIV...)
 			}
 		}
 	}
@@ -826,7 +799,7 @@ func getSampleEntryTenc(sampleEntry mp4.Box) *mp4.TencBox {
 	return sinf.Schi.Tenc
 }
 
-func ensurePrimarySampleEntry(init *mp4.InitSegment, fieldValues map[locFieldID][]byte, track Track) (*mp4.TrakBox, error) {
+func ensurePrimarySampleEntry(init *mp4.InitSegment, fieldValues map[locFieldID][]byte) (*mp4.TrakBox, error) {
 	moov := init.Moov
 	format := ""
 	if formatCode, ok := readVarint(moovFieldIDs.format, fieldValues); ok {
@@ -837,7 +810,7 @@ func ensurePrimarySampleEntry(init *mp4.InitSegment, fieldValues map[locFieldID]
 	mediaType := inferMediaTypeFromFormat(format, fieldValues)
 	trak := init.AddEmptyTrack(moov.Mvhd.Timescale, mediaType, "und")
 
-	entry := createSampleEntryForFormat(format, mediaType, track)
+	entry := createSampleEntryForFormat(format, mediaType)
 	trak.Mdia.Minf.Stbl.Stsd.AddChild(entry)
 
 	return trak, nil
@@ -861,7 +834,7 @@ func inferMediaTypeFromFormat(format string, fieldValues map[locFieldID][]byte) 
 	return "video"
 }
 
-func createSampleEntryForFormat(format, mediaType string, track Track) mp4.Box {
+func createSampleEntryForFormat(format, mediaType string) mp4.Box {
 	switch mediaType {
 	case "audio":
 		entry := mp4.CreateAudioSampleEntryBox(format, 0, 0, 0, nil)
@@ -965,22 +938,6 @@ func decodeBox(data []byte) (mp4.Box, error) {
 	return box, nil
 }
 
-func cloneMoovBox(moov *mp4.MoovBox) (*mp4.MoovBox, error) {
-	encoded, err := encodeBox(moov)
-	if err != nil {
-		return nil, err
-	}
-	box, err := decodeBox(encoded)
-	if err != nil {
-		return nil, err
-	}
-	clonedMoov, ok := box.(*mp4.MoovBox)
-	if !ok {
-		return nil, fmt.Errorf("decoded box is %T, expected *mp4.MoovBox", box)
-	}
-	return clonedMoov, nil
-}
-
 func uint32ToFourCC(value uint32) string {
 	return string([]byte{
 		byte(value >> 24),
@@ -998,7 +955,7 @@ func setFieldBox(fields map[locFieldID][]byte, key locFieldID, box mp4.Box) erro
 	if err != nil {
 		return err
 	}
-	fields[key] = prependVarintSize(encoded)
+	fields[key] = encoded
 	return nil
 }
 
@@ -1065,7 +1022,10 @@ func repeatInt64(value int64, count int) []int64 {
 }
 
 func reconstructSencFromFields(fieldValues map[locFieldID][]byte, sampleCount int, perSampleIVSize uint8) (*mp4.SencBox, error) {
-	ivsPayload, hasIVs := fieldValues[moofFieldIDs.InitializationVector]
+	ivsPayload, hasIVs, err := readVarintList(moofFieldIDs.InitializationVector, fieldValues)
+	if err != nil {
+		return nil, err
+	}
 	subSampleCounts, hasSubSampleCounts, err := readVarintList(moofFieldIDs.SubsampleCount, fieldValues)
 	if err != nil {
 		return nil, err
@@ -1125,8 +1085,11 @@ func reconstructSencFromFields(fieldValues map[locFieldID][]byte, sampleCount in
 	for i := 0; i < sampleCount; i++ {
 		var sampleIV []byte
 		if hasIVs {
-			sampleIV = append([]byte(nil), ivsPayload[:int(perSampleIVSize)]...)
-			ivsPayload = ivsPayload[int(perSampleIVSize):]
+			sampleIV = make([]byte, int(perSampleIVSize))
+			for j := 0; j < int(perSampleIVSize); j++ {
+				iv := ivsPayload[j]
+				sampleIV[j] = byte(iv)
+			}
 		}
 
 		var subsamples []mp4.SubSamplePattern

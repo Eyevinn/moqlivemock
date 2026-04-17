@@ -266,56 +266,76 @@ func TestCompressDecompressProtectedInitPreservesProtectionFields(t *testing.T) 
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
-	eccp, err := ParseCENCflags("cenc", kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
-	require.NoError(t, err)
 
-	asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
-	require.NoError(t, err)
+	for _, scheme := range []string{"cenc", "cbcs"} {
+		t.Run(scheme, func(t *testing.T) {
+			eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
+			require.NoError(t, err)
 
-	var protectedTrack *ContentTrack
-	for groupIdx := range asset.Groups {
-		for trackIdx := range asset.Groups[groupIdx].Tracks {
-			track := &asset.Groups[groupIdx].Tracks[trackIdx]
-			if track.Protection != ProtectionNone && track.ContentType == "video" {
-				protectedTrack = track
-				break
+			asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
+			require.NoError(t, err)
+
+			var protectedTrack *ContentTrack
+			for groupIdx := range asset.Groups {
+				for trackIdx := range asset.Groups[groupIdx].Tracks {
+					track := &asset.Groups[groupIdx].Tracks[trackIdx]
+					if track.Protection != ProtectionNone && track.ContentType == "video" {
+						protectedTrack = track
+						break
+					}
+				}
+				if protectedTrack != nil {
+					break
+				}
 			}
-		}
-		if protectedTrack != nil {
-			break
-		}
+			require.NotNil(t, protectedTrack)
+
+			initData, err := protectedTrack.SpecData.GenCMAFInitData()
+			require.NoError(t, err)
+			originalFile, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
+			require.NoError(t, err)
+			require.NotNil(t, originalFile.Init)
+
+			require.NotNil(t, originalFile.Init.Moov.Trak)
+			require.NotEmpty(t, originalFile.Init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children)
+			originalSampleEntry := originalFile.Init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children[0]
+			originalSinf := getSampleEntrySinf(originalSampleEntry)
+			originalTenc := getSampleEntryTenc(originalSampleEntry)
+			require.NotNil(t, originalSinf)
+			require.NotNil(t, originalSinf.Schm)
+			require.NotNil(t, originalTenc)
+			require.Equal(t, byte(1), originalTenc.DefaultIsProtected)
+
+			compressed, err := CompressMoov(originalFile.Init.Moov)
+			require.NoError(t, err)
+
+			timescale := int(protectedTrack.TimeScale)
+			width := int(originalFile.Init.Moov.Trak.Tkhd.Width >> 16)
+			height := int(originalFile.Init.Moov.Trak.Tkhd.Height >> 16)
+			trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height}
+			decompressedInit, err := DecompressInit(compressed, trackInfo)
+			require.NoError(t, err)
+
+			require.NotNil(t, decompressedInit.Moov.Trak)
+			require.NotEmpty(t, decompressedInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children)
+			rebuiltSampleEntry := decompressedInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children[0]
+			rebuiltSinf := getSampleEntrySinf(rebuiltSampleEntry)
+			rebuiltTenc := getSampleEntryTenc(rebuiltSampleEntry)
+			require.NotNil(t, rebuiltSinf)
+			require.NotNil(t, rebuiltSinf.Schm)
+			require.NotNil(t, rebuiltTenc)
+
+			require.Equal(t, originalFile.Init.Moov.Trak.Tkhd.Flags, decompressedInit.Moov.Trak.Tkhd.Flags)
+			require.Equal(t, originalSinf.Schm.SchemeType, rebuiltSinf.Schm.SchemeType)
+			require.Equal(t, originalTenc.Version, rebuiltTenc.Version)
+			require.Equal(t, originalTenc.DefaultIsProtected, rebuiltTenc.DefaultIsProtected)
+			require.Equal(t, originalTenc.DefaultCryptByteBlock, rebuiltTenc.DefaultCryptByteBlock)
+			require.Equal(t, originalTenc.DefaultSkipByteBlock, rebuiltTenc.DefaultSkipByteBlock)
+			require.Equal(t, originalTenc.DefaultPerSampleIVSize, rebuiltTenc.DefaultPerSampleIVSize)
+			require.Equal(t, originalTenc.DefaultKID, rebuiltTenc.DefaultKID)
+			require.Equal(t, originalTenc.DefaultConstantIV, rebuiltTenc.DefaultConstantIV)
+		})
 	}
-	require.NotNil(t, protectedTrack)
-
-	initData, err := protectedTrack.SpecData.GenCMAFInitData()
-	require.NoError(t, err)
-	originalFile, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
-	require.NoError(t, err)
-	require.NotNil(t, originalFile.Init)
-
-	_, originalSampleEntry, err := getPrimarySampleEntry(originalFile.Init.Moov)
-	require.NoError(t, err)
-	originalTenc := getSampleEntryTenc(originalSampleEntry)
-	require.NotNil(t, originalTenc)
-	require.Equal(t, byte(1), originalTenc.DefaultIsProtected)
-
-	compressed, err := CompressMoov(originalFile.Init.Moov)
-	require.NoError(t, err)
-
-	timescale := int(protectedTrack.TimeScale)
-	width := int(originalFile.Init.Moov.Trak.Tkhd.Width >> 16)
-	height := int(originalFile.Init.Moov.Trak.Tkhd.Height >> 16)
-	trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height}
-	decompressedInit, err := DecompressInit(compressed, trackInfo)
-	require.NoError(t, err)
-
-	_, rebuiltSampleEntry, err := getPrimarySampleEntry(decompressedInit.Moov)
-	require.NoError(t, err)
-	rebuiltTenc := getSampleEntryTenc(rebuiltSampleEntry)
-	require.NotNil(t, rebuiltTenc)
-
-	require.Equal(t, originalFile.Init.Moov.Trak.Tkhd.Flags, decompressedInit.Moov.Trak.Tkhd.Flags)
-	require.Equal(t, originalTenc.DefaultIsProtected, rebuiltTenc.DefaultIsProtected)
 }
 
 func TestCommercialDRMDecryptionMatchExactly(t *testing.T) {
