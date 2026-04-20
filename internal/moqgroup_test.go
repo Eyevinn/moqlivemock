@@ -36,7 +36,7 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	const groupDurMS = 1000 // 1 second per MoQGroup
 
 	// Video
-	vg, err := GenMoQGroup(videoTrack, groupNr, 1, groupDurMS)
+	vg, err := GenMoQGroup(videoTrack, groupNr, 1, groupDurMS, "cmaf")
 	require.NoError(t, err)
 	require.NotNil(t, vg)
 	// startTime and endTime should be aligned to sample duration
@@ -48,7 +48,7 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	require.Equal(t, int(vg.endNr-vg.startNr), len(vg.MoQObjects), "video MoQObjects count")
 
 	// Audio
-	ag, err := GenMoQGroup(audioTrack, groupNr, 1, groupDurMS)
+	ag, err := GenMoQGroup(audioTrack, groupNr, 1, groupDurMS, "cmaf")
 	require.NoError(t, err)
 	require.NotNil(t, ag)
 	require.Equal(t, uint64(0), ag.startTime%uint64(audioTrack.SampleDur), "audio startTime not aligned")
@@ -81,7 +81,7 @@ func TestGenMoQStreams(t *testing.T) {
 				t.Fatalf("failed to write init data: %v", err)
 			}
 			for nr := startNr; nr < endNr; nr++ {
-				moq, err := GenMoQGroup(ct, nr, 1, 1000)
+				moq, err := GenMoQGroup(ct, nr, 1, 1000, "cmaf")
 				if err != nil {
 					t.Fatalf("failed to generate MoQ group: %v", err)
 				}
@@ -125,7 +125,7 @@ func TestWriteMoQGroupLive(t *testing.T) {
 	groupNr := currGroupNr + 1 // Start stream on next group
 	endNr := groupNr + 1       // 1 MoQGroup à 1s per MoQGroup
 	for {
-		mg, err := GenMoQGroup(ct, groupNr, 1, MoqGroupDurMS)
+		mg, err := GenMoQGroup(ct, groupNr, 1, MoqGroupDurMS, "cmaf")
 		if err != nil {
 			t.Fatalf("failed to generate MoQ group: %v", err)
 		}

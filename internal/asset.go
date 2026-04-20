@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -506,7 +505,7 @@ func (a *Asset) setLoopDuration() error {
 // Subtitle tracks are always included regardless of the filter.
 // The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
 // to be set as the catalog's generatedAt value.
-func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64) (*Catalog, error) {
+func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64, packaging string) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
 	for _, group := range a.Groups {
@@ -522,6 +521,13 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 				if err != nil {
 					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.Name, err)
 				}
+				if packaging == "compressed-cmaf" {
+					compressed, err := CompressMoov(ct.SpecData.GetInit().Moov)
+					if err != nil {
+						return nil, fmt.Errorf("could not compress init data for track %s: %w", ct.Name, err)
+					}
+					data = createSizedLOCProperty(MoovHeader, compressed)
+				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
 
@@ -531,7 +537,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 			track := Track{
 				Name:        ct.Name,
 				Namespace:   namespace,
-				Packaging:   "cmaf",
+				Packaging:   packaging,
 				IsLive:      true,
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
@@ -669,25 +675,10 @@ func Ptr[T any](v T) *T {
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
 func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
-	f, err := mp4.CreateFragment(chunkNr, trackID)
+	f, err := t.createFragment(chunkNr, startNr, endNr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
-		startTime, origNr := t.calcSample(uint64(sampleNr))
-		orig := t.Samples[origNr]
-		fs := mp4.FullSample{
-			Sample: mp4.Sample{
-				Flags: orig.Flags,
-				Dur:   uint32(t.SampleDur),
-				Size:  uint32(len(orig.Data)),
-			},
-			DecodeTime: startTime,
-			Data:       orig.Data,
-		}
-		f.AddFullSample(fs)
-	}
-	f.SetTrunDataOffsets()
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))
 	err = f.EncodeSW(sw)
@@ -709,24 +700,42 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	return sw.Bytes(), nil
 }
 
-// calcSample calculates the start time and original sample number for a given output sample number.
-func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
-	sampleDur := uint64(t.SampleDur)
-	startTime = nr * uint64(t.SampleDur)
-	nrWraps := startTime / uint64(t.LoopDur)
-	wrapTime := nrWraps * uint64(t.LoopDur)
-	if lacking := wrapTime % sampleDur; lacking > 0 {
-		offset := sampleDur - lacking
-		wrapTime += offset
+//GenCompressedCMAFChunk creates a compressed CMAF chunk consisting of endNr-startNr samples.
+// The number is 0-based relative to the UNIX epoch.
+// Therefore nr is translated into data for the time interval
+// [nr*d.sampleDur, (nr+1)*d.sampleDur].
+// This is calculated based on wrap-around given the loopDuration
+// of the asset.
+func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uint64, compressor MoofDeltaCompressor) ([]byte, error) {
+	f, err := t.createFragment(chunkNr, startNr, endNr)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	deltaTime := startTime - wrapTime
 
-	origNr = deltaTime / sampleDur
-	return startTime, origNr
+	size := f.Size()
+	sw := bits.NewFixedSliceWriter(int(size))
+
+	err = f.EncodeSW(sw)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(t.contentProtectionRefIDs) > 0 {
+		f, err = t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+	}
+	compressedMoof, err := compressor.CreateMoofLOCProperty(f.Moof, t.SpecData.GetInit().Moov)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compress moof: %w", err)
+	}
+	return append(compressedMoof, f.Mdat.Data...), nil
+
 }
 
-func (t *ContentTrack) GenerateLOC(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
-	//TODO put this code in a function. It is a repeat
+//createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
+func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*mp4.Fragment, error) {
 	f, err := mp4.CreateFragment(chunkNr, trackID)
 	if err != nil {
 		return nil, err
@@ -748,54 +757,23 @@ func (t *ContentTrack) GenerateLOC(chunkNr uint32, startNr, endNr uint64) ([]byt
 		samples = append(samples, fs)
 	}
 	f.SetTrunDataOffsets()
+	return f, nil
+}
 
-	const (
-		CaptureTimestamp  = 2
-		VideoConfig       = 13
-		VideoFrameMarking = 4
-		AudioLevel        = 6
-	)
-
-	if t.cenc != nil {
-		size := f.Size()
-		sw := bits.NewFixedSliceWriter(int(size))
-		err = f.EncodeSW(sw)
-		if err != nil {
-			return nil, err
-		}
-		f, err = t.encryptFragment(sw.Bytes())
-		if err != nil {
-			return nil, err
-		}
-
+// calcSample calculates the start time and original sample number for a given output sample number.
+func (t *ContentTrack) calcSample(nr uint64) (startTime, origNr uint64) {
+	sampleDur := uint64(t.SampleDur)
+	startTime = nr * uint64(t.SampleDur)
+	nrWraps := startTime / uint64(t.LoopDur)
+	wrapTime := nrWraps * uint64(t.LoopDur)
+	if lacking := wrapTime % sampleDur; lacking > 0 {
+		offset := sampleDur - lacking
+		wrapTime += offset
 	}
+	deltaTime := startTime - wrapTime
 
-	var result []byte
-	for i, sample := range samples {
-		var loc []byte
-		if t.cenc != nil {
-			loc = binary.AppendVarint(loc, int64(39)) //Example id. Odd since length field is required.
-			iv := f.Moof.Traf.Senc.IVs[i]
-			ivSize := len(t.cenc.iv)
-			loc = binary.AppendVarint(loc, int64(ivSize))
-			loc = append(loc, iv...)
-
-		}
-		if t.ContentType == "video" {
-			loc = binary.AppendVarint(loc, VideoFrameMarking)
-			videoFlags := 0b11000000       //One sample is sent per LOC so it is both the start and end of a frame. No temporal layers are used.
-			if sample.Flags>>24&0x3 == 2 { //Is it an IDR-frame?
-				videoFlags |= 0b1 << 5
-			}
-			if sample.Flags>>22&0x3 == 2 { //Is it a discardable frame?
-				videoFlags |= 0b1 << 4
-			}
-			loc = binary.AppendVarint(loc, int64(videoFlags))
-		}
-		loc = append(loc, sample.Data...)
-		result = append(result, loc...)
-	}
-	return result, nil
+	origNr = deltaTime / sampleDur
+	return startTime, origNr
 }
 
 // encryptFragment encrypts an encoded fragment and returns the encrypted bytes. For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.

@@ -1,6 +1,8 @@
 package internal
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -153,7 +155,7 @@ func TestLoadAsset(t *testing.T) {
 				"loop duration should be 10s in timescale")
 		}
 	}
-	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000, "cmaf")
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 	require.Equal(t, 12, len(cat.Tracks))
@@ -192,6 +194,54 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	protectedVideoInit, err := protectedVideo.SpecData.GenCMAFInitData()
 	require.NoError(t, err)
 	require.NotEqual(t, videoInitBefore, protectedVideoInit, "protected track should have modified init data")
+}
+
+func TestCompressedCMAFCatalogUsesCompressedInitData(t *testing.T) {
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+
+	cat, err := asset.GenCMAFCatalogEntry("compressed-cmaf/clear", ProtectionNone, 1234567890000, "compressed-cmaf")
+	require.NoError(t, err)
+	require.NotEmpty(t, cat.Tracks)
+
+	var videoTrack *Track
+	for i := range cat.Tracks {
+		if cat.Tracks[i].Role == "video" {
+			videoTrack = &cat.Tracks[i]
+			break
+		}
+	}
+	require.NotNil(t, videoTrack)
+	require.Equal(t, "compressed-cmaf", videoTrack.Packaging)
+	require.NotEmpty(t, videoTrack.InitData)
+
+	compressedInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
+	require.NoError(t, err)
+
+	headerID, n := binary.Varint(compressedInit)
+	require.Greater(t, n, 0)
+	require.Equal(t, int64(MoovHeader), headerID)
+
+	pos := 0
+	_, n = binary.Varint(compressedInit[pos:])
+	pos += n
+	locPayloadLength, n := binary.Varint(compressedInit[pos:])
+	pos += n
+	require.Greater(t, n, 0)
+	require.LessOrEqual(t, pos+int(locPayloadLength), len(compressedInit))
+	locPayload := compressedInit[pos : pos+int(locPayloadLength)]
+
+	timescale := *videoTrack.Timescale
+	width := *videoTrack.Width
+	height := *videoTrack.Height
+	decompressedInit, err := DecompressInit(locPayload, Track{
+		Timescale: &timescale,
+		Width:     &width,
+		Height:    &height,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, decompressedInit)
+	require.NotNil(t, decompressedInit.Moov)
 }
 
 func TestGen20sCMAFStreams(t *testing.T) {

@@ -3,6 +3,7 @@ package sub
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqtransport"
+	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
@@ -114,7 +116,8 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 	videoTrack := ""
 	audioTrack := ""
 	subsTrack := ""
-	for _, track := range h.catalog.Tracks {
+	for i := range h.catalog.Tracks {
+		track := &h.catalog.Tracks[i]
 		// If track is encrypted, the InitData needs to be adjusted
 		if len(track.ContentProtectionRefIDs) > 0 {
 			if h.cenc == nil {
@@ -389,7 +392,27 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 	if track == nil {
 		return nil, fmt.Errorf("track %s not found", trackname)
 	}
+	var moov *mp4.MoovBox
+	if track.Packaging == "compressed-cmaf" {
+		if h.cenc != nil && h.cenc.ProtectedMoov != nil && h.cenc.ProtectedMoov[trackname] != nil {
+			moov = h.cenc.ProtectedMoov[trackname]
+		} else {
+			initData, err := base64.StdEncoding.DecodeString(track.InitData)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode init data for track %s: %w", trackname, err)
+			}
+			f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse init data for track %s: %w", trackname, err)
+			}
+			if f.Init == nil || f.Init.Moov == nil {
+				return nil, fmt.Errorf("missing moov in init data for track %s", trackname)
+			}
+			moov = f.Init.Moov
+		}
+	}
 	go func() {
+		var deltaDecompressor internal.MoofDeltaDecompressor
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
@@ -400,6 +423,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 				return
 			}
 			if o.ObjectID == 0 {
+				deltaDecompressor = internal.MoofDeltaDecompressor{}
 				slog.Info("group start",
 					"track", trackname,
 					"groupID", o.GroupID,
@@ -413,6 +437,19 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 					"subGroupID", o.SubGroupID,
 					"payloadLength", len(o.Payload))
 			}
+
+			if track.Packaging == "compressed-cmaf" {
+				o.Payload, err = decompressCompressedCMAFObject(o.Payload, uint32(o.GroupID), moov, &deltaDecompressor)
+				if err != nil {
+					slog.Error("failed to decompress compressed CMAF object",
+						"track", trackname,
+						"groupID", o.GroupID,
+						"objectID", o.ObjectID,
+						"error", err)
+					return
+				}
+			}
+
 			if h.cenc != nil {
 				o.Payload, err = h.decryptPayload(o.Payload, trackname)
 				if err != nil {
@@ -442,6 +479,42 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		return rs.Close()
 	}
 	return cleanup, nil
+}
+
+func decompressCompressedCMAFObject(payload []byte, seqnum uint32, moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
+	headerID, n := binary.Varint(payload)
+	if n <= 0 {
+		return nil, fmt.Errorf("invalid compressed CMAF header")
+	}
+	pos := n
+
+	locPayloadLength, n := binary.Varint(payload[pos:])
+	if n <= 0 {
+		return nil, fmt.Errorf("invalid compressed CMAF LOC payload length")
+	}
+	pos += n
+	if locPayloadLength < 0 || pos+int(locPayloadLength) > len(payload) {
+		return nil, fmt.Errorf("compressed CMAF LOC payload exceeds object length")
+	}
+	locPayload := payload[pos : pos+int(locPayloadLength)]
+	mdatData := payload[pos+int(locPayloadLength):]
+
+	moof, err := decompressor.DecompressMoof(headerID, locPayload, seqnum, moov)
+	if err != nil {
+		return nil, err
+	}
+
+	frag := mp4.NewFragment()
+	frag.AddChild(moof)
+	frag.AddChild(&mp4.MdatBox{Data: mdatData})
+
+	sw := bits.NewFixedSliceWriter(int(frag.Size()))
+	err = frag.EncodeSW(sw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode decompressed fragment: %w", err)
+	}
+
+	return sw.Bytes(), nil
 }
 
 func unpackWrite(initData string, w io.Writer) error {

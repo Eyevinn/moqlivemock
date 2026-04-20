@@ -63,6 +63,7 @@ type options struct {
 	laURL            string
 	drmConfigPath    string
 	version          bool
+	packaging        string
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -93,6 +94,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		" Falls back to http://localhost:{sideport}/clearkey if not set.")
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
+	fs.StringVar(&opts.packaging, "packaging", "cmaf", "packaging type for media files, either \"cmaf\", \"compressed-cmaf\", "+
+		"or \"compressed-and-normal-cmaf\" if both types should be published in different namespaces")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -185,37 +188,42 @@ func runServer(opts *options) error {
 
 	now := time.Now().UnixMilli()
 
-	// Always create the clear namespace
-	clearCatalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, now)
+	packagings, err := selectPackagings(opts.packaging) //Compressed CMAF, normal CMAF, or both
 	if err != nil {
-		return err
+		return nil
 	}
-	namespaces := []pub.NamespaceEntry{
-		{Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog},
-	}
-
-	// Add commercial DRM namespace if configured
-	if drm != nil {
-		drmCatalog, err := asset.GenCMAFCatalogEntry("cmsf/drm-"+opts.scheme, internal.ProtectionDRM, now)
+	var namespaces []pub.NamespaceEntry
+	for _, packaging := range packagings {
+		// Always create the clear namespace
+		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), internal.ProtectionNone, now, packaging)
 		if err != nil {
 			return err
 		}
-		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{"cmsf/drm-" + opts.scheme},
-			Catalog:   drmCatalog,
-		})
-	}
+		namespaces = append(namespaces, pub.NamespaceEntry{Namespace: []string{fmt.Sprintf("%s/clear", packaging)}, Catalog: clearCatalog})
 
-	// Add ClearKey/ECCP namespace if configured
-	if eccp != nil {
-		eccpCatalog, err := asset.GenCMAFCatalogEntry("cmsf/eccp-"+opts.scheme, internal.ProtectionECCP, now)
-		if err != nil {
-			return err
+		// Add commercial DRM namespace if configured
+		if drm != nil {
+			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme), internal.ProtectionDRM, now, packaging)
+			if err != nil {
+				return err
+			}
+			namespaces = append(namespaces, pub.NamespaceEntry{
+				Namespace: []string{fmt.Sprintf("%s/drm-%s", packaging, opts.scheme)},
+				Catalog:   drmCatalog,
+			})
 		}
-		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{"cmsf/eccp-" + opts.scheme},
-			Catalog:   eccpCatalog,
-		})
+
+		// Add ClearKey/ECCP namespace if configured
+		if eccp != nil {
+			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme), internal.ProtectionECCP, now, packaging)
+			if err != nil {
+				return err
+			}
+			namespaces = append(namespaces, pub.NamespaceEntry{
+				Namespace: []string{fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme)},
+				Catalog:   eccpCatalog,
+			})
+		}
 	}
 
 	for _, ns := range namespaces {
@@ -266,6 +274,19 @@ func parseLanguages(s string) []string {
 		}
 	}
 	return langs
+}
+
+func selectPackagings(packaging string) ([]string, error) {
+	switch packaging {
+	case "cmaf":
+		return []string{"cmaf"}, nil
+	case "compressed-cmaf":
+		return []string{"compressed-cmaf"}, nil
+	case "compressed-and-normal-cmaf":
+		return []string{"cmaf", "compressed-cmaf"}, nil
+	default:
+		return nil, fmt.Errorf("packaging option %s not recognized", packaging)
+	}
 }
 
 func generateTLSConfigWithCertAndKey(certFile, keyFile string) (*tls.Config, error) {

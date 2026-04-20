@@ -223,7 +223,7 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 						return
 					}
 					slog.Info("got subscription", "track", track.Name, "namespace", m.Namespace)
-					go PublishTrack(ctx, w, h.Asset, track.Name)
+					go PublishTrack(ctx, w, h.Asset, track.Name, track.Packaging)
 					return
 				}
 			}
@@ -236,7 +236,7 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 }
 
 // PublishTrack publishes media track data in MoQ groups, pacing delivery to wall-clock time.
-func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
+func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName, packaging string) {
 	ct := asset.GetTrackByName(trackName)
 	if ct == nil {
 		slog.Error("track not found", "track", trackName)
@@ -255,7 +255,7 @@ func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 			slog.Error("failed to open subgroup", "error", err)
 			return
 		}
-		mg, err := internal.GenMoQGroup(ct, groupNr, ct.SampleBatch, internal.MoqGroupDurMS)
+		mg, err := internal.GenMoQGroup(ct, groupNr, ct.SampleBatch, internal.MoqGroupDurMS, packaging)
 		if err != nil {
 			slog.Error("failed to generate MoQ group", "track", ct.Name, "group", groupNr, "error", err)
 			return
