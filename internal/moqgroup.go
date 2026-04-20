@@ -26,7 +26,7 @@ type MoQObject []byte
 // GenMoQGroup generates a MoQGroup for a given track and number.
 // The MoQGroup is generated based on the track's sample duration and the
 // constant (average) duration of all MoQGroups for this track.
-func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantDurMS uint32) (*MoQGroup, error) {
+func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantDurMS uint32, packaging string) (*MoQGroup, error) {
 	startNr, endNr := calcMoQGroup(track, groupNr, constantDurMS)
 	startTime := startNr * uint64(track.SampleDur)
 	endTime := endNr * uint64(track.SampleDur)
@@ -38,15 +38,27 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 		endNr:      endNr,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
+	var deltaCompressor MoofDeltaCompressor
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)
-		chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
-				groupNr, firstSample, endSample, err)
+		switch packaging {
+		case "cmaf":
+			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
+					groupNr, firstSample, endSample, err)
+
+			}
+			mq.MoQObjects = append(mq.MoQObjects, chunk)
+		case "compressed-cmaf":
+			chunk, err := track.GenCompressedCMAFChunk(uint32(groupNr), firstSample, endSample, deltaCompressor)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate compressed CMAF chunk for group %d, samples %d-%d: %w",
+					groupNr, firstSample, endSample, err)
+			}
+			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		}
-		mq.MoQObjects = append(mq.MoQObjects, chunk)
 	}
 	return mq, nil
 }

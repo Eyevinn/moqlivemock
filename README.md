@@ -289,6 +289,9 @@ go run . -namespace cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - |
 go run . -namespace cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
 ```
 
+### Compressed CMAF
+This repository implements a compressed variant of CMAF which uses MoQT key-value pairs to extract only the required information from CMAF headers in order to create a low overhead. This can be enabled by adding the ```-packaging compressed-cmaf``` flag to mlmpub, or you can include both compressed and uncompressed media in different namespaces by using ```-packaging -compressed-and-normal-cmaf```. If this option is used the MSF packaging will be "compressed-cmaf" and both the MSF initData field and object payloads will use key-value pairs for storing of CMAF headers. The first moof header in a group is always sent as a complete compressed header, but the following moof headers in a group will be sent as delta moof headers which only store the difference between two consecutive moof headers.
+
 ## QUIC / WebTransport Configuration
 
 Since `quic-go` v0.59.0 and `webtransport-go` v0.10.0, the QUIC config must enable

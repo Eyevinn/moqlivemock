@@ -9,13 +9,15 @@ import (
 	"net/http"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
 // CENC holds decryption state for encrypted tracks.
 type CENC struct {
-	Key         []byte
-	DecryptInfo map[string]mp4.DecryptInfo // keyed by track name
+	Key           []byte
+	DecryptInfo   map[string]mp4.DecryptInfo // keyed by track name
+	ProtectedMoov map[string]*mp4.MoovBox    // keyed by track name for compressed-cmaf rebuild
 }
 
 type clearKeyRequest struct {
@@ -59,10 +61,26 @@ func requestClearKey(laurl string, kids []string) ([]keyInfo, error) {
 
 // decryptInit decrypts the init data, requests the ClearKey license server
 // and stores protection information in the Handler.
-func (h *Handler) decryptInit(track internal.Track) error {
+func (h *Handler) decryptInit(track *internal.Track) error {
+	if track == nil {
+		return fmt.Errorf("track is nil")
+	}
 	initDataBytes, err := base64.StdEncoding.DecodeString(track.InitData)
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode init data: %w", err)
+	}
+	if track.Packaging == "compressed-cmaf" {
+		f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initDataBytes))
+		if err != nil {
+			return fmt.Errorf("failed to parse protected init: %w", err)
+		}
+		if f.Init == nil || f.Init.Moov == nil {
+			return fmt.Errorf("missing moov in protected init")
+		}
+		if h.cenc.ProtectedMoov == nil {
+			h.cenc.ProtectedMoov = make(map[string]*mp4.MoovBox)
+		}
+		h.cenc.ProtectedMoov[track.Name] = f.Init.Moov
 	}
 	decryptedInitBytes, _, decryptInfo, err := internal.DecryptInit(initDataBytes)
 	if err != nil {
