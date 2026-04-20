@@ -3,7 +3,6 @@ package internal
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
@@ -528,7 +527,7 @@ func (a *Asset) setLoopDuration() error {
 // Subtitle tracks are always included regardless of the filter.
 // The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
 // to be set as the catalog's generatedAt value.
-func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64) (*Catalog, error) {
+func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64, packaging string) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
 	for _, group := range a.Groups {
@@ -544,6 +543,13 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 				if err != nil {
 					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.Name, err)
 				}
+				if packaging == "compressed-cmaf" {
+					compressed, err := CompressMoov(ct.SpecData.GetInit().Moov)
+					if err != nil {
+						return nil, fmt.Errorf("could not compress init data for track %s: %w", ct.Name, err)
+					}
+					data = createSizedLOCProperty(MoovHeader, compressed)
+				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
 
@@ -556,7 +562,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 			track := Track{
 				Name:        ct.Name,
 				Namespace:   namespace,
-				Packaging:   "cmaf",
+				Packaging:   packaging,
 				IsLive:      true,
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
@@ -856,31 +862,10 @@ func Ptr[T any](v T) *T {
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
 func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
-	f, err := mp4.CreateFragment(chunkNr, trackID)
+	f, err := t.createFragment(chunkNr, startNr, endNr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
-		startTime, origNr := t.CalcSample(uint64(sampleNr))
-		orig := t.Samples[origNr]
-		fs := mp4.FullSample{
-			Sample: mp4.Sample{
-				Flags: orig.Flags,
-				Dur:   uint32(t.SampleDur),
-				Size:  uint32(len(orig.Data)),
-			},
-			DecodeTime: startTime,
-			Data:       orig.Data,
-		}
-		f.AddFullSample(fs)
-	}
-	// OptimizeTrun promotes constant per-sample fields (duration, flags) into
-	// tfhd defaults so the trun only carries what actually varies. For audio
-	// (constant duration, all sync) this drops per-sample overhead from 16 B
-	// to 4 B; for video (1 sample per chunk in the default config) the saving
-	// is on the trun box header.
-	f.EncOptimize = mp4.OptimizeTrun
-	f.SetTrunDataOffsets()
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))
 	err = f.EncodeSW(sw)
@@ -900,6 +885,72 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		}
 	}
 	return sw.Bytes(), nil
+}
+
+//GenCompressedCMAFChunk creates a compressed CMAF chunk consisting of endNr-startNr samples.
+// The number is 0-based relative to the UNIX epoch.
+// Therefore nr is translated into data for the time interval
+// [nr*d.sampleDur, (nr+1)*d.sampleDur].
+// This is calculated based on wrap-around given the loopDuration
+// of the asset.
+func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uint64, compressor MoofDeltaCompressor) ([]byte, error) {
+	f, err := t.createFragment(chunkNr, startNr, endNr)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create fragment: %w", err)
+	}
+
+	size := f.Size()
+	sw := bits.NewFixedSliceWriter(int(size))
+
+	err = f.EncodeSW(sw)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(t.contentProtectionRefIDs) > 0 {
+		f, err = t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+	}
+	compressedMoof, err := compressor.CreateMoofLOCProperty(f.Moof, t.SpecData.GetInit().Moov)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compress moof: %w", err)
+	}
+	return append(compressedMoof, f.Mdat.Data...), nil
+
+}
+
+//createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
+func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*mp4.Fragment, error) {
+	f, err := mp4.CreateFragment(chunkNr, trackID)
+	if err != nil {
+		return nil, err
+	}
+	var samples []mp4.FullSample
+	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
+		startTime, origNr := t.CalcSample(uint64(sampleNr))
+		orig := t.Samples[origNr]
+		fs := mp4.FullSample{
+			Sample: mp4.Sample{
+				Flags: orig.Flags,
+				Dur:   uint32(t.SampleDur),
+				Size:  uint32(len(orig.Data)),
+			},
+			DecodeTime: startTime,
+			Data:       orig.Data,
+		}
+		f.AddFullSample(fs)
+		samples = append(samples, fs)
+	}
+	// OptimizeTrun promotes constant per-sample fields (duration, flags) into
+	// tfhd defaults so the trun only carries what actually varies. For audio
+	// (constant duration, all sync) this drops per-sample overhead from 16 B
+	// to 4 B; for video (1 sample per chunk in the default config) the saving
+	// is on the trun box header.
+	f.EncOptimize = mp4.OptimizeTrun
+	f.SetTrunDataOffsets()
+	return f, nil
 }
 
 // CalcSample calculates the start time and original sample number for a given output sample number.

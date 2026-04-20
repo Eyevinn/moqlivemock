@@ -185,14 +185,7 @@ func runServer(opts *options) error {
 
 	now := time.Now().UnixMilli()
 
-	// Always create the clear CMSF namespace
-	clearCatalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, now)
-	if err != nil {
-		return err
-	}
-	namespaces := []pub.NamespaceEntry{
-		{Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog, Packaging: "cmaf"},
-	}
+	var namespaces []pub.NamespaceEntry
 
 	// Always create the LOC/MSF namespace (AVC + AAC/Opus, clear only)
 	locCatalog, err := asset.GenLOCCatalogEntry(now)
@@ -219,30 +212,39 @@ func runServer(opts *options) error {
 		})
 	}
 
-	// Add commercial DRM namespace if configured
-	if drm != nil {
-		drmCatalog, err := asset.GenCMAFCatalogEntry("cmsf/drm-"+opts.scheme, internal.ProtectionDRM, now)
+	for _, packaging := range []string{"cmaf", "compressed-cmaf"} {
+		// Always create the clear namespace
+		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), internal.ProtectionNone, now, packaging)
 		if err != nil {
 			return err
 		}
-		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{"cmsf/drm-" + opts.scheme},
-			Catalog:   drmCatalog,
-			Packaging: "cmaf",
-		})
-	}
+		namespaces = append(namespaces, pub.NamespaceEntry{Namespace: []string{fmt.Sprintf("%s/clear", packaging)}, Catalog: clearCatalog})
 
-	// Add ClearKey/ECCP namespace if configured
-	if eccp != nil {
-		eccpCatalog, err := asset.GenCMAFCatalogEntry("cmsf/eccp-"+opts.scheme, internal.ProtectionECCP, now)
-		if err != nil {
-			return err
+		// Add commercial DRM namespace if configured
+		if drm != nil {
+			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme), internal.ProtectionDRM, now, packaging)
+			if err != nil {
+				return err
+			}
+			namespaces = append(namespaces, pub.NamespaceEntry{
+				Namespace: []string{fmt.Sprintf("%s/drm-%s", packaging, opts.scheme)},
+				Catalog:   drmCatalog,
+				Packaging: packaging,
+			})
 		}
-		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{"cmsf/eccp-" + opts.scheme},
-			Catalog:   eccpCatalog,
-			Packaging: "cmaf",
-		})
+
+		// Add ClearKey/ECCP namespace if configured
+		if eccp != nil {
+			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme), internal.ProtectionECCP, now, packaging)
+			if err != nil {
+				return err
+			}
+			namespaces = append(namespaces, pub.NamespaceEntry{
+				Namespace: []string{fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme)},
+				Catalog:   eccpCatalog,
+				Packaging: packaging,
+			})
+		}
 	}
 
 	for _, ns := range namespaces {
