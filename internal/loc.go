@@ -135,26 +135,6 @@ var moovFieldIDs = struct {
 	defaultSampleFlags:       32,
 }
 
-func createMoofLOCProperty(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
-	locPayload, err := CompressMoof(moof, moov)
-	if err != nil {
-		return nil, err
-	}
-	return createSizedLOCProperty(MoofHeader, locPayload), nil
-}
-
-func createMoovLOCProperty(moov *mp4.MoovBox) ([]byte, error) {
-	locPayload, err := CompressMoov(moov)
-	if err != nil {
-		return nil, err
-	}
-	return createSizedLOCProperty(MoovHeader, locPayload), nil
-}
-
-func convertLOCtoCMAF(loc []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.Fragment, error) {
-	return new(MoofDeltaDecompressor).ConvertLOCtoCMAF(loc, seqnum, moov)
-}
-
 func CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
 	importantFields, err := extractImportantMoofFields(moof, moov)
 	if err != nil {
@@ -390,7 +370,8 @@ func decompressMoofFields(fieldValues map[locFieldID][]byte, seqnum uint32, moov
 		traf.Trun.AddSample(mp4.NewSample(uint32(sampleFlags[i]), uint32(sampleDurations[i]), uint32(sampleSizes[i]), int32(sampleCompositionTimeOffsets[i])))
 	}
 
-	senc, err := reconstructSencFromFields(fieldValues, len(sampleCompositionTimeOffsets), perSampleIVSize)
+	senc, err := reconstructSencFromFields(fieldValues, len(sampleCompositionTimeOffsets), perSampleIVSize,
+		shouldCreateEmptySenc(moov, traf.Tfhd.TrackID, perSampleIVSize))
 	if err != nil {
 		return nil, err
 	}
@@ -985,6 +966,18 @@ func getDefaultPerSampleIVSize(moov *mp4.MoovBox, trackID uint32) byte {
 	return sinf.Schi.Tenc.DefaultPerSampleIVSize
 }
 
+func shouldCreateEmptySenc(moov *mp4.MoovBox, trackID uint32, perSampleIVSize uint8) bool {
+	if moov == nil || perSampleIVSize != 0 {
+		return false
+	}
+	sinf := moov.GetSinf(trackID)
+	if sinf == nil || sinf.Schi == nil || sinf.Schi.Tenc == nil {
+		return false
+	}
+	tenc := sinf.Schi.Tenc
+	return tenc.DefaultIsProtected == 1 && len(tenc.DefaultConstantIV) > 0
+}
+
 func getParsedSencBox(moof *mp4.MoofBox, moov *mp4.MoovBox) (*mp4.SencBox, uint8, error) {
 	if moof == nil || moof.Traf == nil {
 		return nil, 0, fmt.Errorf("moof or traf not defined")
@@ -1021,7 +1014,7 @@ func repeatInt64(value int64, count int) []int64 {
 	return values
 }
 
-func reconstructSencFromFields(fieldValues map[locFieldID][]byte, sampleCount int, perSampleIVSize uint8) (*mp4.SencBox, error) {
+func reconstructSencFromFields(fieldValues map[locFieldID][]byte, sampleCount int, perSampleIVSize uint8, createEmpty bool) (*mp4.SencBox, error) {
 	ivsPayload, hasIVs, err := readVarintList(moofFieldIDs.InitializationVector, fieldValues)
 	if err != nil {
 		return nil, err
@@ -1039,7 +1032,7 @@ func reconstructSencFromFields(fieldValues map[locFieldID][]byte, sampleCount in
 		return nil, err
 	}
 
-	if !hasIVs && !hasSubSampleCounts && !hasBytesOfClearData && !hasBytesOfProtectedData {
+	if !createEmpty && !hasIVs && !hasSubSampleCounts && !hasBytesOfClearData && !hasBytesOfProtectedData {
 		return nil, nil
 	}
 
