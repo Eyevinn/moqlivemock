@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/Eyevinn/mp4ff/aac"
 )
 
 // annexBStartCode is the 4-byte AnnexB start code used in H.264 bitstreams.
@@ -42,28 +44,34 @@ func (lw *LOCVideoWriter) Write(payload []byte) error {
 
 // LOCAACWriter converts LOC AAC objects (raw AAC frames) to ADTS-framed AAC.
 // The resulting output is playable with: ffplay file.aac
+//
+// Only AAC-LC (mp4a.40.2) is supported — ADTS header construction via
+// mp4ff/aac rejects other object types.
 type LOCAACWriter struct {
 	W             io.Writer
-	SampleRate    int // from catalog samplerate field
-	ChannelConfig int // from catalog channelConfig field
-	ObjectType    int // from codec string "mp4a.40.N" -> N
+	SampleRate    int  // from catalog samplerate field
+	ChannelConfig byte // from catalog channelConfig field
+	ObjectType    byte // from codec string "mp4a.40.N" -> N (must be 2 / AAC-LC)
 }
 
 // NewLOCAACWriter creates a LOCAACWriter from catalog track fields.
 // codec is e.g. "mp4a.40.2", sampleRate e.g. 44100, channelConfig e.g. "2".
+// Returns an error if the codec is not AAC-LC.
 func NewLOCAACWriter(w io.Writer, codec string, sampleRate int, channelConfig string) (*LOCAACWriter, error) {
-	// Parse object type from codec string "mp4a.40.N"
-	objectType := 2 // Default to AAC-LC
+	objectType := byte(aac.AAClc)
 	parts := strings.Split(codec, ".")
 	if len(parts) >= 3 {
 		if ot, err := strconv.Atoi(parts[2]); err == nil {
-			objectType = ot
+			objectType = byte(ot)
 		}
 	}
+	if objectType != aac.AAClc {
+		return nil, fmt.Errorf("LOC AAC: only AAC-LC (mp4a.40.2) is supported, got %q", codec)
+	}
 
-	chCfg := 2 // Default stereo
+	chCfg := byte(2) // Default stereo
 	if cc, err := strconv.Atoi(channelConfig); err == nil {
-		chCfg = cc
+		chCfg = byte(cc)
 	}
 
 	return &LOCAACWriter{
@@ -74,41 +82,13 @@ func NewLOCAACWriter(w io.Writer, codec string, sampleRate int, channelConfig st
 	}, nil
 }
 
-// sampleRateIndex returns the ADTS sample rate index for a given sample rate.
-func sampleRateIndex(rate int) int {
-	rates := []int{96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350}
-	for i, r := range rates {
-		if rate == r {
-			return i
-		}
-	}
-	return 4 // Default to 44100 index
-}
-
 // Write prepends a 7-byte ADTS header to the raw AAC frame and writes it.
 func (lw *LOCAACWriter) Write(payload []byte) error {
-	frameLen := len(payload) + 7 // ADTS header is 7 bytes
-	srIdx := sampleRateIndex(lw.SampleRate)
-
-	// Build 7-byte ADTS header
-	// See ISO 14496-3 for ADTS header format
-	header := [7]byte{}
-	// Syncword (12 bits) = 0xFFF
-	header[0] = 0xFF
-	header[1] = 0xF1 // syncword + ID=0 (MPEG-4) + layer=0 + protection_absent=1
-	// Profile (2 bits) + sampling_freq_index (4 bits) + private_bit (1) + channel_config high (1)
-	header[2] = byte(((lw.ObjectType-1)&0x03)<<6) | byte((srIdx&0x0F)<<2) | byte((lw.ChannelConfig>>2)&0x01)
-	// channel_config low (2) + orig/copy (1) + home (1) + copyright (2) + frame_length high (2)
-	header[3] = byte((lw.ChannelConfig&0x03)<<6) | byte((frameLen>>11)&0x03)
-	// frame_length mid (8 bits)
-	header[4] = byte((frameLen >> 3) & 0xFF)
-	// frame_length low (3 bits) + buffer_fullness high (5 bits)
-	header[5] = byte((frameLen&0x07)<<5) | 0x1F // 0x1F = buffer fullness VBR
-	// buffer_fullness low (6 bits) + number_of_raw_data_blocks (2 bits)
-	header[6] = 0xFC // buffer fullness VBR + 0 raw data blocks
-
-	_, err := lw.W.Write(header[:])
+	hdr, err := aac.NewADTSHeader(lw.SampleRate, lw.ChannelConfig, lw.ObjectType, uint16(len(payload)))
 	if err != nil {
+		return fmt.Errorf("LOC AAC: ADTS header: %w", err)
+	}
+	if _, err := lw.W.Write(hdr.Encode()); err != nil {
 		return err
 	}
 	_, err = lw.W.Write(payload)

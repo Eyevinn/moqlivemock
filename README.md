@@ -37,8 +37,9 @@ All streams are aligned to UTC wall-clock time at two levels:
    Audio is typically not compatible with integral seconds, so minimal
    displacement is applied without accumulated drift over time.
 
-LOC is currently not supported, but one possible scenario is to send LOC over the wire and
-then reassamble CMAF on the receiving side again.
+In addition to CMSF, mlmpub also announces an [LOC][LOC] (Low Overhead
+Container) namespace and a [moq-mi][moq-mi] (MoQ Media Interop) namespace.
+See the [Namespaces](#namespaces) section below for details.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer,
 supporting both draft-14 and draft-16 of MOQT. Draft-16 uses ALPN-based version
@@ -47,25 +48,53 @@ negotiation (`moqt-16`) and `WT-Available-Protocols` for WebTransport. Draft-14
 
 ## Namespaces
 
-mlmpub announces one or more namespaces depending on the configured protection modes.
-Each namespace has its own MSF catalog containing only the relevant tracks:
+mlmpub announces one or more namespaces depending on the configured packaging
+and protection modes. Each CMSF/MSF namespace has its own catalog containing
+only the relevant tracks; moq-mi is catalogless and uses fixed track names by
+convention.
 
-| Namespace | Condition | Track suffix | Description |
-|-----------|-----------|--------------|-------------|
-| `cmsf/clear` | Always | *(none)* | Unencrypted tracks |
-| `cmsf/drm-{scheme}` | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
-| `cmsf/eccp-{scheme}` | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
+| Namespace | Packaging | Condition | Track suffix | Description |
+|-----------|-----------|-----------|--------------|-------------|
+| `cmsf/clear` | CMSF (CMAF chunks) | Always | *(none)* | Unencrypted tracks |
+| `cmsf/drm-{scheme}` | CMSF (CMAF chunks) | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
+| `cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
+| `msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
+| `moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
 
 Both DRM and ECCP can be active simultaneously — they use independent encryption keys
 and produce separate sets of protected tracks.
 
-Subtitle tracks are included in all namespaces since they are not encrypted.
+Subtitle tracks are only included in the CMSF namespaces; LOC and moq-mi carry
+video and audio only.
+
+### LOC (`msf/clear`)
+
+The LOC namespace uses MSF with `packaging=loc` per
+[draft-ietf-moq-msf-00][MSF] and [draft-mzanaty-moq-loc][LOC]. Objects carry
+raw codec bitstream — AVC as length-prefixed NALUs and AAC as raw frames —
+without any container framing.
+
+On the subscriber side, `mlmsub` reframes LOC video (length-prefixed NALUs
+→ AnnexB) and LOC audio (raw AAC → ADTS) so the output can be piped directly
+to ffplay. Only AAC-LC (`mp4a.40.2`) is supported for LOC audio at the
+moment; HE-AAC and other object types are rejected.
+
+### moq-mi (`moq-mi/clear`)
+
+The moq-mi namespace implements
+[draft-cenzano-moq-media-interop][moq-mi]. It has no catalog: the subscriber
+uses fixed track names (`video0`, `audio0`) and parses per-object moqmi
+extension headers to learn the media type and codec metadata. Payloads are
+the codec bitstream as defined by moqmi (AVCC length-prefixed NALUs for
+video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
+— this namespace is intended for interop testing, not direct ffplay playback.
 
 ## Session setup
 
 After session establishment, the server announces all configured namespaces.
-The client subscribes to the MSF catalog in the desired namespace.
-Once it has the catalog, it can subscribe to media tracks listed in that catalog.
+For CMSF and LOC namespaces the client subscribes to the catalog track first,
+then to the media tracks listed in that catalog. For moq-mi there is no
+catalog, so the client subscribes directly to the fixed track names.
 
 The bundled `mlmsub` client connects to a single namespace (default: `cmsf/clear`,
 configurable via `-namespace`). It subscribes to the first video and audio track
@@ -287,6 +316,14 @@ go run . -namespace cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - |
 
 # DRM-protected content
 go run . -namespace cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
+
+# LOC packaging — AVC reframed to AnnexB, AAC reframed to ADTS
+go run . -namespace msf/clear -videoout video.h264 -audioout audio.aac
+ffplay video.h264
+ffplay audio.aac
+
+# moq-mi packaging — raw moqmi payloads written through unchanged
+go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
 ```
 
 ## QUIC / WebTransport Configuration
@@ -342,6 +379,8 @@ Want to know more about Eyevinn and how it is to work here. Contact us at work@e
 [moqt-14]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-14
 [MSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
 [CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
+[LOC]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
+[moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [warp-player]: https://github.com/Eyevinn/warp-player
 [interop-runner]: https://github.com/englishm/moq-interop-runner
