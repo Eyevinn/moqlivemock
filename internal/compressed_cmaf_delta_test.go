@@ -33,21 +33,21 @@ func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 	requireCompressedMoofEqual(t, moof1, rebuilt1, moov)
 }
 
-func TestMoofDeltaLOCConverterKeepsState(t *testing.T) {
+func TestMoofDeltaConverterKeepsState(t *testing.T) {
 	track, moov := loadVideoTrack(t)
 	moof0 := decodeMoof(t, mustChunk(t, track, 0, 0, 1))
 	moof1 := decodeMoof(t, mustChunk(t, track, 1, 1, 2))
 
 	var compressor MoofDeltaCompressor
-	loc0, err := compressor.CreateMoofLOCProperty(moof0, moov)
+	property0, err := compressor.CreateMoofProperty(moof0, moov)
 	require.NoError(t, err)
-	loc1, err := compressor.CreateMoofLOCProperty(moof1, moov)
+	property1, err := compressor.CreateMoofProperty(moof1, moov)
 	require.NoError(t, err)
 
 	var converter MoofDeltaDecompressor
-	frag0, err := converter.ConvertLOCtoCMAF(loc0, 0, moov)
+	frag0, err := converter.ConvertCompressedCMAFPropertyToCMAF(property0, 0, moov)
 	require.NoError(t, err)
-	frag1, err := converter.ConvertLOCtoCMAF(loc1, 1, moov)
+	frag1, err := converter.ConvertCompressedCMAFPropertyToCMAF(property1, 1, moov)
 	require.NoError(t, err)
 
 	requireCompressedMoofEqual(t, moof0, frag0.Moof, moov)

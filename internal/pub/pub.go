@@ -236,7 +236,9 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 }
 
 // PublishTrack publishes media track data in MoQ groups, pacing delivery to wall-clock time.
-func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName, packaging string) {
+func PublishTrack(ctx context.Context, publisher moqtransport.Publisher,
+	asset *internal.Asset, trackName, packaging string) {
+
 	ct := asset.GetTrackByName(trackName)
 	if ct == nil {
 		slog.Error("track not found", "track", trackName)

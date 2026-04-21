@@ -8,10 +8,10 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
-const moofDeltaDeletedFields locFieldID = 17
+const moofDeltaDeletedFields cmafFieldID = 17
 
 type MoofDeltaCompressor struct {
-	previous map[locFieldID][]byte
+	previous map[cmafFieldID][]byte
 }
 
 func (c *MoofDeltaCompressor) CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox) (int64, []byte, error) {
@@ -33,46 +33,47 @@ func (c *MoofDeltaCompressor) CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox)
 	return MoofDeltaHeader, encodeFields(deltaFields), nil
 }
 
-func (c *MoofDeltaCompressor) CreateMoofLOCProperty(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
+func (c *MoofDeltaCompressor) CreateMoofProperty(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
 	headerID, payload, err := c.CompressMoof(moof, moov)
 	if err != nil {
 		return nil, err
 	}
-	return createSizedLOCProperty(headerID, payload), nil
+	return createSizedProperty(headerID, payload), nil
 }
 
 type MoofDeltaDecompressor struct {
-	previous map[locFieldID][]byte
+	previous map[cmafFieldID][]byte
 }
 
-func (d *MoofDeltaDecompressor) ConvertLOCtoCMAF(loc []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.Fragment, error) {
+func (d *MoofDeltaDecompressor) ConvertCompressedCMAFPropertyToCMAF(compressedCMAF []byte, seqnum uint32,
+	moov *mp4.MoovBox) (*mp4.Fragment, error) {
 	frag := mp4.NewFragment()
 	pos := 0
-	for pos < len(loc) {
-		id, deltaPos := binary.Varint(loc[pos:])
+	for pos < len(compressedCMAF) {
+		id, deltaPos := binary.Varint(compressedCMAF[pos:])
 		if deltaPos <= 0 {
-			return nil, fmt.Errorf("invalid loc property id at offset %d", pos)
+			return nil, fmt.Errorf("invalid compressed CMAF property id at offset %d", pos)
 		}
 		pos += deltaPos
 		if id%2 == 0 {
-			_, deltaPos := binary.Varint(loc[pos:])
+			_, deltaPos := binary.Varint(compressedCMAF[pos:])
 			if deltaPos <= 0 {
-				return nil, fmt.Errorf("invalid loc property value for id=%d", id)
+				return nil, fmt.Errorf("invalid compressed CMAF property value for id=%d", id)
 			}
 			pos += deltaPos
 			continue
 		}
 
-		length, deltaPos := binary.Varint(loc[pos:])
+		length, deltaPos := binary.Varint(compressedCMAF[pos:])
 		if deltaPos <= 0 {
-			return nil, fmt.Errorf("invalid loc property length for id=%d", id)
+			return nil, fmt.Errorf("invalid compressed CMAF property length for id=%d", id)
 		}
 		pos += deltaPos
-		if length < 0 || pos+int(length) > len(loc) {
-			return nil, fmt.Errorf("loc property id=%d exceeds payload length", id)
+		if length < 0 || pos+int(length) > len(compressedCMAF) {
+			return nil, fmt.Errorf("compressed CMAF property id=%d exceeds payload length", id)
 		}
 
-		payload := loc[pos : pos+int(length)]
+		payload := compressedCMAF[pos : pos+int(length)]
 		pos += int(length)
 
 		switch id {
@@ -88,7 +89,9 @@ func (d *MoofDeltaDecompressor) ConvertLOCtoCMAF(loc []byte, seqnum uint32, moov
 	return frag, nil
 }
 
-func (d *MoofDeltaDecompressor) DecompressMoof(headerID int64, data []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+func (d *MoofDeltaDecompressor) DecompressMoof(headerID int64, data []byte,
+	seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+
 	if len(data) == 0 && headerID != MoofDeltaHeader {
 		return nil, fmt.Errorf("empty compressed moof data")
 	}
@@ -117,16 +120,16 @@ func (d *MoofDeltaDecompressor) DecompressMoof(headerID int64, data []byte, seqn
 	return decompressMoofFields(fieldValues, seqnum, moov)
 }
 
-func cloneFieldValues(fields map[locFieldID][]byte) map[locFieldID][]byte {
-	cloned := make(map[locFieldID][]byte, len(fields))
+func cloneFieldValues(fields map[cmafFieldID][]byte) map[cmafFieldID][]byte {
+	cloned := make(map[cmafFieldID][]byte, len(fields))
 	for key, value := range fields {
 		cloned[key] = append([]byte(nil), value...)
 	}
 	return cloned
 }
 
-func diffMoofFields(current, previous map[locFieldID][]byte) (map[locFieldID][]byte, error) {
-	deltaFields := make(map[locFieldID][]byte)
+func diffMoofFields(current, previous map[cmafFieldID][]byte) (map[cmafFieldID][]byte, error) {
+	deltaFields := make(map[cmafFieldID][]byte)
 
 	for key, currentValue := range current {
 		previousValue := previous[key]
@@ -153,7 +156,7 @@ func diffMoofFields(current, previous map[locFieldID][]byte) (map[locFieldID][]b
 	return deltaFields, nil
 }
 
-func applyMoofDelta(previous, deltaFields map[locFieldID][]byte) (map[locFieldID][]byte, error) {
+func applyMoofDelta(previous, deltaFields map[cmafFieldID][]byte) (map[cmafFieldID][]byte, error) {
 	current := cloneFieldValues(previous)
 
 	deletedFields, ok, err := readVarintList(moofDeltaDeletedFields, deltaFields)
@@ -162,7 +165,7 @@ func applyMoofDelta(previous, deltaFields map[locFieldID][]byte) (map[locFieldID
 	}
 	if ok {
 		for _, id := range deletedFields {
-			delete(current, locFieldID(id))
+			delete(current, cmafFieldID(id))
 		}
 	}
 
@@ -180,7 +183,7 @@ func applyMoofDelta(previous, deltaFields map[locFieldID][]byte) (map[locFieldID
 	return current, nil
 }
 
-func diffMoofFieldValue(id locFieldID, current, previous []byte) ([]byte, error) {
+func diffMoofFieldValue(id cmafFieldID, current, previous []byte) ([]byte, error) {
 	switch moofDeltaValueKind(id) {
 	case moofDeltaScalar:
 		currentValue, err := decodeSingleVarint(current)
@@ -218,7 +221,7 @@ func diffMoofFieldValue(id locFieldID, current, previous []byte) ([]byte, error)
 	}
 }
 
-func applyMoofFieldDelta(id locFieldID, delta, previous []byte) ([]byte, error) {
+func applyMoofFieldDelta(id cmafFieldID, delta, previous []byte) ([]byte, error) {
 	switch moofDeltaValueKind(id) {
 	case moofDeltaScalar:
 		deltaValue, err := decodeSingleVarint(delta)
@@ -263,7 +266,7 @@ const (
 	moofDeltaVarintList
 )
 
-func moofDeltaValueKind(id locFieldID) moofDeltaValueType {
+func moofDeltaValueKind(id cmafFieldID) moofDeltaValueType {
 	if id%2 == 1 {
 		return moofDeltaVarintList
 	}

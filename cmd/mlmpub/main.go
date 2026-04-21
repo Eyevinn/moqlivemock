@@ -94,8 +94,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		" Falls back to http://localhost:{sideport}/clearkey if not set.")
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
-	fs.StringVar(&opts.packaging, "packaging", "cmaf", "packaging type for media files, either \"cmaf\", \"compressed-cmaf\", "+
-		"or \"compressed-and-normal-cmaf\" if both types should be published in different namespaces")
+	fs.StringVar(&opts.packaging, "packaging", "cmaf", "packaging type for media files, either \"cmaf\", "+
+		"\"compressed-cmaf\", or \"compressed-and-normal-cmaf\" if both types should be published in different namespaces")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -195,15 +195,19 @@ func runServer(opts *options) error {
 	var namespaces []pub.NamespaceEntry
 	for _, packaging := range packagings {
 		// Always create the clear namespace
-		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), internal.ProtectionNone, now, packaging)
+		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), 
+								internal.ProtectionNone, now, packaging)
 		if err != nil {
 			return err
 		}
-		namespaces = append(namespaces, pub.NamespaceEntry{Namespace: []string{fmt.Sprintf("%s/clear", packaging)}, Catalog: clearCatalog})
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace: []string{fmt.Sprintf("%s/clear", packaging)}, Catalog: clearCatalog,
+		})
 
 		// Add commercial DRM namespace if configured
 		if drm != nil {
-			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme), internal.ProtectionDRM, now, packaging)
+			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme),
+									internal.ProtectionDRM, now, packaging)
 			if err != nil {
 				return err
 			}
@@ -215,7 +219,8 @@ func runServer(opts *options) error {
 
 		// Add ClearKey/ECCP namespace if configured
 		if eccp != nil {
-			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme), internal.ProtectionECCP, now, packaging)
+			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme),
+									internal.ProtectionECCP, now, packaging)
 			if err != nil {
 				return err
 			}
