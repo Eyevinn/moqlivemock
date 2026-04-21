@@ -527,7 +527,9 @@ func (a *Asset) setLoopDuration() error {
 // Subtitle tracks are always included regardless of the filter.
 // The generatedAtMS parameter is the wallclock time in milliseconds since the Unix epoch
 // to be set as the catalog's generatedAt value.
-func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, generatedAtMS int64, packaging string) (*Catalog, error) {
+func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
+	generatedAtMS int64, packaging string) (*Catalog, error) {
+
 	var tracks []Track
 	renderGroup := 1
 	for _, group := range a.Groups {
@@ -548,7 +550,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 					if err != nil {
 						return nil, fmt.Errorf("could not compress init data for track %s: %w", ct.Name, err)
 					}
-					data = createSizedLOCProperty(MoovHeader, compressed)
+					data = createSizedProperty(MoovHeader, compressed)
 				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
@@ -887,13 +889,15 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	return sw.Bytes(), nil
 }
 
-//GenCompressedCMAFChunk creates a compressed CMAF chunk consisting of endNr-startNr samples.
+// GenCompressedCMAFChunk creates a compressed CMAF chunk consisting of endNr-startNr samples.
 // The number is 0-based relative to the UNIX epoch.
 // Therefore nr is translated into data for the time interval
 // [nr*d.sampleDur, (nr+1)*d.sampleDur].
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
-func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uint64, compressor MoofDeltaCompressor) ([]byte, error) {
+func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uint64,
+	compressor MoofDeltaCompressor) ([]byte, error) {
+
 	f, err := t.createFragment(chunkNr, startNr, endNr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
@@ -913,7 +917,7 @@ func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uin
 			return nil, err
 		}
 	}
-	compressedMoof, err := compressor.CreateMoofLOCProperty(f.Moof, t.SpecData.GetInit().Moov)
+	compressedMoof, err := compressor.CreateMoofProperty(f.Moof, t.SpecData.GetInit().Moov)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compress moof: %w", err)
 	}
@@ -921,13 +925,12 @@ func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uin
 
 }
 
-//createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
+// createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
 func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*mp4.Fragment, error) {
 	f, err := mp4.CreateFragment(chunkNr, trackID)
 	if err != nil {
 		return nil, err
 	}
-	var samples []mp4.FullSample
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
@@ -941,7 +944,6 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*m
 			Data:       orig.Data,
 		}
 		f.AddFullSample(fs)
-		samples = append(samples, fs)
 	}
 	// OptimizeTrun promotes constant per-sample fields (duration, flags) into
 	// tfhd defaults so the trun only carries what actually varies. For audio

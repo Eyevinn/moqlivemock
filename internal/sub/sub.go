@@ -605,7 +605,9 @@ func (h *Handler) initLOCWriter(mediaType string, w interface{ Write([]byte) err
 	h.locWriters[mediaType] = w
 }
 
-func decompressCompressedCMAFObject(payload []byte, seqnum uint32, moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
+func decompressCompressedCMAFObject(payload []byte, seqnum uint32,
+	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
+
 	headerID, n := binary.Varint(payload)
 	if n <= 0 {
 		return nil, fmt.Errorf("invalid compressed CMAF header")
