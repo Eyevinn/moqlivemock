@@ -11,22 +11,14 @@ import (
 
 func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 	track, moov := loadVideoTrack(t)
-	moof0 := decodeMoof(t, mustChunk(t, track, 0, 0, 1))
-	moof1 := decodeMoof(t, mustChunk(t, track, 1, 1, 2))
-
 	var compressor MoofDeltaCompressor
-	headerID0, payload0, err := compressor.CompressMoof(moof0, moov)
-	require.NoError(t, err)
-	require.EqualValues(t, MoofHeader, headerID0)
-
-	headerID1, payload1, err := compressor.CompressMoof(moof1, moov)
-	require.NoError(t, err)
-	require.EqualValues(t, MoofDeltaHeader, headerID1)
+	object0, moof0 := mustCompressedObject(t, track, 0, 0, 2, &compressor)
+	object1, moof1 := mustCompressedObject(t, track, 1, 2, 4, &compressor)
 
 	var decoder MoofDeltaDecompressor
-	rebuilt0, err := decoder.DecompressMoof(headerID0, payload0, 0, moov)
+	rebuilt0, err := decoder.DecompressMoof(object0, 0, moov)
 	require.NoError(t, err)
-	rebuilt1, err := decoder.DecompressMoof(headerID1, payload1, 1, moov)
+	rebuilt1, err := decoder.DecompressMoof(object1, 1, moov)
 	require.NoError(t, err)
 
 	requireCompressedMoofEqual(t, moof0, rebuilt0, moov)
@@ -35,19 +27,14 @@ func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 
 func TestMoofDeltaConverterKeepsState(t *testing.T) {
 	track, moov := loadVideoTrack(t)
-	moof0 := decodeMoof(t, mustChunk(t, track, 0, 0, 1))
-	moof1 := decodeMoof(t, mustChunk(t, track, 1, 1, 2))
-
 	var compressor MoofDeltaCompressor
-	property0, err := compressor.CreateMoofProperty(moof0, moov)
-	require.NoError(t, err)
-	property1, err := compressor.CreateMoofProperty(moof1, moov)
-	require.NoError(t, err)
+	object0, moof0 := mustCompressedObject(t, track, 0, 0, 2, &compressor)
+	object1, moof1 := mustCompressedObject(t, track, 1, 2, 4, &compressor)
 
 	var converter MoofDeltaDecompressor
-	frag0, err := converter.ConvertCompressedCMAFPropertyToCMAF(property0, 0, moov)
+	frag0, err := convertCompressedCMAFObjectToCMAF(t, object0, 0, moov, &converter)
 	require.NoError(t, err)
-	frag1, err := converter.ConvertCompressedCMAFPropertyToCMAF(property1, 1, moov)
+	frag1, err := convertCompressedCMAFObjectToCMAF(t, object1, 1, moov, &converter)
 	require.NoError(t, err)
 
 	requireCompressedMoofEqual(t, moof0, frag0.Moof, moov)
@@ -56,37 +43,30 @@ func TestMoofDeltaConverterKeepsState(t *testing.T) {
 
 func TestMoofDeltaRequiresPreviousMoof(t *testing.T) {
 	track, moov := loadVideoTrack(t)
-	moof0 := decodeMoof(t, mustChunk(t, track, 0, 0, 1))
-	moof1 := decodeMoof(t, mustChunk(t, track, 1, 1, 2))
-
 	var compressor MoofDeltaCompressor
-	_, _, err := compressor.CompressMoof(moof0, moov)
-	require.NoError(t, err)
-	headerID, payload, err := compressor.CompressMoof(moof1, moov)
-	require.NoError(t, err)
-	require.EqualValues(t, MoofDeltaHeader, headerID)
+	_, _ = mustCompressedObject(t, track, 0, 0, 2, &compressor)
+	object1, _ := mustCompressedObject(t, track, 1, 2, 4, &compressor)
 
 	var decoder MoofDeltaDecompressor
-	_, err = decoder.DecompressMoof(headerID, payload, 1, moov)
+	_, err := decoder.DecompressMoof(object1, 1, moov)
 	require.ErrorContains(t, err, "missing previous moof state")
 }
 
 func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	track, moov := loadVideoTrack(t)
-	moof := decodeMoof(t, mustChunk(t, track, 0, 0, 1))
-
 	var compressor MoofDeltaCompressor
-	headerID0, payload0, err := compressor.CompressMoof(moof, moov)
+	object0, moof := mustCompressedObject(t, track, 0, 0, 2, &compressor)
+	object1, _ := mustCompressedObject(t, track, 0, 0, 2, &compressor)
+
+	parsedObject1, err := parseCompressedCMAFObject(object1)
 	require.NoError(t, err)
-	headerID1, payload1, err := compressor.CompressMoof(moof, moov)
-	require.NoError(t, err)
-	require.EqualValues(t, MoofDeltaHeader, headerID1)
-	require.Empty(t, payload1)
+	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
+	require.Empty(t, parsedObject1.properties)
 
 	var decoder MoofDeltaDecompressor
-	_, err = decoder.DecompressMoof(headerID0, payload0, 0, moov)
+	_, err = decoder.DecompressMoof(object0, 0, moov)
 	require.NoError(t, err)
-	rebuilt, err := decoder.DecompressMoof(headerID1, payload1, 1, moov)
+	rebuilt, err := decoder.DecompressMoof(object1, 1, moov)
 	require.NoError(t, err)
 
 	requireCompressedMoofEqual(t, moof, rebuilt, moov)
@@ -130,6 +110,23 @@ func mustChunk(t *testing.T, track *ContentTrack, chunkNr uint32, startNr, endNr
 	return chunk
 }
 
+func mustCompressedObject(t *testing.T, track *ContentTrack, chunkNr uint32, startNr, endNr uint64,
+	compressor *MoofDeltaCompressor) ([]byte, *mp4.MoofBox) {
+	t.Helper()
+
+	fragment, err := track.createFragment(chunkNr, startNr, endNr)
+	require.NoError(t, err)
+
+	if compressor == nil {
+		compressor = &MoofDeltaCompressor{}
+	}
+	headerID, payload, err := compressor.CompressMoof(fragment.Moof, track.SpecData.GetInit().Moov)
+	require.NoError(t, err)
+
+	object := append(createSizedProperty(headerID, payload), fragment.Mdat.Data...)
+	return object, fragment.Moof
+}
+
 func decodeMoof(t *testing.T, chunk []byte) *mp4.MoofBox {
 	t.Helper()
 
@@ -140,6 +137,25 @@ func decodeMoof(t *testing.T, chunk []byte) *mp4.MoofBox {
 	return moof
 }
 
+func convertCompressedCMAFObjectToCMAF(t *testing.T, compressed []byte, seqnum uint32, moov *mp4.MoovBox,
+	decompressor *MoofDeltaDecompressor) (*mp4.Fragment, error) {
+	t.Helper()
+
+	object, err := parseCompressedCMAFObject(compressed)
+	if err != nil {
+		return nil, err
+	}
+	moof, err := decompressor.DecompressMoof(compressed, seqnum, moov)
+	if err != nil {
+		return nil, err
+	}
+
+	frag := mp4.NewFragment()
+	frag.Moof = moof
+	frag.AddChild(&mp4.MdatBox{Data: object.mdatPayload})
+	return frag, nil
+}
+
 func requireCompressedMoofEqual(t *testing.T, expected, actual *mp4.MoofBox, moov *mp4.MoovBox) {
 	t.Helper()
 
@@ -148,4 +164,71 @@ func requireCompressedMoofEqual(t *testing.T, expected, actual *mp4.MoofBox, moo
 	actualPayload, err := CompressMoof(actual, moov)
 	require.NoError(t, err)
 	require.Equal(t, expectedPayload, actualPayload)
+}
+
+func TestCompressMoofOmitsSampleSizesForSingleSampleFragment(t *testing.T) {
+	track, moov := loadVideoTrack(t)
+	object, moof := mustCompressedObject(t, track, 0, 0, 1, &MoofDeltaCompressor{})
+	require.Len(t, moof.Traf.Trun.Samples, 1)
+
+	parsedObject, err := parseCompressedCMAFObject(object)
+	require.NoError(t, err)
+
+	fields, err := separateFields(parsedObject.properties)
+	require.NoError(t, err)
+
+	sampleCountValue, ok := readVarint(moofFieldIDs.SampleCount, fields)
+	require.True(t, ok)
+	require.EqualValues(t, 1, sampleCountValue)
+	_, hasSampleSizes := fields[moofFieldIDs.SampleSizes]
+	require.False(t, hasSampleSizes)
+	_, hasDefaultSampleSize := fields[moofFieldIDs.DefaultSampleSize]
+	require.False(t, hasDefaultSampleSize)
+
+	rebuilt, err := DecompressMoof(object, 1, moov)
+	require.NoError(t, err)
+	requireCompressedMoofEqual(t, moof, rebuilt, moov)
+}
+
+func TestCompressMoofKeepsSampleSizesForMultiSampleFragment(t *testing.T) {
+	track, moov := loadVideoTrack(t)
+	moof := decodeMoof(t, mustChunk(t, track, 0, 0, 2))
+	require.Len(t, moof.Traf.Trun.Samples, 2)
+
+	payload, err := CompressMoof(moof, moov)
+	require.NoError(t, err)
+
+	fields, err := separateFields(payload)
+	require.NoError(t, err)
+
+	sampleCountValue, ok := readVarint(moofFieldIDs.SampleCount, fields)
+	require.True(t, ok)
+	require.EqualValues(t, 2, sampleCountValue)
+	_, hasSampleSizes := fields[moofFieldIDs.SampleSizes]
+	require.True(t, hasSampleSizes)
+}
+
+func TestDecompressMoofDefaultsMissingCompositionOffsetsToZero(t *testing.T) {
+	track, moov := loadVideoTrack(t)
+	object, _ := mustCompressedObject(t, track, 0, 0, 2, &MoofDeltaCompressor{})
+
+	parsedObject, err := parseCompressedCMAFObject(object)
+	require.NoError(t, err)
+
+	fields, err := separateFields(parsedObject.properties)
+	require.NoError(t, err)
+	delete(fields, moofFieldIDs.SampleCompositionTimeOffsets)
+
+	modifiedObject := append(
+		createSizedProperty(parsedObject.headerID, encodeFields(fields)),
+		parsedObject.mdatPayload...,
+	)
+
+	rebuilt, err := DecompressMoof(modifiedObject, 1, moov)
+	require.NoError(t, err)
+	require.False(t, rebuilt.Traf.Trun.HasSampleCompositionTimeOffset())
+	require.Len(t, rebuilt.Traf.Trun.Samples, 2)
+	for _, sample := range rebuilt.Traf.Trun.Samples {
+		require.Zero(t, sample.CompositionTimeOffset)
+	}
 }

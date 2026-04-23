@@ -78,7 +78,7 @@ func (d *MoofDeltaDecompressor) ConvertCompressedCMAFPropertyToCMAF(compressedCM
 
 		switch id {
 		case MoofHeader, MoofDeltaHeader:
-			moof, err := d.DecompressMoof(id, payload, seqnum, moov)
+			moof, err := d.decompressMoofProperty(id, payload, seqnum, moov, 0)
 			if err != nil {
 				return nil, fmt.Errorf("unable to decompress moof: %w", err)
 			}
@@ -89,9 +89,17 @@ func (d *MoofDeltaDecompressor) ConvertCompressedCMAFPropertyToCMAF(compressedCM
 	return frag, nil
 }
 
-func (d *MoofDeltaDecompressor) DecompressMoof(headerID int64, data []byte,
+func (d *MoofDeltaDecompressor) DecompressMoof(data []byte,
 	seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+	object, err := parseCompressedCMAFObject(data)
+	if err != nil {
+		return nil, err
+	}
+	return d.decompressMoofProperty(object.headerID, object.properties, seqnum, moov, len(object.mdatPayload))
+}
 
+func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID int64, data []byte,
+	seqnum uint32, moov *mp4.MoovBox, mdatPayloadLength int) (*mp4.MoofBox, error) {
 	if len(data) == 0 && headerID != MoofDeltaHeader {
 		return nil, fmt.Errorf("empty compressed moof data")
 	}
@@ -117,7 +125,7 @@ func (d *MoofDeltaDecompressor) DecompressMoof(headerID int64, data []byte,
 		return nil, fmt.Errorf("unsupported moof header id=%d", headerID)
 	}
 
-	return decompressMoofFields(fieldValues, seqnum, moov)
+	return decompressMoofFields(fieldValues, seqnum, moov, mdatPayloadLength)
 }
 
 func cloneFieldValues(fields map[cmafFieldID][]byte) map[cmafFieldID][]byte {
