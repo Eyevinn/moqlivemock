@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -28,6 +29,7 @@ var moofFieldIDs = struct {
 	BaseMediaDecodeTime cmafFieldID
 
 	//trun
+	SampleCount                  cmafFieldID
 	FirstSampleFlags             cmafFieldID
 	SampleSizes                  cmafFieldID
 	SampleDurations              cmafFieldID
@@ -47,6 +49,7 @@ var moofFieldIDs = struct {
 	DefaultSampleFlags:           8,
 	BaseMediaDecodeTime:          10,
 	FirstSampleFlags:             12,
+	SampleCount:                  16,
 	SampleSizes:                  1,
 	SampleDurations:              3,
 	SampleCompositionTimeOffsets: 5,
@@ -148,6 +151,9 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[cmafF
 		return nil, fmt.Errorf("moov or trex not defined")
 	}
 
+	trun := moof.Traf.Trun
+	singleSample := trun != nil && len(trun.Samples) == 1
+
 	tfhd := moof.Traf.Tfhd
 	if tfhd != nil {
 		if tfhd.SampleDescriptionIndex != moov.Mvex.Trex.DefaultSampleDescriptionIndex {
@@ -156,7 +162,7 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[cmafF
 		if tfhd.DefaultSampleDuration != moov.Mvex.Trex.DefaultSampleDuration {
 			importantFields[moofFieldIDs.DefaultSampleDuration] = binary.AppendVarint(nil, int64(tfhd.DefaultSampleDuration))
 		}
-		if tfhd.DefaultSampleSize != moov.Mvex.Trex.DefaultSampleSize {
+		if !singleSample && tfhd.DefaultSampleSize != moov.Mvex.Trex.DefaultSampleSize {
 			importantFields[moofFieldIDs.DefaultSampleSize] = binary.AppendVarint(nil, int64(tfhd.DefaultSampleSize))
 		}
 		if tfhd.DefaultSampleFlags != moov.Mvex.Trex.DefaultSampleFlags {
@@ -169,10 +175,12 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[cmafF
 		importantFields[moofFieldIDs.BaseMediaDecodeTime] = binary.AppendVarint(nil, int64(tfdt.BaseMediaDecodeTime()))
 	}
 
-	trun := moof.Traf.Trun
 	if trun != nil {
-		firstSampleFlags, _ := trun.FirstSampleFlags()
-		importantFields[moofFieldIDs.FirstSampleFlags] = binary.AppendVarint(nil, int64(firstSampleFlags))
+		importantFields[moofFieldIDs.SampleCount] = binary.AppendVarint(nil, int64(len(trun.Samples)))
+		firstSampleFlags, firstSampleFlagsPresent := trun.FirstSampleFlags()
+		if firstSampleFlagsPresent {
+			importantFields[moofFieldIDs.FirstSampleFlags] = binary.AppendVarint(nil, int64(firstSampleFlags))
+		}
 
 		var sizes []byte
 		var durations []byte
@@ -180,27 +188,23 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[cmafF
 		var compositionTimeOffsets []byte
 
 		for _, sample := range trun.Samples {
-			if sample.Size != 0 {
-				sizes = binary.AppendVarint(sizes, int64(sample.Size))
-			}
-			if sample.Dur != 0 {
-				durations = binary.AppendVarint(durations, int64(sample.Dur))
-			}
-			if sample.Flags != 0 {
-				flags = binary.AppendVarint(flags, int64(sample.Flags))
-			}
+			sizes = binary.AppendVarint(sizes, int64(sample.Size))
+			durations = binary.AppendVarint(durations, int64(sample.Dur))
+			flags = binary.AppendVarint(flags, int64(sample.Flags))
 			compositionTimeOffsets = binary.AppendVarint(compositionTimeOffsets, int64(sample.CompositionTimeOffset))
 		}
-		if len(durations) > 0 {
+		if trun.HasSampleDuration() {
 			importantFields[moofFieldIDs.SampleDurations] = durations
 		}
-		if len(flags) > 0 {
+		if trun.HasSampleFlags() {
 			importantFields[moofFieldIDs.SampleFlags] = flags
 		}
-		if len(sizes) > 0 {
+		if trun.HasSampleSize() && !singleSample {
 			importantFields[moofFieldIDs.SampleSizes] = sizes
 		}
-		importantFields[moofFieldIDs.SampleCompositionTimeOffsets] = compositionTimeOffsets
+		if trun.HasSampleCompositionTimeOffset() {
+			importantFields[moofFieldIDs.SampleCompositionTimeOffsets] = compositionTimeOffsets
+		}
 	}
 
 	senc, perSampleIVSize, err := getParsedSencBox(moof, moov)
@@ -245,17 +249,22 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[cmafF
 }
 
 func DecompressMoof(data []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("empty compressed moof data")
-	}
-	fieldValues, err := separateFields(data)
+	object, err := parseCompressedCMAFObject(data)
 	if err != nil {
 		return nil, err
 	}
-	return decompressMoofFields(fieldValues, seqnum, moov)
+	if object.headerID != MoofHeader {
+		return nil, fmt.Errorf("unsupported moof header id=%d", object.headerID)
+	}
+	fieldValues, err := separateFields(object.properties)
+	if err != nil {
+		return nil, err
+	}
+	return decompressMoofFields(fieldValues, seqnum, moov, len(object.mdatPayload))
 }
 
-func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moov *mp4.MoovBox,
+	mdatPayloadLength int) (*mp4.MoofBox, error) {
 	if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
 		return nil, fmt.Errorf("moov or trex not defined")
 	}
@@ -284,8 +293,8 @@ func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moo
 		traf.Tfhd.Flags |= mp4.TfhdDefaultSampleDurationPresentFlag
 	}
 
-	defaultSampleSize, ok := readVarint(moofFieldIDs.DefaultSampleSize, fieldValues)
-	if ok {
+	defaultSampleSize, hasDefaultSampleSize := readVarint(moofFieldIDs.DefaultSampleSize, fieldValues)
+	if hasDefaultSampleSize {
 		traf.Tfhd.DefaultSampleSize = uint32(defaultSampleSize)
 		traf.Tfhd.Flags |= mp4.TfhdDefaultSampleSizePresentFlag
 	}
@@ -311,12 +320,25 @@ func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moo
 	if ok {
 		traf.Trun.SetFirstSampleFlags(uint32(firstSampleFlags))
 	}
-	sampleCompositionTimeOffsets, ok, err := readVarintList(moofFieldIDs.SampleCompositionTimeOffsets, fieldValues)
+	sampleCountValue, ok := readVarint(moofFieldIDs.SampleCount, fieldValues)
+	if !ok {
+		return nil, fmt.Errorf("missing field id=%d", moofFieldIDs.SampleCount)
+	}
+	if sampleCountValue < 0 {
+		return nil, fmt.Errorf("invalid field id=%d", moofFieldIDs.SampleCount)
+	}
+	sampleCount := int(sampleCountValue)
+	sampleCompositionTimeOffsets, hasCompositionTimeOffsets, err :=
+		readVarintList(moofFieldIDs.SampleCompositionTimeOffsets, fieldValues)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		return nil, fmt.Errorf("missing field id=%d", moofFieldIDs.SampleCompositionTimeOffsets)
+	if !hasCompositionTimeOffsets {
+		sampleCompositionTimeOffsets = repeatInt64(0, sampleCount)
+		traf.Trun.Flags &^= mp4.TrunSampleCompositionTimeOffsetPresentFlag
+	}
+	if len(sampleCompositionTimeOffsets) != sampleCount {
+		return nil, fmt.Errorf("field id=%d length mismatch", moofFieldIDs.SampleCompositionTimeOffsets)
 	}
 
 	sampleSizes, ok, err := readVarintList(moofFieldIDs.SampleSizes, fieldValues)
@@ -324,7 +346,14 @@ func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moo
 		return nil, err
 	}
 	if !ok {
-		sampleSizes = repeatInt64(int64(traf.Tfhd.DefaultSampleSize), len(sampleCompositionTimeOffsets))
+		if sampleCount == 1 && !hasDefaultSampleSize {
+			if mdatPayloadLength <= 0 {
+				return nil, fmt.Errorf("missing sample size for single-sample moof from mdat payload length")
+			}
+			sampleSizes = []int64{int64(mdatPayloadLength)}
+		} else {
+			sampleSizes = repeatInt64(int64(traf.Tfhd.DefaultSampleSize), sampleCount)
+		}
 	}
 
 	sampleDurations, ok, err := readVarintList(moofFieldIDs.SampleDurations, fieldValues)
@@ -332,7 +361,7 @@ func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moo
 		return nil, err
 	}
 	if !ok {
-		sampleDurations = repeatInt64(int64(traf.Tfhd.DefaultSampleDuration), len(sampleCompositionTimeOffsets))
+		sampleDurations = repeatInt64(int64(traf.Tfhd.DefaultSampleDuration), sampleCount)
 	}
 
 	sampleFlags, ok, err := readVarintList(moofFieldIDs.SampleFlags, fieldValues)
@@ -340,25 +369,25 @@ func decompressMoofFields(fieldValues map[cmafFieldID][]byte, seqnum uint32, moo
 		return nil, err
 	}
 	if !ok {
-		sampleFlags = repeatInt64(int64(traf.Tfhd.DefaultSampleFlags), len(sampleCompositionTimeOffsets))
+		sampleFlags = repeatInt64(int64(traf.Tfhd.DefaultSampleFlags), sampleCount)
 	}
 
-	if len(sampleDurations) != len(sampleCompositionTimeOffsets) {
+	if len(sampleDurations) != sampleCount {
 		return nil, fmt.Errorf("field id=%d length mismatch", moofFieldIDs.SampleDurations)
 	}
-	if len(sampleFlags) != len(sampleCompositionTimeOffsets) {
+	if len(sampleFlags) != sampleCount {
 		return nil, fmt.Errorf("field id=%d length mismatch", moofFieldIDs.SampleFlags)
 	}
-	if len(sampleCompositionTimeOffsets) != len(sampleSizes) {
-		return nil, fmt.Errorf("field id=%d length mismatch", moofFieldIDs.SampleCompositionTimeOffsets)
+	if len(sampleSizes) != sampleCount {
+		return nil, fmt.Errorf("field id=%d length mismatch", moofFieldIDs.SampleSizes)
 	}
 
-	for i := range sampleCompositionTimeOffsets {
+	for i := 0; i < sampleCount; i++ {
 		traf.Trun.AddSample(mp4.NewSample(uint32(sampleFlags[i]), uint32(sampleDurations[i]),
 			uint32(sampleSizes[i]), int32(sampleCompositionTimeOffsets[i])))
 	}
 
-	senc, err := reconstructSencFromFields(fieldValues, len(sampleCompositionTimeOffsets), perSampleIVSize,
+	senc, err := reconstructSencFromFields(fieldValues, sampleCount, perSampleIVSize,
 		shouldCreateEmptySenc(moov, traf.Tfhd.TrackID, perSampleIVSize))
 	if err != nil {
 		return nil, err
@@ -446,7 +475,6 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		entry.SampleRate = uint16(*track.SampleRate)
 	}
 
-	//might be replaceable by channelConfiguration in MSF
 	channelCount, ok := readVarint(moovFieldIDs.channelCount, fieldValues)
 	if ok {
 		if audioEntry, ok := sampleEntry.(*mp4.AudioSampleEntryBox); ok {
@@ -607,9 +635,9 @@ func encodeFields(fields map[cmafFieldID][]byte) []byte {
 	for key := range fields {
 		keys = append(keys, key)
 	}
-	//sort.Slice(keys, func(i, j int) bool {
-	//	return keys[i] < keys[j]
-	//})
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
 
 	payload := make([]byte, 0)
 	for _, key := range keys {
@@ -621,6 +649,41 @@ func encodeFields(fields map[cmafFieldID][]byte) []byte {
 		payload = append(payload, value...)
 	}
 	return payload
+}
+
+type compressedCMAFObject struct {
+	headerID    int64
+	properties  []byte
+	mdatPayload []byte
+}
+
+func parseCompressedCMAFObject(payload []byte) (*compressedCMAFObject, error) {
+	if len(payload) == 0 {
+		return nil, fmt.Errorf("empty compressed moof data")
+	}
+	headerID, n := binary.Varint(payload)
+	if n <= 0 {
+		return nil, fmt.Errorf("invalid compressed CMAF header")
+	}
+	pos := n
+
+	propertiesLength, n := binary.Varint(payload[pos:])
+	if n <= 0 {
+		return nil, fmt.Errorf("invalid compressed CMAF LOC payload length")
+	}
+	pos += n
+	if propertiesLength < 0 || pos+int(propertiesLength) > len(payload) {
+		return nil, fmt.Errorf("compressed CMAF LOC payload exceeds object length")
+	}
+
+	propertiesPayload := payload[pos : pos+int(propertiesLength)]
+	mdatPayload := payload[pos+int(propertiesLength):]
+
+	return &compressedCMAFObject{
+		headerID:    headerID,
+		properties:  propertiesPayload,
+		mdatPayload: mdatPayload,
+	}, nil
 }
 
 func extractImportantMoovFields(moov *mp4.MoovBox) (map[cmafFieldID][]byte, error) {
@@ -822,7 +885,6 @@ func addDefaultEncryptionBoxes(sampleEntry mp4.Box) {
 	schi := &mp4.SchiBox{}
 	schi.AddChild(&mp4.TencBox{DefaultKID: make(mp4.UUID, 16), DefaultIsProtected: 1})
 	sinf.AddChild(schi)
-
 	switch entry := sampleEntry.(type) {
 	case *mp4.VisualSampleEntryBox:
 		entry.AddChild(sinf)
