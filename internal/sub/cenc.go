@@ -3,6 +3,7 @@ package sub
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -70,17 +71,42 @@ func (h *Handler) decryptInit(track *internal.Track) error {
 		return fmt.Errorf("failed to base64 decode init data: %w", err)
 	}
 	if track.Packaging == "compressed-cmaf" {
-		f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initDataBytes))
+		headerID, n := binary.Varint(initDataBytes)
+		if n <= 0 {
+			return fmt.Errorf("failed to parse protected init: invalid compressed CMAF init header")
+		}
+		pos := n
+
+		locPayloadLength, n := binary.Varint(initDataBytes[pos:])
+		if n <= 0 {
+			return fmt.Errorf("failed to parse protected init: invalid compressed CMAF init payload length")
+		}
+		pos += n
+		if headerID != internal.MoovHeader {
+			return fmt.Errorf("failed to parse protected init: unsupported compressed CMAF init header %d", headerID)
+		}
+		if locPayloadLength < 0 || pos+int(locPayloadLength) > len(initDataBytes) {
+			return fmt.Errorf("failed to parse protected init: compressed CMAF init payload exceeds object length")
+		}
+
+		protectedInit, err := internal.DecompressInit(initDataBytes[pos:pos+int(locPayloadLength)], *track)
 		if err != nil {
 			return fmt.Errorf("failed to parse protected init: %w", err)
 		}
-		if f.Init == nil || f.Init.Moov == nil {
+		if protectedInit == nil || protectedInit.Moov == nil {
 			return fmt.Errorf("missing moov in protected init")
 		}
 		if h.cenc.ProtectedMoov == nil {
 			h.cenc.ProtectedMoov = make(map[string]*mp4.MoovBox)
 		}
-		h.cenc.ProtectedMoov[track.Name] = f.Init.Moov
+		h.cenc.ProtectedMoov[track.Name] = protectedInit.Moov
+
+		sw := bits.NewFixedSliceWriter(int(protectedInit.Size()))
+		err = protectedInit.EncodeSW(sw)
+		if err != nil {
+			return fmt.Errorf("failed to encode protected init: %w", err)
+		}
+		initDataBytes = sw.Bytes()
 	}
 	decryptedInitBytes, _, decryptInfo, err := internal.DecryptInit(initDataBytes)
 	if err != nil {

@@ -525,7 +525,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 func decompressCompressedCMAFObject(payload []byte, seqnum uint32,
 	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
 
-	headerID, n := binary.Varint(payload)
+	_, n := binary.Varint(payload)
 	if n <= 0 {
 		return nil, fmt.Errorf("invalid compressed CMAF header")
 	}
@@ -539,10 +539,9 @@ func decompressCompressedCMAFObject(payload []byte, seqnum uint32,
 	if locPayloadLength < 0 || pos+int(locPayloadLength) > len(payload) {
 		return nil, fmt.Errorf("compressed CMAF LOC payload exceeds object length")
 	}
-	locPayload := payload[pos : pos+int(locPayloadLength)]
 	mdatData := payload[pos+int(locPayloadLength):]
 
-	moof, err := decompressor.DecompressMoof(headerID, locPayload, seqnum, moov)
+	moof, err := decompressor.DecompressMoof(payload, seqnum, moov)
 	if err != nil {
 		return nil, err
 	}
