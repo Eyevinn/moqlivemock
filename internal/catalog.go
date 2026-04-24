@@ -98,7 +98,7 @@ type Track struct {
 
 	// Packaging defines the type of payload encapsulation.
 	// Required field at the track level. MSF values: "loc", "mediatimeline", "eventtimeline".
-	// CMSF adds: "cmaf", a custom compressed CMAF variant uses "compressed-cmaf".
+	// CMSF adds: "cmaf", a custom Low Overhead CMAF variant uses "locmaf".
 	Packaging string `json:"packaging"`
 
 	// IsLive indicates whether new objects will be added to the track.

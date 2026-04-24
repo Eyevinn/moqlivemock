@@ -184,7 +184,6 @@ func runServer(opts *options) error {
 	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
 
 	now := time.Now().UnixMilli()
-
 	var namespaces []pub.NamespaceEntry
 
 	// Always create the LOC/MSF namespace (AVC + AAC/Opus, clear only)
@@ -214,8 +213,8 @@ func runServer(opts *options) error {
 
 	for _, packaging := range []string{"cmaf", "compressed-cmaf"} {
 		// Always create the clear namespace
-		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), 
-								internal.ProtectionNone, now, packaging)
+		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging),
+			internal.ProtectionNone, now, packaging)
 		if err != nil {
 			return err
 		}
@@ -226,7 +225,7 @@ func runServer(opts *options) error {
 		// Add commercial DRM namespace if configured
 		if drm != nil {
 			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme),
-									internal.ProtectionDRM, now, packaging)
+				internal.ProtectionDRM, now, packaging)
 			if err != nil {
 				return err
 			}
@@ -240,7 +239,7 @@ func runServer(opts *options) error {
 		// Add ClearKey/ECCP namespace if configured
 		if eccp != nil {
 			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme),
-									internal.ProtectionECCP, now, packaging)
+				internal.ProtectionECCP, now, packaging)
 			if err != nil {
 				return err
 			}

@@ -32,9 +32,9 @@ func TestMoofDeltaConverterKeepsState(t *testing.T) {
 	object1, moof1 := mustCompressedObject(t, track, 1, 2, 4, &compressor)
 
 	var converter MoofDeltaDecompressor
-	frag0, err := convertCompressedCMAFObjectToCMAF(t, object0, 0, moov, &converter)
+	frag0, err := convertLocmafObjectToCMAF(t, object0, 0, moov, &converter)
 	require.NoError(t, err)
-	frag1, err := convertCompressedCMAFObjectToCMAF(t, object1, 1, moov, &converter)
+	frag1, err := convertLocmafObjectToCMAF(t, object1, 1, moov, &converter)
 	require.NoError(t, err)
 
 	requireCompressedMoofEqual(t, moof0, frag0.Moof, moov)
@@ -58,7 +58,7 @@ func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	object0, moof := mustCompressedObject(t, track, 0, 0, 2, &compressor)
 	object1, _ := mustCompressedObject(t, track, 0, 0, 2, &compressor)
 
-	parsedObject1, err := parseCompressedCMAFObject(object1)
+	parsedObject1, err := parseLocmafObject(object1)
 	require.NoError(t, err)
 	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
 	require.Empty(t, parsedObject1.properties)
@@ -123,7 +123,7 @@ func mustCompressedObject(t *testing.T, track *ContentTrack, chunkNr uint32, sta
 	headerID, payload, err := compressor.CompressMoof(fragment.Moof, track.SpecData.GetInit().Moov)
 	require.NoError(t, err)
 
-	object := append(createSizedProperty(headerID, payload), fragment.Mdat.Data...)
+	object := append(createSizedLocmafProperty(headerID, payload), fragment.Mdat.Data...)
 	return object, fragment.Moof
 }
 
@@ -137,15 +137,15 @@ func decodeMoof(t *testing.T, chunk []byte) *mp4.MoofBox {
 	return moof
 }
 
-func convertCompressedCMAFObjectToCMAF(t *testing.T, compressed []byte, seqnum uint32, moov *mp4.MoovBox,
+func convertLocmafObjectToCMAF(t *testing.T, locmaf []byte, seqnum uint32, moov *mp4.MoovBox,
 	decompressor *MoofDeltaDecompressor) (*mp4.Fragment, error) {
 	t.Helper()
 
-	object, err := parseCompressedCMAFObject(compressed)
+	object, err := parseLocmafObject(locmaf)
 	if err != nil {
 		return nil, err
 	}
-	moof, err := decompressor.DecompressMoof(compressed, seqnum, moov)
+	moof, err := decompressor.DecompressMoof(locmaf, seqnum, moov)
 	if err != nil {
 		return nil, err
 	}
@@ -171,18 +171,18 @@ func TestCompressMoofOmitsSampleSizesForSingleSampleFragment(t *testing.T) {
 	object, moof := mustCompressedObject(t, track, 0, 0, 1, &MoofDeltaCompressor{})
 	require.Len(t, moof.Traf.Trun.Samples, 1)
 
-	parsedObject, err := parseCompressedCMAFObject(object)
+	parsedObject, err := parseLocmafObject(object)
 	require.NoError(t, err)
 
 	fields, err := separateFields(parsedObject.properties)
 	require.NoError(t, err)
 
-	sampleCountValue, ok := readVarint(moofFieldIDs.SampleCount, fields)
+	sampleCountValue, ok := readVarint(moofLocmafIDs.SampleCount, fields)
 	require.True(t, ok)
 	require.EqualValues(t, 1, sampleCountValue)
-	_, hasSampleSizes := fields[moofFieldIDs.SampleSizes]
+	_, hasSampleSizes := fields[moofLocmafIDs.SampleSizes]
 	require.False(t, hasSampleSizes)
-	_, hasDefaultSampleSize := fields[moofFieldIDs.DefaultSampleSize]
+	_, hasDefaultSampleSize := fields[moofLocmafIDs.DefaultSampleSize]
 	require.False(t, hasDefaultSampleSize)
 
 	rebuilt, err := DecompressMoof(object, 1, moov)
@@ -201,10 +201,10 @@ func TestCompressMoofKeepsSampleSizesForMultiSampleFragment(t *testing.T) {
 	fields, err := separateFields(payload)
 	require.NoError(t, err)
 
-	sampleCountValue, ok := readVarint(moofFieldIDs.SampleCount, fields)
+	sampleCountValue, ok := readVarint(moofLocmafIDs.SampleCount, fields)
 	require.True(t, ok)
 	require.EqualValues(t, 2, sampleCountValue)
-	_, hasSampleSizes := fields[moofFieldIDs.SampleSizes]
+	_, hasSampleSizes := fields[moofLocmafIDs.SampleSizes]
 	require.True(t, hasSampleSizes)
 }
 
@@ -212,15 +212,15 @@ func TestDecompressMoofDefaultsMissingCompositionOffsetsToZero(t *testing.T) {
 	track, moov := loadVideoTrack(t)
 	object, _ := mustCompressedObject(t, track, 0, 0, 2, &MoofDeltaCompressor{})
 
-	parsedObject, err := parseCompressedCMAFObject(object)
+	parsedObject, err := parseLocmafObject(object)
 	require.NoError(t, err)
 
 	fields, err := separateFields(parsedObject.properties)
 	require.NoError(t, err)
-	delete(fields, moofFieldIDs.SampleCompositionTimeOffsets)
+	delete(fields, moofLocmafIDs.SampleCompositionTimeOffsets)
 
 	modifiedObject := append(
-		createSizedProperty(parsedObject.headerID, encodeFields(fields)),
+		createSizedLocmafProperty(parsedObject.headerID, encodeFields(fields)),
 		parsedObject.mdatPayload...,
 	)
 

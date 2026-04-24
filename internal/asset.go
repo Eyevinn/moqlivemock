@@ -545,12 +545,12 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				if err != nil {
 					return nil, fmt.Errorf("could not generate init data for track %s: %w", ct.Name, err)
 				}
-				if packaging == "compressed-cmaf" {
+				if packaging == "locmaf" {
 					compressed, err := CompressMoov(ct.SpecData.GetInit().Moov)
 					if err != nil {
 						return nil, fmt.Errorf("could not compress init data for track %s: %w", ct.Name, err)
 					}
-					data = createSizedProperty(MoovHeader, compressed)
+					data = createSizedLocmafProperty(MoovHeader, compressed)
 				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
@@ -889,13 +889,13 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 	return sw.Bytes(), nil
 }
 
-// GenCompressedCMAFChunk creates a compressed CMAF chunk consisting of endNr-startNr samples.
+// GenLocmafChunk creates a locmaf chunk consisting of endNr-startNr samples.
 // The number is 0-based relative to the UNIX epoch.
 // Therefore nr is translated into data for the time interval
 // [nr*d.sampleDur, (nr+1)*d.sampleDur].
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
-func (t *ContentTrack) GenCompressedCMAFChunk(chunkNr uint32, startNr, endNr uint64,
+func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 	compressor MoofDeltaCompressor) ([]byte, error) {
 
 	f, err := t.createFragment(chunkNr, startNr, endNr)
