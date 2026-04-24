@@ -96,6 +96,34 @@ func TestGenMoQStreams(t *testing.T) {
 	}
 }
 
+func TestCalcLOCGroupRange(t *testing.T) {
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+
+	video := asset.GetTrackByName("video_400kbps_avc")
+	require.NotNil(t, video)
+	// video_400kbps_avc: 25 fps => 25 samples per 1s group.
+	start, end := CalcLOCGroupRange(video, 0, 1000)
+	require.Equal(t, uint64(0), start)
+	require.Equal(t, uint64(25), end)
+
+	// Group 10 starts 10s in.
+	start10, end10 := CalcLOCGroupRange(video, 10, 1000)
+	require.Equal(t, uint64(250), start10)
+	require.Equal(t, uint64(275), end10)
+	require.Equal(t, end-start, end10-start10, "group size should be constant")
+
+	// AAC audio at 48000/1024 samples/sec => ~46.875 frames per 1s group.
+	// Two consecutive groups must together cover >= 2s of audio.
+	audio := asset.GetTrackByName("audio_monotonic_128kbps_aac")
+	require.NotNil(t, audio)
+	aStart0, aEnd0 := CalcLOCGroupRange(audio, 0, 1000)
+	aStart1, aEnd1 := CalcLOCGroupRange(audio, 1, 1000)
+	require.Equal(t, aEnd0, aStart1, "LOC audio groups should be contiguous")
+	require.GreaterOrEqual(t, aEnd1-aStart0, uint64(93), "2s of AAC ≈ 93.75 frames")
+}
+
 func TestWriteMoQGroupLive(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
