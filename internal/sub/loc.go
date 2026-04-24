@@ -7,8 +7,26 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/aac"
 )
+
+// LOC property IDs from draft-ietf-moq-loc-02 §2.3.1.
+const (
+	locPropTimestamp = 0x06
+)
+
+// locTimestampMicros returns the LOC Timestamp (ID 0x06) from the object's
+// extension headers, interpreted as microseconds since the Unix epoch
+// (the default when no Timescale property is present, per LOC-02 §2.3.1.1).
+func locTimestampMicros(headers moqtransport.KVPList) (uint64, bool) {
+	for _, kv := range headers {
+		if kv.Type == locPropTimestamp {
+			return kv.ValueVarInt, true
+		}
+	}
+	return 0, false
+}
 
 // annexBStartCode is the 4-byte AnnexB start code used in H.264 bitstreams.
 var annexBStartCode = []byte{0x00, 0x00, 0x00, 0x01}

@@ -51,45 +51,11 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 	return mq, nil
 }
 
-// GenLOCGroup generates a MoQGroup with raw LOC payloads (one frame per object).
-// For AVC video, SPS+PPS NALUs are prepended to IDR (sync) frames.
-// For AAC/Opus audio, the raw sample data is used as-is.
-func GenLOCGroup(track *ContentTrack, groupNr uint64, constantDurMS uint32) (*MoQGroup, error) {
-	startNr, endNr := calcMoQGroup(track, groupNr, constantDurMS)
-	startTime := startNr * uint64(track.SampleDur)
-	endTime := endNr * uint64(track.SampleDur)
-	mq := &MoQGroup{
-		id:         uint32(groupNr),
-		startTime:  startTime,
-		endTime:    endTime,
-		startNr:    startNr,
-		endNr:      endNr,
-		MoQObjects: make([]MoQObject, 0, endNr-startNr),
-	}
-
-	// For AVC video, get the video config (SPS+PPS) to prepend to IDR frames
-	var videoConfig []byte
-	if avcData, ok := track.SpecData.(*AVCData); ok {
-		videoConfig = avcData.GenLOCVideoConfig()
-	}
-
-	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
-		_, origNr := track.CalcSample(sampleNr)
-		sample := track.Samples[origNr]
-
-		var payload []byte
-		if videoConfig != nil && sample.IsSync() {
-			// Prepend SPS+PPS to IDR frames for AVC LOC
-			payload = make([]byte, 0, len(videoConfig)+len(sample.Data))
-			payload = append(payload, videoConfig...)
-			payload = append(payload, sample.Data...)
-		} else {
-			// Audio or non-IDR video: raw sample data
-			payload = sample.Data
-		}
-		mq.MoQObjects = append(mq.MoQObjects, payload)
-	}
-	return mq, nil
+// CalcLOCGroupRange returns the [startNr, endNr) sample range for the
+// LOC-packaged group with the given group number, for a track whose
+// groups have an average duration of constantDurMS milliseconds.
+func CalcLOCGroupRange(track *ContentTrack, groupNr uint64, constantDurMS uint32) (startNr, endNr uint64) {
+	return calcMoQGroup(track, groupNr, constantDurMS)
 }
 
 func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
