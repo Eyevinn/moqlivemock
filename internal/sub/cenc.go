@@ -18,7 +18,7 @@ import (
 type CENC struct {
 	Key           []byte
 	DecryptInfo   map[string]mp4.DecryptInfo // keyed by track name
-	ProtectedMoov map[string]*mp4.MoovBox    // keyed by track name for compressed-cmaf rebuild
+	ProtectedMoov map[string]*mp4.MoovBox    // keyed by track name for locmaf rebuild
 }
 
 type clearKeyRequest struct {
@@ -70,23 +70,23 @@ func (h *Handler) decryptInit(track *internal.Track) error {
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode init data: %w", err)
 	}
-	if track.Packaging == "compressed-cmaf" {
+	if track.Packaging == "locmaf" {
 		headerID, n := binary.Varint(initDataBytes)
 		if n <= 0 {
-			return fmt.Errorf("failed to parse protected init: invalid compressed CMAF init header")
+			return fmt.Errorf("failed to parse protected init: invalid locmaf init header")
 		}
 		pos := n
 
 		locPayloadLength, n := binary.Varint(initDataBytes[pos:])
 		if n <= 0 {
-			return fmt.Errorf("failed to parse protected init: invalid compressed CMAF init payload length")
+			return fmt.Errorf("failed to parse protected init: invalid locmaf init payload length")
 		}
 		pos += n
 		if headerID != internal.MoovHeader {
-			return fmt.Errorf("failed to parse protected init: unsupported compressed CMAF init header %d", headerID)
+			return fmt.Errorf("failed to parse protected init: unsupported locmaf init header %d", headerID)
 		}
 		if locPayloadLength < 0 || pos+int(locPayloadLength) > len(initDataBytes) {
-			return fmt.Errorf("failed to parse protected init: compressed CMAF init payload exceeds object length")
+			return fmt.Errorf("failed to parse protected init: locmaf init payload exceeds object length")
 		}
 
 		protectedInit, err := internal.DecompressInit(initDataBytes[pos:pos+int(locPayloadLength)], *track)

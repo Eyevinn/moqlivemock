@@ -434,7 +434,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		return nil, fmt.Errorf("track %s not found", trackname)
 	}
 	var moov *mp4.MoovBox
-	if track.Packaging == "compressed-cmaf" {
+	if track.Packaging == "locmaf" {
 		if h.cenc != nil && h.cenc.ProtectedMoov != nil && h.cenc.ProtectedMoov[trackname] != nil {
 			moov = h.cenc.ProtectedMoov[trackname]
 		} else {
@@ -479,10 +479,10 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 					"payloadLength", len(o.Payload))
 			}
 
-			if track.Packaging == "compressed-cmaf" {
-				o.Payload, err = decompressCompressedCMAFObject(o.Payload, uint32(o.GroupID), moov, &deltaDecompressor)
+			if track.Packaging == "locmaf" {
+				o.Payload, err = decompressLocmafObject(o.Payload, uint32(o.GroupID), moov, &deltaDecompressor)
 				if err != nil {
-					slog.Error("failed to decompress compressed CMAF object",
+					slog.Error("failed to decompress locmaf object",
 						"track", trackname,
 						"groupID", o.GroupID,
 						"objectID", o.ObjectID,
@@ -522,22 +522,22 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 	return cleanup, nil
 }
 
-func decompressCompressedCMAFObject(payload []byte, seqnum uint32,
+func decompressLocmafObject(payload []byte, seqnum uint32,
 	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
 
 	_, n := binary.Varint(payload)
 	if n <= 0 {
-		return nil, fmt.Errorf("invalid compressed CMAF header")
+		return nil, fmt.Errorf("invalid locmaf header")
 	}
 	pos := n
 
 	locPayloadLength, n := binary.Varint(payload[pos:])
 	if n <= 0 {
-		return nil, fmt.Errorf("invalid compressed CMAF LOC payload length")
+		return nil, fmt.Errorf("invalid locmaf payload length")
 	}
 	pos += n
 	if locPayloadLength < 0 || pos+int(locPayloadLength) > len(payload) {
-		return nil, fmt.Errorf("compressed CMAF LOC payload exceeds object length")
+		return nil, fmt.Errorf("locmaf payload exceeds object length")
 	}
 	mdatData := payload[pos+int(locPayloadLength):]
 

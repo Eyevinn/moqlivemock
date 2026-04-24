@@ -95,7 +95,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.StringVar(&opts.packaging, "packaging", "cmaf", "packaging type for media files, either \"cmaf\", "+
-		"\"compressed-cmaf\", or \"compressed-and-normal-cmaf\" if both types should be published in different namespaces")
+		"\"locmaf\", or \"cmaf-and-locmaf\" if both types should be published in different namespaces")
 	err := fs.Parse(args[1:])
 	return &opts, err
 }
@@ -188,15 +188,15 @@ func runServer(opts *options) error {
 
 	now := time.Now().UnixMilli()
 
-	packagings, err := selectPackagings(opts.packaging) //Compressed CMAF, normal CMAF, or both
+	packagings, err := selectPackagings(opts.packaging) //cmaf, locmaf, or both
 	if err != nil {
-		return nil
+		return err
 	}
 	var namespaces []pub.NamespaceEntry
 	for _, packaging := range packagings {
 		// Always create the clear namespace
-		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging), 
-								internal.ProtectionNone, now, packaging)
+		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging),
+			internal.ProtectionNone, now, packaging)
 		if err != nil {
 			return err
 		}
@@ -207,7 +207,7 @@ func runServer(opts *options) error {
 		// Add commercial DRM namespace if configured
 		if drm != nil {
 			drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/drm-%s", packaging, opts.scheme),
-									internal.ProtectionDRM, now, packaging)
+				internal.ProtectionDRM, now, packaging)
 			if err != nil {
 				return err
 			}
@@ -220,7 +220,7 @@ func runServer(opts *options) error {
 		// Add ClearKey/ECCP namespace if configured
 		if eccp != nil {
 			eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/eccp-%s", packaging, opts.scheme),
-									internal.ProtectionECCP, now, packaging)
+				internal.ProtectionECCP, now, packaging)
 			if err != nil {
 				return err
 			}
@@ -285,10 +285,10 @@ func selectPackagings(packaging string) ([]string, error) {
 	switch packaging {
 	case "cmaf":
 		return []string{"cmaf"}, nil
-	case "compressed-cmaf":
-		return []string{"compressed-cmaf"}, nil
-	case "compressed-and-normal-cmaf":
-		return []string{"cmaf", "compressed-cmaf"}, nil
+	case "locmaf":
+		return []string{"locmaf"}, nil
+	case "cmaf-and-locmaf":
+		return []string{"cmaf", "locmaf"}, nil
 	default:
 		return nil, fmt.Errorf("packaging option %s not recognized", packaging)
 	}

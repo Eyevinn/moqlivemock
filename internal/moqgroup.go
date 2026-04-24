@@ -53,10 +53,10 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 
 			}
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
-		case "compressed-cmaf":
-			chunk, err := track.GenCompressedCMAFChunk(uint32(groupNr), firstSample, endSample, deltaCompressor)
+		case "locmaf":
+			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, deltaCompressor)
 			if err != nil {
-				return nil, fmt.Errorf("failed to generate compressed CMAF chunk for group %d, samples %d-%d: %w",
+				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
 			}
 			mq.MoQObjects = append(mq.MoQObjects, chunk)

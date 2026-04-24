@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDecompressCompressedCMAFObjectRoundTrip(t *testing.T) {
+func TestDecompressLocmafObjectRoundTrip(t *testing.T) {
 	asset, err := internal.LoadAsset(filepath.Join("..", "..", "assets", "test10s"), 1, 1)
 	require.NoError(t, err)
 
@@ -23,14 +23,14 @@ func TestDecompressCompressedCMAFObjectRoundTrip(t *testing.T) {
 	require.NotNil(t, track)
 
 	var compressor internal.MoofDeltaCompressor
-	compressed, err := track.GenCompressedCMAFChunk(0, 0, 1, compressor)
+	compressed, err := track.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
 	expected, err := track.GenCMAFChunk(0, 0, 1)
 	require.NoError(t, err)
 
 	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressCompressedCMAFObject(compressed, 0, track.SpecData.GetInit().Moov, &decompressor)
+	got, err := decompressLocmafObject(compressed, 0, track.SpecData.GetInit().Moov, &decompressor)
 	require.NoError(t, err)
 
 	expectedMoof, expectedMdat := decodeFragment(t, expected)
@@ -45,7 +45,7 @@ func TestDecompressCompressedCMAFObjectRoundTrip(t *testing.T) {
 	require.Equal(t, expectedMdat.Data, gotMdat.Data)
 }
 
-func TestDecompressCompressedEncryptedAudioRoundTrip(t *testing.T) {
+func TestDecompressLocmafEncryptedAudioRoundTrip(t *testing.T) {
 	const keyStr = "40112233445566778899aabbccddeeff"
 
 	eccp, err := internal.ParseCENCflags(
@@ -71,11 +71,11 @@ func TestDecompressCompressedEncryptedAudioRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	var compressor internal.MoofDeltaCompressor
-	compressed, err := protectedTrack.GenCompressedCMAFChunk(0, 0, 1, compressor)
+	compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
 	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressCompressedCMAFObject(compressed, 0, protectedTrack.SpecData.GetInit().Moov, &decompressor)
+	got, err := decompressLocmafObject(compressed, 0, protectedTrack.SpecData.GetInit().Moov, &decompressor)
 	require.NoError(t, err)
 
 	key, err := mp4.UnpackKey(keyStr)
@@ -162,7 +162,7 @@ func TestDecryptInitUpdatesCatalogTrack(t *testing.T) {
 	require.Equal(t, "avc1", f.Init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children[0].Type())
 }
 
-func TestDecryptInitKeepsProtectedMoovForCompressedEncryptedAudio(t *testing.T) {
+func TestDecryptInitKeepsProtectedMoovForLocmafEncryptedAudio(t *testing.T) {
 	const (
 		kidStr = "39112233445566778899aabbccddeeff"
 		keyStr = "40112233445566778899aabbccddeeff"
@@ -189,7 +189,7 @@ func TestDecryptInitKeepsProtectedMoovForCompressedEncryptedAudio(t *testing.T) 
 	asset, err := internal.LoadAssetWithProtection(filepath.Join("..", "..", "assets", "test10s"), 1, 1, nil, eccp)
 	require.NoError(t, err)
 
-	catalog, err := asset.GenCMAFCatalogEntry("compressed-cmaf/eccp-cbcs", internal.ProtectionECCP, 0, "compressed-cmaf")
+	catalog, err := asset.GenCMAFCatalogEntry("locmaf/eccp-cbcs", internal.ProtectionECCP, 0, "locmaf")
 	require.NoError(t, err)
 
 	var track *internal.Track
@@ -213,11 +213,11 @@ func TestDecryptInitKeepsProtectedMoovForCompressedEncryptedAudio(t *testing.T) 
 	protectedTrack := asset.GetTrackByName(track.Name)
 	require.NotNil(t, protectedTrack)
 	var compressor internal.MoofDeltaCompressor
-	compressed, err := protectedTrack.GenCompressedCMAFChunk(0, 0, 1, compressor)
+	compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
 	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressCompressedCMAFObject(compressed, 0, h.cenc.ProtectedMoov[track.Name], &decompressor)
+	got, err := decompressLocmafObject(compressed, 0, h.cenc.ProtectedMoov[track.Name], &decompressor)
 	require.NoError(t, err)
 
 	key, err := mp4.UnpackKey(keyStr)
