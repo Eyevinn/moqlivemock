@@ -322,14 +322,33 @@ func PublishTrack(ctx context.Context, publisher moqtransport.Publisher, asset *
 	}
 }
 
-// PublishLOCTrack publishes LOC media track data (raw frames, one per object) in MoQ groups,
-// pacing delivery to wall-clock time.
+// LOC extension header property IDs from draft-ietf-moq-loc-02 §2.3.1.
+const (
+	locPropTimestamp = 0x06 // vi64: microseconds since Unix epoch when no Timescale is present
+)
+
+// PublishLOCTrack publishes LOC media track data (one raw frame per object) in MoQ groups,
+// pacing delivery to wall-clock time. Each object carries a LOC Timestamp property
+// (draft-ietf-moq-loc-02 §2.3.1.1) with the sample presentation time in microseconds
+// since the Unix epoch.
 func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
 	ct := asset.GetTrackByName(trackName)
 	if ct == nil {
 		slog.Error("track not found", "track", trackName)
 		return
 	}
+	timebase := uint64(ct.TimeScale)
+	sampleDur := uint64(ct.SampleDur)
+	if timebase == 0 || sampleDur == 0 {
+		slog.Error("LOC: invalid track timing", "track", trackName, "timescale", timebase, "sampleDur", sampleDur)
+		return
+	}
+
+	var videoConfig []byte
+	if avcData, ok := ct.SpecData.(*internal.AVCData); ok {
+		videoConfig = avcData.GenLOCVideoConfig()
+	}
+
 	now := time.Now().UnixMilli()
 	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
 	groupNr := currGroupNr + 1 // Start stream on next group
@@ -343,23 +362,58 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 			slog.Error("failed to open subgroup", "error", err)
 			return
 		}
-		mg, err := internal.GenLOCGroup(ct, groupNr, internal.MoqGroupDurMS)
-		if err != nil {
-			slog.Error("failed to generate LOC group", "track", ct.Name, "group", groupNr, "error", err)
-			return
+		startNr, endNr := internal.CalcLOCGroupRange(ct, groupNr, internal.MoqGroupDurMS)
+		slog.Info("writing LOC group", "track", ct.Name, "group", groupNr, "objects", endNr-startNr)
+		objectID := uint64(0)
+		for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
+			if ctx.Err() != nil {
+				_ = sg.Close()
+				return
+			}
+			_, origNr := ct.CalcSample(sampleNr)
+			sample := ct.Samples[origNr]
+
+			sampleTime := sampleNr * sampleDur
+			objTimeMS := int64(sampleTime * 1000 / timebase)
+			waitMS := objTimeMS - time.Now().UnixMilli()
+			if waitMS > 0 {
+				select {
+				case <-ctx.Done():
+					_ = sg.Close()
+					return
+				case <-time.After(time.Duration(waitMS) * time.Millisecond):
+				}
+			}
+
+			var payload []byte
+			if videoConfig != nil && sample.IsSync() {
+				payload = make([]byte, 0, len(videoConfig)+len(sample.Data))
+				payload = append(payload, videoConfig...)
+				payload = append(payload, sample.Data...)
+			} else {
+				payload = sample.Data
+			}
+
+			// Compute sampleTime * 1_000_000 / timebase without uint64 overflow.
+			// sampleTime can reach ~1.8e15 for wall-clock-anchored live streams, so a
+			// naive multiply overflows; split into quotient and fractional microseconds.
+			timestampUs := (sampleTime/timebase)*1_000_000 + (sampleTime%timebase)*1_000_000/timebase
+			headers := moqtransport.KVPList{
+				{Type: locPropTimestamp, ValueVarInt: timestampUs},
+			}
+			if _, err := sg.WriteObjectWithHeaders(objectID, headers, payload); err != nil {
+				slog.Error("failed to write LOC object", "track", ct.Name, "group", groupNr,
+					"object", objectID, "error", err)
+				_ = sg.Close()
+				return
+			}
+			objectID++
 		}
-		slog.Info("writing LOC group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
-		err = internal.WriteMoQGroup(ctx, ct, mg, sg.WriteObject)
-		if err != nil {
-			slog.Error("failed to write LOC group", "error", err)
-			return
-		}
-		err = sg.Close()
-		if err != nil {
+		if err := sg.Close(); err != nil {
 			slog.Error("failed to close subgroup", "error", err)
 			return
 		}
-		slog.Debug("published LOC group", "track", ct.Name, "group", groupNr, "objects", len(mg.MoQObjects))
+		slog.Debug("published LOC group", "track", ct.Name, "group", groupNr, "objects", objectID)
 		groupNr++
 	}
 }

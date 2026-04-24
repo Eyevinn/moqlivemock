@@ -497,19 +497,30 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 				}
 				return
 			}
+			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
 			if o.ObjectID == 0 {
-				slog.Info("group start",
+				attrs := []any{
 					"track", trackname,
 					"groupID", o.GroupID,
 					"subGroupID", o.SubGroupID,
-					"payloadLength", len(o.Payload))
+					"payloadLength", len(o.Payload),
+				}
+				if hasLOCTs {
+					attrs = append(attrs, "locTimestampUs", locTsUs)
+				}
+				slog.Info("group start", attrs...)
 			} else {
-				slog.Debug("object",
+				attrs := []any{
 					"track", trackname,
 					"objectID", o.ObjectID,
 					"groupID", o.GroupID,
 					"subGroupID", o.SubGroupID,
-					"payloadLength", len(o.Payload))
+					"payloadLength", len(o.Payload),
+				}
+				if hasLOCTs {
+					attrs = append(attrs, "locTimestampUs", locTsUs)
+				}
+				slog.Debug("object", attrs...)
 			}
 			if h.cenc != nil {
 				o.Payload, err = h.decryptPayload(o.Payload, trackname)
