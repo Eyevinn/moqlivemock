@@ -196,11 +196,11 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	require.NotEqual(t, videoInitBefore, protectedVideoInit, "protected track should have modified init data")
 }
 
-func TestCompressedCMAFCatalogUsesCompressedInitData(t *testing.T) {
+func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 
-	cat, err := asset.GenCMAFCatalogEntry("compressed-cmaf/clear", ProtectionNone, 1234567890000, "compressed-cmaf")
+	cat, err := asset.GenCMAFCatalogEntry("locmaf/clear", ProtectionNone, 1234567890000, "locmaf")
 	require.NoError(t, err)
 	require.NotEmpty(t, cat.Tracks)
 
@@ -212,24 +212,24 @@ func TestCompressedCMAFCatalogUsesCompressedInitData(t *testing.T) {
 		}
 	}
 	require.NotNil(t, videoTrack)
-	require.Equal(t, "compressed-cmaf", videoTrack.Packaging)
+	require.Equal(t, "locmaf", videoTrack.Packaging)
 	require.NotEmpty(t, videoTrack.InitData)
 
-	compressedInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
+	locmafInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
 	require.NoError(t, err)
 
-	headerID, n := binary.Varint(compressedInit)
+	headerID, n := binary.Varint(locmafInit)
 	require.Greater(t, n, 0)
 	require.Equal(t, int64(MoovHeader), headerID)
 
 	pos := 0
-	_, n = binary.Varint(compressedInit[pos:])
+	_, n = binary.Varint(locmafInit[pos:])
 	pos += n
-	locPayloadLength, n := binary.Varint(compressedInit[pos:])
+	locPayloadLength, n := binary.Varint(locmafInit[pos:])
 	pos += n
 	require.Greater(t, n, 0)
-	require.LessOrEqual(t, pos+int(locPayloadLength), len(compressedInit))
-	locPayload := compressedInit[pos : pos+int(locPayloadLength)]
+	require.LessOrEqual(t, pos+int(locPayloadLength), len(locmafInit))
+	locPayload := locmafInit[pos : pos+int(locPayloadLength)]
 
 	timescale := *videoTrack.Timescale
 	width := *videoTrack.Width
