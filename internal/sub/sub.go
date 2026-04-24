@@ -35,9 +35,10 @@ type Handler struct {
 	Discover     bool   // Discovery mode: list namespaces and exit
 	CatalogTrack string // Catalog track name (default "catalog")
 
-	catalog *internal.Catalog
-	mux     *CmafMux
-	cenc    *CENC
+	catalog    *internal.Catalog
+	mux        *CmafMux
+	cenc       *CENC
+	locWriters map[string]interface{ Write([]byte) error } // LOC output writers keyed by media type
 }
 
 // RunWithConn sets up the mux (if Outs["mux"] is set) and runs the subscriber
@@ -52,7 +53,11 @@ func (h *Handler) RunWithConn(ctx context.Context, conn moqtransport.Connection)
 	if h.Discover {
 		return h.runDiscover(ctx, conn)
 	}
-	h.handle(ctx, conn)
+	if IsMoqMINamespace(h.Namespace) {
+		h.handleMoqMI(ctx, conn)
+	} else {
+		h.handle(ctx, conn)
+	}
 	<-ctx.Done()
 	slog.Info("end of RunWithConn")
 	return ctx.Err()
@@ -115,14 +120,23 @@ func (h *Handler) getSubscribeHandler() moqtransport.SubscribeHandler {
 		})
 }
 
-func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
+// startSession creates and runs a MoQ subscriber session on the given connection,
+// returning the running session on success.
+func (h *Handler) startSession(conn moqtransport.Connection) (*moqtransport.Session, error) {
 	session := &moqtransport.Session{
 		Handler:             h.getHandler(),
 		SubscribeHandler:    h.getSubscribeHandler(),
 		InitialMaxRequestID: initialMaxRequestID,
 		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
-	err := session.Run(conn)
+	if err := session.Run(conn); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
+	session, err := h.startSession(conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
@@ -148,7 +162,11 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 	videoTrack := ""
 	audioTrack := ""
 	subsTrack := ""
+	isLOC := false
 	for _, track := range h.catalog.Tracks {
+		if track.Packaging == "loc" {
+			isLOC = true
+		}
 		// If track is encrypted, the InitData needs to be adjusted
 		if len(track.ContentProtectionRefIDs) > 0 {
 			if h.cenc == nil {
@@ -173,16 +191,27 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			}
 
 			if videoTrack == track.Name {
-				if h.Outs["video"] != nil {
-					err = unpackWrite(track.InitData, h.Outs["video"])
-					if err != nil {
-						slog.Error("failed to write init data", "error", err)
+				if track.Packaging == "loc" {
+					// LOC: set up AnnexB video writer
+					if h.Outs["video"] != nil {
+						h.initLOCWriter("video", &LOCVideoWriter{W: h.Outs["video"]})
 					}
-				}
-				if h.mux != nil {
-					err = h.mux.AddInit(track.InitData, "video")
-					if err != nil {
-						slog.Error("failed to add init data", "error", err)
+					if h.mux != nil {
+						slog.Warn("LOC-to-fMP4 mux not supported, use -videoout/-audioout for LOC")
+					}
+				} else {
+					// CMAF: write init segment and set up mux
+					if h.Outs["video"] != nil {
+						err = unpackWrite(track.InitData, h.Outs["video"])
+						if err != nil {
+							slog.Error("failed to write init data", "error", err)
+						}
+					}
+					if h.mux != nil {
+						err = h.mux.AddInit(track.InitData, "video")
+						if err != nil {
+							slog.Error("failed to add init data", "error", err)
+						}
 					}
 				}
 			}
@@ -200,16 +229,41 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			}
 
 			if audioTrack == track.Name {
-				if h.Outs["audio"] != nil {
-					err = unpackWrite(track.InitData, h.Outs["audio"])
-					if err != nil {
-						slog.Error("failed to write init data", "error", err)
+				if track.Packaging == "loc" {
+					// LOC: set up audio writer based on codec
+					if h.Outs["audio"] != nil {
+						if strings.HasPrefix(track.Codec, "mp4a") {
+							sr := 0
+							if track.SampleRate != nil {
+								sr = *track.SampleRate
+							}
+							aacW, aacErr := NewLOCAACWriter(h.Outs["audio"], track.Codec, sr, track.ChannelConfig)
+							if aacErr != nil {
+								slog.Error("failed to create LOC AAC writer", "error", aacErr)
+							} else {
+								h.initLOCWriter("audio", aacW)
+							}
+						} else {
+							// Opus or other: raw output
+							h.initLOCWriter("audio", &LOCOpusWriter{W: h.Outs["audio"]})
+						}
 					}
-				}
-				if h.mux != nil {
-					err = h.mux.AddInit(track.InitData, "audio")
-					if err != nil {
-						slog.Error("failed to add init data", "error", err)
+					if h.mux != nil {
+						slog.Warn("LOC-to-fMP4 mux not supported, use -videoout/-audioout for LOC")
+					}
+				} else {
+					// CMAF: write init segment and set up mux
+					if h.Outs["audio"] != nil {
+						err = unpackWrite(track.InitData, h.Outs["audio"])
+						if err != nil {
+							slog.Error("failed to write init data", "error", err)
+						}
+					}
+					if h.mux != nil {
+						err = h.mux.AddInit(track.InitData, "audio")
+						if err != nil {
+							slog.Error("failed to add init data", "error", err)
+						}
 					}
 				}
 			}
@@ -233,6 +287,9 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 				}
 			}
 		}
+	}
+	if isLOC {
+		slog.Info("catalog uses LOC packaging")
 	}
 	if videoTrack != "" {
 		_, err := h.subscribeAndRead(ctx, session, h.Namespace, videoTrack, "video")
@@ -440,19 +497,30 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 				}
 				return
 			}
+			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
 			if o.ObjectID == 0 {
-				slog.Info("group start",
+				attrs := []any{
 					"track", trackname,
 					"groupID", o.GroupID,
 					"subGroupID", o.SubGroupID,
-					"payloadLength", len(o.Payload))
+					"payloadLength", len(o.Payload),
+				}
+				if hasLOCTs {
+					attrs = append(attrs, "locTimestampUs", locTsUs)
+				}
+				slog.Info("group start", attrs...)
 			} else {
-				slog.Debug("object",
+				attrs := []any{
 					"track", trackname,
 					"objectID", o.ObjectID,
 					"groupID", o.GroupID,
 					"subGroupID", o.SubGroupID,
-					"payloadLength", len(o.Payload))
+					"payloadLength", len(o.Payload),
+				}
+				if hasLOCTs {
+					attrs = append(attrs, "locTimestampUs", locTsUs)
+				}
+				slog.Debug("object", attrs...)
 			}
 			if h.cenc != nil {
 				o.Payload, err = h.decryptPayload(o.Payload, trackname)
@@ -462,18 +530,27 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 				}
 			}
 
-			if h.mux != nil {
-				err = h.mux.MuxSample(o.Payload, mediaType)
+			// Route through LOC writers if available, otherwise CMAF path
+			if lw, ok := h.locWriters[mediaType]; ok {
+				err = lw.Write(o.Payload)
 				if err != nil {
-					slog.Error("failed to mux sample", "error", err)
+					slog.Error("failed to write LOC sample", "error", err)
 					return
 				}
-			}
-			if h.Outs[mediaType] != nil {
-				_, err = h.Outs[mediaType].Write(o.Payload)
-				if err != nil {
-					slog.Error("failed to write sample", "error", err)
-					return
+			} else {
+				if h.mux != nil {
+					err = h.mux.MuxSample(o.Payload, mediaType)
+					if err != nil {
+						slog.Error("failed to mux sample", "error", err)
+						return
+					}
+				}
+				if h.Outs[mediaType] != nil {
+					_, err = h.Outs[mediaType].Write(o.Payload)
+					if err != nil {
+						slog.Error("failed to write sample", "error", err)
+						return
+					}
 				}
 			}
 		}
@@ -483,6 +560,13 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		return rs.Close()
 	}
 	return cleanup, nil
+}
+
+func (h *Handler) initLOCWriter(mediaType string, w interface{ Write([]byte) error }) {
+	if h.locWriters == nil {
+		h.locWriters = make(map[string]interface{ Write([]byte) error })
+	}
+	h.locWriters[mediaType] = w
 }
 
 func unpackWrite(initData string, w io.Writer) error {

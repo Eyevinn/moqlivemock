@@ -185,13 +185,38 @@ func runServer(opts *options) error {
 
 	now := time.Now().UnixMilli()
 
-	// Always create the clear namespace
+	// Always create the clear CMSF namespace
 	clearCatalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, now)
 	if err != nil {
 		return err
 	}
 	namespaces := []pub.NamespaceEntry{
-		{Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog},
+		{Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog, Packaging: "cmaf"},
+	}
+
+	// Always create the LOC/MSF namespace (AVC + AAC/Opus, clear only)
+	locCatalog, err := asset.GenLOCCatalogEntry(now)
+	if err != nil {
+		return err
+	}
+	if len(locCatalog.Tracks) > 0 {
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace: []string{"msf/clear"},
+			Catalog:   locCatalog,
+			Packaging: "loc",
+		})
+	}
+
+	// Add moq-mi namespace (catalogless; fixed track names video0/audio0)
+	// if the asset has compatible clear AVC video and AAC-LC / Opus audio.
+	if mmTracks, mmErr := pub.BuildMoqMITrackMap(asset); mmErr != nil {
+		slog.Info("skipping moq-mi namespace", "reason", mmErr)
+	} else {
+		namespaces = append(namespaces, pub.NamespaceEntry{
+			Namespace:   []string{"moq-mi/clear"},
+			Packaging:   "moqmi",
+			MoqMITracks: mmTracks,
+		})
 	}
 
 	// Add commercial DRM namespace if configured
@@ -203,6 +228,7 @@ func runServer(opts *options) error {
 		namespaces = append(namespaces, pub.NamespaceEntry{
 			Namespace: []string{"cmsf/drm-" + opts.scheme},
 			Catalog:   drmCatalog,
+			Packaging: "cmaf",
 		})
 	}
 
@@ -215,12 +241,18 @@ func runServer(opts *options) error {
 		namespaces = append(namespaces, pub.NamespaceEntry{
 			Namespace: []string{"cmsf/eccp-" + opts.scheme},
 			Catalog:   eccpCatalog,
+			Packaging: "cmaf",
 		})
 	}
 
 	for _, ns := range namespaces {
+		tracks := 0
+		if ns.Catalog != nil {
+			tracks = len(ns.Catalog.Tracks)
+		}
 		slog.Info("configured namespace", "namespace", ns.Namespace,
-			"tracks", len(ns.Catalog.Tracks))
+			"packaging", ns.Packaging, "tracks", tracks,
+			"moqmiTracks", len(ns.MoqMITracks))
 	}
 
 	var logfh io.Writer

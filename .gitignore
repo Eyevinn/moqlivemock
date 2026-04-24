@@ -38,3 +38,29 @@ findings/
 
 # Certificates
 *.pem
+
+# Compiled binaries at repo root
+/mlmpub
+/mlmsub
+
+# Local dev helper run scripts
+cmd/mlmpub/run_mlmpub.sh
+cmd/mlmsub/run_mlmsub.sh
+cmd/mlmsub/moqtail_call.sh
+
+# Local test artifacts under cmd/mlmsub
+cmd/mlmsub/*.mp4
+cmd/mlmsub/*.m4a
+cmd/mlmsub/*.m4v
+cmd/mlmsub/cat.json
+cmd/mlmsub/moqtail_catalog.json
+cmd/mlmsub/output.bin
+
+# Local test media under internal/
+internal/*.mp4
+
+# Node artifacts
+package-lock.json
+
+# Python virtual environments
+venv/

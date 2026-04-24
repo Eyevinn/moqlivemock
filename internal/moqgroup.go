@@ -51,6 +51,13 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int, constantD
 	return mq, nil
 }
 
+// CalcLOCGroupRange returns the [startNr, endNr) sample range for the
+// LOC-packaged group with the given group number, for a track whose
+// groups have an average duration of constantDurMS milliseconds.
+func CalcLOCGroupRange(track *ContentTrack, groupNr uint64, constantDurMS uint32) (startNr, endNr uint64) {
+	return calcMoQGroup(track, groupNr, constantDurMS)
+}
+
 func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
 	startTime := nr * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
 	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
