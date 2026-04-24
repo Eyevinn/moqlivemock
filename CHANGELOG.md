@@ -14,6 +14,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `-catalog-track` flag in mlmsub to configure catalog track name (e.g. `catalog.json` for moq-dev hang format)
 - Multi-element namespace support in mlmsub `-namespace` flag (space-separated, e.g. `"demo bbb"`)
 - Raw catalog payload logging on parse failure for debugging non-CMSF catalog formats
+- LOC namespace `msf/clear` in mlmpub: MSF catalog with `packaging=loc` per
+  [draft-mzanaty-moq-loc][loc], publishing AVC video (length-prefixed NALUs,
+  SPS/PPS prepended to IDR frames) and AAC/Opus audio as raw codec bitstream.
+  Each LOC object carries a `Timestamp` (ID 0x06) extension header in
+  microseconds since the Unix epoch
+- LOC subscriber support in mlmsub: reframes AVC (length-prefixed NALUs →
+  AnnexB) and AAC (raw frames → ADTS) for direct playback with ffplay.
+  Only AAC-LC (`mp4a.40.2`) is supported
+- moq-mi namespace `moq-mi/clear` in mlmpub: catalogless publishing per
+  [draft-cenzano-moq-media-interop][moq-mi] with fixed track names
+  `video0` (AVC) and `audio0` (AAC-LC preferred, Opus fallback). Each object
+  carries moqmi extension headers with codec metadata and (for video) the
+  AVCDecoderConfigurationRecord on the first object of each GOP
+- moq-mi subscriber support in mlmsub: subscribes to fixed track names,
+  parses moqmi extension headers, logs per-object metadata, and writes raw
+  payloads through unchanged
+- `CalcSample` exported on `ContentTrack` (previously unexported)
+- `GenAVCDecoderConfigurationRecord` and `GenLOCVideoConfig` on `AVCData`
+- `SampleRate` / `ChannelConfig` accessors on `AACData` and `OpusData`
+- Unit tests covering LOC/moq-mi writers, namespace detection, moqmi track
+  map building, LOC catalog generation, and AVC/AAC/Opus metadata helpers
+
+### Changed
+
+- Bumped moqtransport to v0.8.1 (moqmi extension header helpers)
+- LOC AAC writer now uses `mp4ff/aac.NewADTSHeader` instead of a local
+  implementation
 
 ## [0.7.0] - 2026-04-12
 
@@ -193,6 +220,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [msf-00]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/00/
+[loc]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
+[moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
 [moqtransport]: https://github.com/Eyevinn/moqtransport
