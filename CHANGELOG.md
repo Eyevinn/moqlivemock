@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped moqtransport to v0.8.1 (moqmi extension header helpers)
 - LOC AAC writer now uses `mp4ff/aac.NewADTSHeader` instead of a local
   implementation
+- mlmsub WebTransport client now advertises
+  `SETTINGS_WEBTRANSPORT_MAX_SESSIONS=1` (0xc671706a) on its HTTP/3 SETTINGS
+  frame so it can negotiate WT against deployed `web-transport-quinn`-backed
+  relays (Cloudflare's MoQ interop relay, Luke Curley's `cdn.moq.dev`,
+  Lorenzo Miniero's imquic relay) that require this on the client side.
+  Pulled in via a `replace` directive pointing at the patched
+  `github.com/Eyevinn/webtransport-go` (branch `feat/additional-settings`);
+  the replace can be dropped once an equivalent `AdditionalSettings` field
+  is upstreamed in `quic-go/webtransport-go`
 
 ## [0.7.0] - 2026-04-12
 
