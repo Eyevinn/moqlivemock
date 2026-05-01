@@ -3,7 +3,6 @@ package sub
 import (
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
+	"github.com/quic-go/quic-go/quicvarint"
 )
 
 const (
@@ -509,7 +509,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		}
 	}
 	go func() {
-		var deltaDecompressor internal.MoofDeltaDecompressor
+		deltaDecompressor := &internal.MoofDeltaDecompressor{}
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
@@ -521,7 +521,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
 			if o.ObjectID == 0 {
-				deltaDecompressor = internal.MoofDeltaDecompressor{}
+				deltaDecompressor = &internal.MoofDeltaDecompressor{}
 				attrs := []any{
 					"track", trackname,
 					"groupID", o.GroupID,
@@ -547,7 +547,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 
 			if track.Packaging == "locmaf" {
-				o.Payload, err = decompressLocmafObject(o.Payload, uint32(o.GroupID), moov, &deltaDecompressor)
+				o.Payload, err = decompressLocmafObject(o.Payload, uint32(o.GroupID), moov, deltaDecompressor)
 				if err != nil {
 					slog.Error("failed to decompress locmaf object",
 						"track", trackname,
@@ -608,18 +608,18 @@ func (h *Handler) initLOCWriter(mediaType string, w interface{ Write([]byte) err
 func decompressLocmafObject(payload []byte, seqnum uint32,
 	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
 
-	_, n := binary.Varint(payload)
-	if n <= 0 {
+	_, n, err := quicvarint.Parse(payload)
+	if err != nil {
 		return nil, fmt.Errorf("invalid locmaf header")
 	}
 	pos := n
 
-	locPayloadLength, n := binary.Varint(payload[pos:])
-	if n <= 0 {
+	locPayloadLength, n, err := quicvarint.Parse(payload[pos:])
+	if err != nil {
 		return nil, fmt.Errorf("invalid locmaf payload length")
 	}
 	pos += n
-	if locPayloadLength < 0 || pos+int(locPayloadLength) > len(payload) {
+	if pos+int(locPayloadLength) > len(payload) {
 		return nil, fmt.Errorf("locmaf payload exceeds object length")
 	}
 	mdatData := payload[pos+int(locPayloadLength):]

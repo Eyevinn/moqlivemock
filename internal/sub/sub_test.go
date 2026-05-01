@@ -22,15 +22,15 @@ func TestDecompressLocmafObjectRoundTrip(t *testing.T) {
 	track := asset.GetTrackByName("video_400kbps_avc")
 	require.NotNil(t, track)
 
-	var compressor internal.MoofDeltaCompressor
+	compressor := &internal.MoofDeltaCompressor{}
 	compressed, err := track.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
 	expected, err := track.GenCMAFChunk(0, 0, 1)
 	require.NoError(t, err)
 
-	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressLocmafObject(compressed, 0, track.SpecData.GetInit().Moov, &decompressor)
+	decompressor := &internal.MoofDeltaDecompressor{}
+	got, err := decompressLocmafObject(compressed, 0, track.SpecData.GetInit().Moov, decompressor)
 	require.NoError(t, err)
 
 	expectedMoof, expectedMdat := decodeFragment(t, expected)
@@ -70,12 +70,12 @@ func TestDecompressLocmafEncryptedAudioRoundTrip(t *testing.T) {
 	_, _, decryptInfo, err := internal.DecryptInit(protectedInit)
 	require.NoError(t, err)
 
-	var compressor internal.MoofDeltaCompressor
+	compressor := &internal.MoofDeltaCompressor{}
 	compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
-	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressLocmafObject(compressed, 0, protectedTrack.SpecData.GetInit().Moov, &decompressor)
+	decompressor := &internal.MoofDeltaDecompressor{}
+	got, err := decompressLocmafObject(compressed, 0, protectedTrack.SpecData.GetInit().Moov, decompressor)
 	require.NoError(t, err)
 
 	key, err := mp4.UnpackKey(keyStr)
@@ -212,12 +212,12 @@ func TestDecryptInitKeepsProtectedMoovForLocmafEncryptedAudio(t *testing.T) {
 
 	protectedTrack := asset.GetTrackByName(track.Name)
 	require.NotNil(t, protectedTrack)
-	var compressor internal.MoofDeltaCompressor
+	compressor := &internal.MoofDeltaCompressor{}
 	compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, compressor)
 	require.NoError(t, err)
 
-	var decompressor internal.MoofDeltaDecompressor
-	got, err := decompressLocmafObject(compressed, 0, h.cenc.ProtectedMoov[track.Name], &decompressor)
+	decompressor := &internal.MoofDeltaDecompressor{}
+	got, err := decompressLocmafObject(compressed, 0, h.cenc.ProtectedMoov[track.Name], decompressor)
 	require.NoError(t, err)
 
 	key, err := mp4.UnpackKey(keyStr)

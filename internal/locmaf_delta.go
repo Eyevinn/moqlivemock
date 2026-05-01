@@ -2,8 +2,8 @@ package internal
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
+	"math"
 
 	"github.com/Eyevinn/mp4ff/mp4"
 )
@@ -119,7 +119,7 @@ func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte,
 	var deletedFields []byte
 	for key := range previous {
 		if _, ok := current[key]; !ok {
-			deletedFields = binary.AppendVarint(deletedFields, int64(key))
+			deletedFields = appendVarint(deletedFields, uint64(key))
 		}
 	}
 	if len(deletedFields) > 0 {
@@ -157,28 +157,28 @@ func applyMoofDelta(previous, deltaFields map[locmafID][]byte) (map[locmafID][]b
 	return current, nil
 }
 
-//diffMoofFieldValue returns the difference between the current and previous field value.
+// diffMoofFieldValue returns the difference between the current and previous field value.
 func diffMoofFieldValue(id locmafID, current, previous []byte) ([]byte, error) {
 	switch moofDeltaValueKind(id) {
 	case moofDeltaScalar:
-		currentValue, err := decodeSingleVarint(current)
+		currentValue, err := readSingleMoofFieldValue(id, current)
 		if err != nil {
 			return nil, err
 		}
 		var previousValue int64
 		if len(previous) > 0 {
-			previousValue, err = decodeSingleVarint(previous)
+			previousValue, err = readSingleMoofFieldValue(id, previous)
 			if err != nil {
 				return nil, err
 			}
 		}
-		return binary.AppendVarint(nil, currentValue-previousValue), nil
+		return appendSignedVarint(nil, currentValue-previousValue), nil
 	case moofDeltaVarintList:
-		currentValues, err := readVarintBytes(current)
+		currentValues, err := readMoofFieldValues(id, current)
 		if err != nil {
 			return nil, err
 		}
-		previousValues, err := readVarintBytes(previous)
+		previousValues, err := readMoofFieldValues(id, previous)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +188,7 @@ func diffMoofFieldValue(id locmafID, current, previous []byte) ([]byte, error) {
 			if i < len(previousValues) {
 				previousValue = previousValues[i]
 			}
-			delta = binary.AppendVarint(delta, currentValue-previousValue)
+			delta = appendSignedVarint(delta, currentValue-previousValue)
 		}
 		return delta, nil
 	default:
@@ -196,28 +196,28 @@ func diffMoofFieldValue(id locmafID, current, previous []byte) ([]byte, error) {
 	}
 }
 
-//applyMoofFieldDelta returns the current value by summing the delta and previous field value.
+// applyMoofFieldDelta returns the current value by summing the delta and previous field value.
 func applyMoofFieldDelta(id locmafID, delta, previous []byte) ([]byte, error) {
 	switch moofDeltaValueKind(id) {
 	case moofDeltaScalar:
-		deltaValue, err := decodeSingleVarint(delta)
+		deltaValue, err := readSingleSignedDeltaValue(id, delta)
 		if err != nil {
 			return nil, err
 		}
 		var previousValue int64
 		if len(previous) > 0 {
-			previousValue, err = decodeSingleVarint(previous)
+			previousValue, err = readSingleMoofFieldValue(id, previous)
 			if err != nil {
 				return nil, err
 			}
 		}
-		return binary.AppendVarint(nil, previousValue+deltaValue), nil
+		return appendLocmafFieldValue(id, nil, previousValue+deltaValue)
 	case moofDeltaVarintList:
-		deltaValues, err := readVarintBytes(delta)
+		deltaValues, err := readSignedDeltaValues(id, delta)
 		if err != nil {
 			return nil, err
 		}
-		previousValues, err := readVarintBytes(previous)
+		previousValues, err := readMoofFieldValues(id, previous)
 		if err != nil {
 			return nil, err
 		}
@@ -227,7 +227,10 @@ func applyMoofFieldDelta(id locmafID, delta, previous []byte) ([]byte, error) {
 			if i < len(previousValues) {
 				previousValue = previousValues[i]
 			}
-			current = binary.AppendVarint(current, previousValue+deltaValue)
+			current, err = appendLocmafFieldValue(id, current, previousValue+deltaValue)
+			if err != nil {
+				return nil, err
+			}
 		}
 		return current, nil
 	default:
@@ -249,27 +252,62 @@ func moofDeltaValueKind(id locmafID) moofDeltaValueType {
 	return moofDeltaScalar
 }
 
-func decodeSingleVarint(value []byte) (int64, error) {
-	varint, n := binary.Varint(value)
-	if n <= 0 {
-		return 0, fmt.Errorf("invalid varint")
+func readSingleMoofFieldValue(id locmafID, value []byte) (int64, error) {
+	values, err := readMoofFieldValues(id, value)
+	if err != nil {
+		return 0, err
 	}
-	if n != len(value) {
-		return 0, fmt.Errorf("trailing bytes after varint")
+	if len(values) != 1 {
+		return 0, fmt.Errorf("expected single varint, got %d", len(values))
 	}
-	return varint, nil
+	return values[0], nil
 }
 
-func readVarintBytes(value []byte) ([]int64, error) {
-	var values []int64
-	pos := 0
-	for pos < len(value) {
-		varint, deltaPos := binary.Varint(value[pos:])
-		if deltaPos <= 0 {
-			return nil, fmt.Errorf("invalid varint")
+func readMoofFieldValues(id locmafID, value []byte) ([]int64, error) {
+	if id == moofLocmafIDs.SampleCompositionTimeOffsets {
+		values, _, err := readSignedVarintList(id, map[locmafID][]byte{id: value})
+		return values, err
+	}
+
+	unsignedValues, _, err := readVarintList(id, map[locmafID][]byte{id: value})
+	if err != nil {
+		return nil, err
+	}
+	values := make([]int64, 0, len(unsignedValues))
+	for _, value := range unsignedValues {
+		if value > math.MaxInt64 {
+			return nil, fmt.Errorf("varint overflows int64")
 		}
-		values = append(values, varint)
-		pos += deltaPos
+		values = append(values, int64(value))
 	}
 	return values, nil
+}
+
+func readSingleSignedDeltaValue(id locmafID, value []byte) (int64, error) {
+	values, err := readSignedDeltaValues(id, value)
+	if err != nil {
+		return 0, err
+	}
+	if len(values) != 1 {
+		return 0, fmt.Errorf("expected single delta varint, got %d", len(values))
+	}
+	return values[0], nil
+}
+
+func readSignedDeltaValues(id locmafID, value []byte) ([]int64, error) {
+	values, _, err := readSignedVarintList(id, map[locmafID][]byte{id: value})
+	return values, err
+}
+
+// appendLocmafFieldValue writes a reconstructed full locmaf field, not a delta field.
+// Delta fields are always signed varints, while full moof fields keep the encoding
+// used by CompressMoof and decompressMoofUsingFieldValues.
+func appendLocmafFieldValue(id locmafID, payload []byte, value int64) ([]byte, error) {
+	if id == moofLocmafIDs.SampleCompositionTimeOffsets {
+		return appendSignedVarint(payload, value), nil
+	}
+	if value < 0 {
+		return nil, fmt.Errorf("negative value for unsigned locmaf field")
+	}
+	return appendVarint(payload, uint64(value)), nil
 }
