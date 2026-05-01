@@ -896,7 +896,10 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 // This is calculated based on wrap-around given the loopDuration
 // of the asset.
 func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
-	compressor MoofDeltaCompressor) ([]byte, error) {
+	compressor *MoofDeltaCompressor) ([]byte, error) {
+	if compressor == nil {
+		return nil, fmt.Errorf("moof delta compressor is nil")
+	}
 
 	f, err := t.createFragment(chunkNr, startNr, endNr)
 	if err != nil {

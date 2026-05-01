@@ -40,7 +40,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 		endNr:      endNr,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
-	var deltaCompressor MoofDeltaCompressor
+	deltaCompressor := &MoofDeltaCompressor{}
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)

@@ -2,13 +2,13 @@ package internal
 
 import (
 	"encoding/base64"
-	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,16 +218,17 @@ func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
 	locmafInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
 	require.NoError(t, err)
 
-	headerID, n := binary.Varint(locmafInit)
-	require.Greater(t, n, 0)
-	require.Equal(t, int64(MoovHeader), headerID)
+	headerID, n, err := quicvarint.Parse(locmafInit)
+	require.NoError(t, err)
+	require.EqualValues(t, MoovHeader, headerID)
 
 	pos := 0
-	_, n = binary.Varint(locmafInit[pos:])
+	_, n, err = quicvarint.Parse(locmafInit[pos:])
+	require.NoError(t, err)
 	pos += n
-	locPayloadLength, n := binary.Varint(locmafInit[pos:])
+	locPayloadLength, n, err := quicvarint.Parse(locmafInit[pos:])
+	require.NoError(t, err)
 	pos += n
-	require.Greater(t, n, 0)
 	require.LessOrEqual(t, pos+int(locPayloadLength), len(locmafInit))
 	locPayload := locmafInit[pos : pos+int(locPayloadLength)]
 
