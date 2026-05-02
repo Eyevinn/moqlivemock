@@ -218,12 +218,12 @@ func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
 	locmafInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
 	require.NoError(t, err)
 
-	headerID, n, err := quicvarint.Parse(locmafInit)
+	headerID, _, err := quicvarint.Parse(locmafInit)
 	require.NoError(t, err)
 	require.EqualValues(t, MoovHeader, headerID)
 
 	pos := 0
-	_, n, err = quicvarint.Parse(locmafInit[pos:])
+	_, n, err := quicvarint.Parse(locmafInit[pos:])
 	require.NoError(t, err)
 	pos += n
 	locPayloadLength, n, err := quicvarint.Parse(locmafInit[pos:])

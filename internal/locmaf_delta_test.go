@@ -15,6 +15,14 @@ func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 	object0, moof0 := mustCompressedObject(t, track, 0, 0, 2, compressor)
 	object1, moof1 := mustCompressedObject(t, track, 1, 2, 4, compressor)
 
+	parsedObject1, err := parseLocmafObject(object1)
+	require.NoError(t, err)
+	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
+	deltaFields, err := separateFields(parsedObject1.properties)
+	require.NoError(t, err)
+	_, hasBaseMediaDecodeTime := deltaFields[moofLocmafIDs.BaseMediaDecodeTime]
+	require.False(t, hasBaseMediaDecodeTime)
+
 	decoder := &MoofDeltaDecompressor{}
 	rebuilt0, err := decoder.DecompressMoof(object0, 0, moov)
 	require.NoError(t, err)
@@ -56,12 +64,13 @@ func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	track, moov := loadVideoTrack(t)
 	compressor := &MoofDeltaCompressor{}
 	object0, moof := mustCompressedObject(t, track, 0, 0, 2, compressor)
-	object1, _ := mustCompressedObject(t, track, 0, 0, 2, compressor)
-
-	parsedObject1, err := parseLocmafObject(object1)
+	parsedObject0, err := parseLocmafObject(object0)
 	require.NoError(t, err)
-	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
-	require.Empty(t, parsedObject1.properties)
+
+	object1 := append(
+		createSizedLocmafProperty(MoofDeltaHeader, nil),
+		parsedObject0.mdatPayload...,
+	)
 
 	decoder := &MoofDeltaDecompressor{}
 	_, err = decoder.DecompressMoof(object0, 0, moov)
@@ -69,7 +78,11 @@ func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	rebuilt, err := decoder.DecompressMoof(object1, 1, moov)
 	require.NoError(t, err)
 
-	requireCompressedMoofEqual(t, moof, rebuilt, moov)
+	expectedBaseMediaDecodeTime := moof.Traf.Tfdt.BaseMediaDecodeTime()
+	for _, sample := range moof.Traf.Trun.Samples {
+		expectedBaseMediaDecodeTime += uint64(sample.Dur)
+	}
+	require.Equal(t, expectedBaseMediaDecodeTime, rebuilt.Traf.Tfdt.BaseMediaDecodeTime())
 }
 
 func TestMoofDeltaFieldsUseSignedVarints(t *testing.T) {
@@ -118,6 +131,24 @@ func TestMoofDeltaDeletedFieldsUseUnsignedVarints(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []uint64{uint64(moofLocmafIDs.DefaultSampleDuration)}, deletedFields)
+}
+
+func TestDeriveNextBaseMediaDecodeTimeUsesDefaultSampleDuration(t *testing.T) {
+	previous := map[locmafID][]byte{
+		moofLocmafIDs.BaseMediaDecodeTime: appendVarint(nil, 100),
+		moofLocmafIDs.SampleCount:         appendVarint(nil, 3),
+	}
+	moov := &mp4.MoovBox{
+		Mvex: &mp4.MvexBox{
+			Trex: &mp4.TrexBox{
+				DefaultSampleDuration: 40,
+			},
+		},
+	}
+
+	baseMediaDecodeTime, err := deriveNextBaseMediaDecodeTime(previous, moov)
+	require.NoError(t, err)
+	require.EqualValues(t, 220, baseMediaDecodeTime)
 }
 
 func loadVideoTrack(t *testing.T) (*ContentTrack, *mp4.MoovBox) {
