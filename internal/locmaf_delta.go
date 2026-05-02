@@ -80,7 +80,7 @@ func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID int64, data []by
 		if d.previous == nil {
 			return nil, fmt.Errorf("missing previous moof state for delta moof")
 		}
-		fieldValues, err = applyMoofDelta(d.previous, fieldValues)
+		fieldValues, err = applyMoofDelta(d.previous, fieldValues, moov)
 		if err != nil {
 			return nil, err
 		}
@@ -100,11 +100,15 @@ func cloneFieldValues(fields map[locmafID][]byte) map[locmafID][]byte {
 	return cloned
 }
 
-// diffMoofFields returns the difference in each field value as a map if the field value is not equal to the previous value.
+// diffMoofFields returns the difference in each field value
+// as a map if the field value is not equal to the previous value.
 func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte, error) {
 	deltaFields := make(map[locmafID][]byte)
 
 	for key, currentValue := range current {
+		if key == moofLocmafIDs.BaseMediaDecodeTime {
+			continue
+		}
 		previousValue := previous[key]
 		if bytes.Equal(currentValue, previousValue) {
 			continue
@@ -130,8 +134,13 @@ func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte,
 }
 
 // applyMoofDelta creates a current field value map by looking at the previous map, and the current delta map.
-func applyMoofDelta(previous, deltaFields map[locmafID][]byte) (map[locmafID][]byte, error) {
+func applyMoofDelta(previous, deltaFields map[locmafID][]byte, moov *mp4.MoovBox) (map[locmafID][]byte, error) {
 	current := cloneFieldValues(previous)
+	baseMediaDecodeTime, err := deriveNextBaseMediaDecodeTime(previous, moov)
+	if err != nil {
+		return nil, err
+	}
+	current[moofLocmafIDs.BaseMediaDecodeTime] = appendVarint(nil, baseMediaDecodeTime)
 
 	deletedFields, ok, err := readVarintList(moofDeltaDeletedLocmafIDs, deltaFields)
 	if err != nil {
@@ -155,6 +164,53 @@ func applyMoofDelta(previous, deltaFields map[locmafID][]byte) (map[locmafID][]b
 	}
 
 	return current, nil
+}
+
+func deriveNextBaseMediaDecodeTime(previous map[locmafID][]byte, moov *mp4.MoovBox) (uint64, error) {
+	baseMediaDecodeTime, ok := readVarint(moofLocmafIDs.BaseMediaDecodeTime, previous)
+	if !ok {
+		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.BaseMediaDecodeTime)
+	}
+
+	previousDuration, err := moofFieldDuration(previous, moov)
+	if err != nil {
+		return 0, err
+	}
+	if baseMediaDecodeTime > ^uint64(0)-previousDuration {
+		return 0, fmt.Errorf("derived base media decode time overflows uint64")
+	}
+	return baseMediaDecodeTime + previousDuration, nil
+}
+
+func moofFieldDuration(fields map[locmafID][]byte, moov *mp4.MoovBox) (uint64, error) {
+	sampleCount, ok := readVarint(moofLocmafIDs.SampleCount, fields)
+	if !ok {
+		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.SampleCount)
+	}
+
+	sampleDurations, ok, err := readVarintList(moofLocmafIDs.SampleDurations, fields)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		if uint64(len(sampleDurations)) != sampleCount {
+			return 0, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.SampleDurations)
+		}
+		var duration uint64
+		for _, sampleDuration := range sampleDurations {
+			duration += sampleDuration
+		}
+		return duration, nil
+	}
+
+	defaultSampleDuration, ok := readVarint(moofLocmafIDs.DefaultSampleDuration, fields)
+	if !ok {
+		if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
+			return 0, fmt.Errorf("moov or trex not defined")
+		}
+		defaultSampleDuration = uint64(moov.Mvex.Trex.DefaultSampleDuration)
+	}
+	return defaultSampleDuration * sampleCount, nil
 }
 
 // diffMoofFieldValue returns the difference between the current and previous field value.
