@@ -87,7 +87,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.iv, "iv", "", "IV for CENC encryption (16 or 32 hex chars)")
 	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars),"+
 		"if no key is specified the key id will be used as the key.")
-	fs.StringVar(&opts.scheme, "scheme", "cenc", "Scheme for CENC encryption,"+
+	fs.StringVar(&opts.scheme, "scheme", "cbcs", "Scheme for CENC encryption,"+
 		"either \"cenc\" or \"cbcs\"")
 	fs.StringVar(&opts.laURL, "laurl", "", "ClearKey/ECCP license acquisition URL announced in catalog."+
 		" Falls back to http://localhost:{sideport}/clearkey if not set.")
