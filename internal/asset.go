@@ -653,9 +653,10 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 // GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
 // Conforms to draft-ietf-moq-msf-00 with packaging="loc" per draft-ietf-moq-loc-02.
 //
-// Only AVC video and AAC/Opus audio tracks with ProtectionNone are included.
+// Only AVC/HEVC video and AAC/Opus audio tracks with ProtectionNone are included.
 // No initData is set (LOC sends video config in-band with keyframes).
-// AVC tracks use "avc3" codec prefix since parameter sets are in the payload.
+// AVC tracks use "avc3" and HEVC tracks use "hev1" codec prefixes since
+// parameter sets travel in the payload (draft-ietf-moq-loc-02 §2.1.1).
 func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
@@ -665,24 +666,30 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			if ct.Protection != ProtectionNone {
 				continue
 			}
-			// LOC only supports AVC video and AAC/Opus audio
+			// LOC supports AVC/HEVC video and AAC/Opus audio
 			switch ct.SpecData.(type) {
 			case *AVCData:
 				// OK - AVC video
+			case *HEVCData:
+				// OK - HEVC video
 			case *AACData:
 				// OK - AAC audio
 			case *OpusData:
 				// OK - Opus audio
 			default:
-				continue // Skip HEVC, AC-3, EC-3
+				continue // Skip AC-3, EC-3
 			}
 
 			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
 
-			// For LOC, use avc3 codec string (param sets in payload, not init)
+			// For LOC, use codec strings that signal in-payload parameter sets
+			// (avc3 for AVC, hev1 for HEVC).
 			codec := ct.SpecData.Codec()
 			if _, ok := ct.SpecData.(*AVCData); ok {
 				codec = "avc3" + codec[4:] // Replace "avc1" prefix with "avc3"
+			}
+			if _, ok := ct.SpecData.(*HEVCData); ok {
+				codec = "hev1" + codec[4:] // Replace "hvc1" prefix with "hev1"
 			}
 			// MSF examples use lowercase "opus"
 			if _, ok := ct.SpecData.(*OpusData); ok {
@@ -704,7 +711,15 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			case "video":
 				track.Role = "video"
 				track.Framerate = Ptr(frameRate)
-				if sd, ok := ct.SpecData.(*AVCData); ok {
+				switch sd := ct.SpecData.(type) {
+				case *AVCData:
+					if sd.width != 0 {
+						track.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						track.Height = Ptr(int(sd.height))
+					}
+				case *HEVCData:
 					if sd.width != 0 {
 						track.Width = Ptr(int(sd.width))
 					}
