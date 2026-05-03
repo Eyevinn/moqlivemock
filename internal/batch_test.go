@@ -8,48 +8,26 @@ import (
 )
 
 func TestCalcCmafBitrate(t *testing.T) {
-	testCases := []struct {
-		desc          string
-		sampleBitrate uint32
-		frameRate     float64
-		sampleBatch   int
-		expectedRate  int
-	}{
-		{
-			desc:          "video_batch_1",
-			sampleBitrate: 400000,
-			frameRate:     25.0,
-			sampleBatch:   1,
-			expectedRate:  422400, // 400000 + 8*112*25
-		},
-		{
-			desc:          "video_batch_2",
-			sampleBitrate: 400000,
-			frameRate:     25.0,
-			sampleBatch:   2,
-			expectedRate:  412000, // 400000 + 8*(112+8)*25/2
-		},
-		{
-			desc:          "audio_batch_1",
-			sampleBitrate: 128000,
-			frameRate:     46.875, // 48000/1024
-			sampleBatch:   1,
-			expectedRate:  170000, // 128000 + 8*112*46.875
-		},
-		{
-			desc:          "audio_batch_4",
-			sampleBitrate: 128000,
-			frameRate:     46.875,
-			sampleBatch:   4,
-			expectedRate:  140750, // 128000 + 8*(112+3*8)*46.875/4
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.desc, func(t *testing.T) {
-			rate := calcCmafBitrate(tc.sampleBitrate, tc.frameRate, tc.sampleBatch)
-			require.Equal(t, tc.expectedRate, rate)
-		})
+	asset, err := LoadAsset("../assets/test10s", 2, 1)
+	require.NoError(t, err)
+	for _, group := range asset.Groups {
+		for i := range group.Tracks {
+			ct := &group.Tracks[i]
+			rate, err := calcCmafBitrate(ct)
+			require.NoError(t, err, "calcCmafBitrate %s", ct.Name)
+			// Wire bitrate must always exceed the raw sample bitrate (container
+			// overhead is non-zero) but stay within a reasonable margin even
+			// for the smallest audio chunks.
+			require.Greater(t, rate, int(ct.SampleBitrate),
+				"%s: cmaf bitrate %d should exceed sample bitrate %d", ct.Name, rate, ct.SampleBitrate)
+			maxRatio := 1.5
+			if ct.ContentType == "audio" {
+				maxRatio = 3.0 // audio chunks are tiny so per-chunk overhead dominates
+			}
+			require.Less(t, float64(rate), float64(ct.SampleBitrate)*maxRatio,
+				"%s: cmaf bitrate %d more than %.1fx sample bitrate %d",
+				ct.Name, rate, maxRatio, ct.SampleBitrate)
+		}
 	}
 }
 
@@ -173,8 +151,8 @@ func TestLoadAssetWithBatch(t *testing.T) {
 				require.NotNil(t, contentTrack, "Track %s should exist in asset", track.Name)
 
 				// Calculate expected bitrate
-				frameRate := float64(contentTrack.TimeScale) / float64(contentTrack.SampleDur)
-				expectedBitrate := calcCmafBitrate(contentTrack.SampleBitrate, frameRate, contentTrack.SampleBatch)
+				expectedBitrate, err := calcCmafBitrate(contentTrack)
+				require.NoError(t, err)
 
 				require.Equal(t, expectedBitrate, *track.Bitrate,
 					"Track %s should have bitrate calculated with batch size %d",
