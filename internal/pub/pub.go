@@ -345,8 +345,11 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 	}
 
 	var videoConfig []byte
-	if avcData, ok := ct.SpecData.(*internal.AVCData); ok {
-		videoConfig = avcData.GenLOCVideoConfig()
+	switch sd := ct.SpecData.(type) {
+	case *internal.AVCData:
+		videoConfig = sd.GenLOCVideoConfig()
+	case *internal.HEVCData:
+		videoConfig = sd.GenLOCVideoConfig()
 	}
 
 	now := time.Now().UnixMilli()
