@@ -78,7 +78,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen or connect address")
 	fs.StringVar(&opts.asset, "asset", "../../assets/test10s", "Asset to serve")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
-	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 2, "Nr audio samples per MoQ object/CMAF chunk")
+	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 1, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.sidePort, "sideport", 0, "Port for HTTP side server serving /fingerprint and /clearkey (0 to disable)")
 	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")

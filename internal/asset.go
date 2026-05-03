@@ -14,8 +14,22 @@ import (
 )
 
 const (
-	trackID           = 1
-	cmafOverheadBytes = 112 // moof + mdat header size for one sample
+	trackID = 1
+
+	// cmafObjectOverheadBytes models the per-object MoQ wire framing paid on
+	// top of every CMAF chunk: ObjectID + payload-length + extension-count +
+	// status varints (per draft-ietf-moq-transport-16). The subgroup header
+	// (TrackAlias + GroupID + SubgroupID + Priority) is amortised across
+	// dozens of objects per group and is small enough to round into this
+	// constant rather than model separately.
+	cmafObjectOverheadBytes = 8
+
+	// locObjectOverheadBytes models the wire footprint of one MoQ subgroup
+	// object header carrying a single LOC frame: same MoQ object framing as
+	// CMAF plus the LOC Timestamp extension property (1 byte property ID +
+	// vi64 µs-since-epoch ≈ 9 bytes). draft-ietf-moq-transport-16 +
+	// draft-ietf-moq-loc-02 §2.3.1.1.
+	locObjectOverheadBytes = cmafObjectOverheadBytes + 9
 )
 
 // ProtectionType identifies how a track is encrypted.
@@ -525,7 +539,10 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType, gener
 			}
 
 			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
-			cmafBitrate := calcCmafBitrate(ct.SampleBitrate, frameRate, ct.SampleBatch)
+			cmafBitrate, err := calcCmafBitrate(&ct)
+			if err != nil {
+				return nil, fmt.Errorf("could not calculate CMAF bitrate for track %s: %w", ct.Name, err)
+			}
 
 			track := Track{
 				Name:        ct.Name,
@@ -703,7 +720,7 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
 				Codec:       codec,
-				Bitrate:     Ptr(int(ct.SampleBitrate)),
+				Bitrate:     Ptr(calcLOCBitrate(&ct)),
 				Language:    ct.Language,
 			}
 
@@ -758,10 +775,64 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	return cat, nil
 }
 
-func calcCmafBitrate(sampleBitrate uint32, frameRate float64, sampleBatch int) int {
-	objectRate := frameRate / float64(sampleBatch)
-	cmafChunkOverhead := cmafOverheadBytes + (sampleBatch-1)*8
-	return int(float64(sampleBitrate) + 8*float64(cmafChunkOverhead)*objectRate)
+// calcCmafBitrate returns the wire bitrate of a CMAF-packaged track in bits
+// per second, including container and (when applicable) encryption overhead.
+// Rather than estimate, it generates one representative chunk via
+// GenCMAFChunk for the track's actual configuration (sample batch, encryption
+// scheme, subsample structure) and measures the byte-level delta from the raw
+// sample data. This stays accurate under encryption-scheme changes, future
+// mp4ff packaging tweaks, and varying per-sample subsample counts without
+// hand-rolled per-scheme constants.
+func calcCmafBitrate(ct *ContentTrack) (int, error) {
+	batch := ct.SampleBatch
+	if batch <= 0 {
+		batch = 1
+	}
+	if uint64(batch) > uint64(len(ct.Samples)) {
+		batch = len(ct.Samples)
+	}
+	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
+		return int(ct.SampleBitrate), nil
+	}
+	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch))
+	if err != nil {
+		return 0, fmt.Errorf("measure CMAF chunk for %s: %w", ct.Name, err)
+	}
+	rawBytes := 0
+	for i := 0; i < batch; i++ {
+		rawBytes += len(ct.Samples[i].Data)
+	}
+	overheadBytes := len(chunk) - rawBytes + cmafObjectOverheadBytes
+	objectRate := float64(ct.TimeScale) / float64(ct.SampleDur) / float64(batch)
+	return int(float64(ct.SampleBitrate) + 8*float64(overheadBytes)*objectRate), nil
+}
+
+// calcLOCBitrate returns the wire bitrate of a LOC-packaged track in bits per
+// second. It includes the raw sample bitrate, per-object MoQ + LOC extension
+// header overhead, and (for video) the VPS/SPS/PPS prepended to every IRAP
+// frame at publish time (one per GOP).
+func calcLOCBitrate(ct *ContentTrack) int {
+	if ct.SampleDur == 0 || ct.TimeScale == 0 {
+		return int(ct.SampleBitrate)
+	}
+	// Each LOC sample becomes one MoQ object.
+	objectRate := float64(ct.TimeScale) / float64(ct.SampleDur)
+	extraBytesPerSec := float64(locObjectOverheadBytes) * objectRate
+	// Video tracks prepend parameter sets to every IRAP frame.
+	if ct.GopLength > 0 {
+		var psBytes int
+		switch sd := ct.SpecData.(type) {
+		case *AVCData:
+			psBytes = len(sd.GenLOCVideoConfig())
+		case *HEVCData:
+			psBytes = len(sd.GenLOCVideoConfig())
+		}
+		if psBytes > 0 {
+			keyframeRate := objectRate / float64(ct.GopLength)
+			extraBytesPerSec += float64(psBytes) * keyframeRate
+		}
+	}
+	return int(float64(ct.SampleBitrate) + 8*extraBytesPerSec)
 }
 
 // Ptr returns a pointer to any value
@@ -794,6 +865,12 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 		}
 		f.AddFullSample(fs)
 	}
+	// OptimizeTrun promotes constant per-sample fields (duration, flags) into
+	// tfhd defaults so the trun only carries what actually varies. For audio
+	// (constant duration, all sync) this drops per-sample overhead from 16 B
+	// to 4 B; for video (1 sample per chunk in the default config) the saving
+	// is on the trun box header.
+	f.EncOptimize = mp4.OptimizeTrun
 	f.SetTrunDataOffsets()
 	size := f.Size()
 	sw := bits.NewFixedSliceWriter(int(size))
