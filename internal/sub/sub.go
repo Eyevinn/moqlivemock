@@ -165,10 +165,23 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 	audioTrack := ""
 	subsTrack := ""
 	isLOC := false
-	for _, track := range h.catalog.Tracks {
+	for i := range h.catalog.Tracks {
+		track := &h.catalog.Tracks[i]
 		if track.Packaging == "loc" {
 			isLOC = true
 		}
+
+		var protectedMoov *mp4.MoovBox
+		if track.Packaging == "locmaf" {
+			initData, moov, err := locmafInitData(*track)
+			if err != nil {
+				slog.Error("failed to parse locmaf init data", "error", err)
+				return
+			}
+			track.InitData = initData
+			protectedMoov = moov
+		}
+
 		// If track is encrypted, the InitData needs to be adjusted
 		if len(track.ContentProtectionRefIDs) > 0 {
 			if h.cenc == nil {
@@ -176,7 +189,13 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 					DecryptInfo: make(map[string]mp4.DecryptInfo),
 				}
 			}
-			err = h.decryptInit(&track)
+			if protectedMoov != nil {
+				if h.cenc.ProtectedMoov == nil {
+					h.cenc.ProtectedMoov = make(map[string]*mp4.MoovBox)
+				}
+				h.cenc.ProtectedMoov[track.Name] = protectedMoov
+			}
+			err = h.decryptInit(track)
 			if err != nil {
 				slog.Error("failed to decrypt init data", "error", err)
 			}
@@ -494,18 +513,11 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		if h.cenc != nil && h.cenc.ProtectedMoov != nil && h.cenc.ProtectedMoov[trackname] != nil {
 			moov = h.cenc.ProtectedMoov[trackname]
 		} else {
-			initData, err := base64.StdEncoding.DecodeString(track.InitData)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decode init data for track %s: %w", trackname, err)
-			}
-			f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
+			init, err := parseCMAFInit(track.InitData)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse init data for track %s: %w", trackname, err)
 			}
-			if f.Init == nil || f.Init.Moov == nil {
-				return nil, fmt.Errorf("missing moov in init data for track %s", trackname)
-			}
-			moov = f.Init.Moov
+			moov = init.Moov
 		}
 	}
 	go func() {
@@ -649,6 +661,77 @@ func unpackWrite(initData string, w io.Writer) error {
 	}
 	_, err = w.Write(initBytes)
 	return err
+}
+
+func locmafInitData(track internal.Track) (string, *mp4.MoovBox, error) {
+	init, err := parseLocmafInit(&track)
+	if err != nil {
+		return "", nil, err
+	}
+	initDataBytes, err := encodeInitSegment(init)
+	if err != nil {
+		return "", nil, err
+	}
+	return base64.StdEncoding.EncodeToString(initDataBytes), init.Moov, nil
+}
+
+func parseLocmafInit(track *internal.Track) (*mp4.InitSegment, error) {
+	if track == nil {
+		return nil, fmt.Errorf("track is nil")
+	}
+	initDataBytes, err := base64.StdEncoding.DecodeString(track.InitData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to base64 decode init data: %w", err)
+	}
+	headerID, n, err := quicvarint.Parse(initDataBytes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid locmaf init header")
+	}
+	pos := n
+
+	locPayloadLength, n, err := quicvarint.Parse(initDataBytes[pos:])
+	if err != nil {
+		return nil, fmt.Errorf("invalid locmaf init payload length")
+	}
+	pos += n
+	if headerID != internal.MoovHeader {
+		return nil, fmt.Errorf("unsupported locmaf init header %d", headerID)
+	}
+	if locPayloadLength > uint64(len(initDataBytes)-pos) {
+		return nil, fmt.Errorf("locmaf init payload exceeds object length")
+	}
+
+	init, err := internal.DecompressInit(initDataBytes[pos:pos+int(locPayloadLength)], *track)
+	if err != nil {
+		return nil, err
+	}
+	if init == nil || init.Moov == nil {
+		return nil, fmt.Errorf("missing moov in locmaf init data")
+	}
+	return init, nil
+}
+
+func encodeInitSegment(init *mp4.InitSegment) ([]byte, error) {
+	sw := bits.NewFixedSliceWriter(int(init.Size()))
+	if err := init.EncodeSW(sw); err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
+}
+
+func parseCMAFInit(initData string) (*mp4.InitSegment, error) {
+	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
+	if err != nil {
+		return nil, err
+	}
+	f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initDataBytes))
+	if err != nil {
+		return nil, err
+	}
+	if f.Init == nil || f.Init.Moov == nil {
+		return nil, fmt.Errorf("missing moov in init data")
+	}
+	return f.Init, nil
 }
 
 func tupleEqual(a, b []string) bool {

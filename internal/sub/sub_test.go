@@ -208,6 +208,10 @@ func TestDecryptInitKeepsProtectedMoovForLocmafEncryptedAudio(t *testing.T) {
 			ProtectedMoov: make(map[string]*mp4.MoovBox),
 		},
 	}
+	initData, moov, err := locmafInitData(*track)
+	require.NoError(t, err)
+	track.InitData = initData
+	h.cenc.ProtectedMoov[track.Name] = moov
 	require.NoError(t, h.decryptInit(track))
 
 	protectedTrack := asset.GetTrackByName(track.Name)

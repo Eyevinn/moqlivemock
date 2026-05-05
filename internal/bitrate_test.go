@@ -22,9 +22,9 @@ func TestBitrateExposesPackagingDifferences(t *testing.T) {
 	asset, err := LoadAssetWithProtection("../assets/test10s", 2, 1, nil, cencEccp)
 	require.NoError(t, err)
 
-	clearCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0)
+	clearCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0, "cmaf")
 	require.NoError(t, err)
-	encCat, err := asset.GenCMAFCatalogEntry("cmsf/eccp-cenc", ProtectionECCP, 0)
+	encCat, err := asset.GenCMAFCatalogEntry("cmsf/eccp-cenc", ProtectionECCP, 0, "cmaf")
 	require.NoError(t, err)
 	locCat, err := asset.GenLOCCatalogEntry(0)
 	require.NoError(t, err)
