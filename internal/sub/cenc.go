@@ -9,9 +9,7 @@ import (
 	"net/http"
 
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
-	"github.com/quic-go/quic-go/quicvarint"
 )
 
 // CENC holds decryption state for encrypted tracks.
@@ -69,44 +67,6 @@ func (h *Handler) decryptInit(track *internal.Track) error {
 	initDataBytes, err := base64.StdEncoding.DecodeString(track.InitData)
 	if err != nil {
 		return fmt.Errorf("failed to base64 decode init data: %w", err)
-	}
-	if track.Packaging == "locmaf" {
-		headerID, n, err := quicvarint.Parse(initDataBytes)
-		if err != nil {
-			return fmt.Errorf("failed to parse protected init: invalid locmaf init header")
-		}
-		pos := n
-
-		locPayloadLength, n, err := quicvarint.Parse(initDataBytes[pos:])
-		if err != nil {
-			return fmt.Errorf("failed to parse protected init: invalid locmaf init payload length")
-		}
-		pos += n
-		if headerID != internal.MoovHeader {
-			return fmt.Errorf("failed to parse protected init: unsupported locmaf init header %d", headerID)
-		}
-		if pos+int(locPayloadLength) > len(initDataBytes) {
-			return fmt.Errorf("failed to parse protected init: locmaf init payload exceeds object length")
-		}
-
-		protectedInit, err := internal.DecompressInit(initDataBytes[pos:pos+int(locPayloadLength)], *track)
-		if err != nil {
-			return fmt.Errorf("failed to parse protected init: %w", err)
-		}
-		if protectedInit == nil || protectedInit.Moov == nil {
-			return fmt.Errorf("missing moov in protected init")
-		}
-		if h.cenc.ProtectedMoov == nil {
-			h.cenc.ProtectedMoov = make(map[string]*mp4.MoovBox)
-		}
-		h.cenc.ProtectedMoov[track.Name] = protectedInit.Moov
-
-		sw := bits.NewFixedSliceWriter(int(protectedInit.Size()))
-		err = protectedInit.EncodeSW(sw)
-		if err != nil {
-			return fmt.Errorf("failed to encode protected init: %w", err)
-		}
-		initDataBytes = sw.Bytes()
 	}
 	decryptedInitBytes, _, decryptInfo, err := internal.DecryptInit(initDataBytes)
 	if err != nil {
