@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-05
+
 ### Added
 
 - `-discover` flag in mlmsub to list announced namespaces on a relay and exit
@@ -30,17 +32,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - moq-mi subscriber support in mlmsub: subscribes to fixed track names,
   parses moqmi extension headers, logs per-object metadata, and writes raw
   payloads through unchanged
+- HEVC support for LOC packaging (`msf/clear` namespace) with `hev1.*`
+  codec prefix per draft-ietf-moq-loc-02 §2.1.1; in-band VPS+SPS+PPS are
+  length-prefixed and prepended to every IRAP frame via
+  `HEVCData.GenLOCVideoConfig`
+- Accurate per-packaging catalog bitrate that reflects actual wire
+  footprint, differentiating clear CMAF, encrypted CMAF (cenc/cbcs), and
+  LOC. `calcCmafBitrate` measures real chunk size via `GenCMAFChunk` for
+  the track's batch / encryption / subsample configuration; `calcLOCBitrate`
+  accounts for VPS/SPS/PPS prepended to IRAP frames and the LOC Timestamp
+  extension. Both add a per-object MoQ wire-overhead constant
+  (`cmafObjectOverheadBytes = 8`) modelling ObjectID, payload-length,
+  extension-count and status varints per draft-ietf-moq-transport-16
 - `CalcSample` exported on `ContentTrack` (previously unexported)
 - `GenAVCDecoderConfigurationRecord` and `GenLOCVideoConfig` on `AVCData`
+- `GenLOCVideoConfig` on `HEVCData`
 - `SampleRate` / `ChannelConfig` accessors on `AACData` and `OpusData`
 - Unit tests covering LOC/moq-mi writers, namespace detection, moqmi track
-  map building, LOC catalog generation, and AVC/AAC/Opus metadata helpers
+  map building, LOC catalog generation (AVC + HEVC), AVC/AAC/Opus metadata
+  helpers, and per-packaging bitrate accuracy
 
 ### Changed
 
 - Bumped moqtransport to v0.8.1 (moqmi extension header helpers)
 - LOC AAC writer now uses `mp4ff/aac.NewADTSHeader` instead of a local
   implementation
+- `GenCMAFChunk` enables mp4ff `OptimizeTrun`, promoting constant
+  per-sample fields (duration, flags) into `tfhd` defaults so the `trun`
+  only carries what actually varies. Per-sample audio overhead drops from
+  16 B to 4 B (the variable `sample-size`); CBR codecs with constant
+  sample size can drop to 0 B
+- Default `-audiobatch` reduced from 2 to 1 so CMAF audio chunking matches
+  LOC (one frame per object), making per-packaging wire-cost differences
+  directly comparable (e.g. AAC LOC ~+4 %, CMAF clear ~+33 %,
+  CMAF cenc ~+54 %)
 - mlmsub WebTransport client now advertises
   `SETTINGS_WEBTRANSPORT_MAX_SESSIONS=1` (0xc671706a) on its HTTP/3 SETTINGS
   frame so it can negotiate WT against deployed `web-transport-quinn`-backed
@@ -217,7 +242,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...HEAD
+[0.8.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...v0.6.0
