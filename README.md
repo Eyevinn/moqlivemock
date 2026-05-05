@@ -60,6 +60,9 @@ convention.
 | `cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
 | `msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
 | `moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
+| `locmaf/clear` | LOCMAF | Always | (none) | Unencrypted Tracks
+| `locmaf/drm-{scheme}` | LOCMAF | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
+| `locmaf/eccp-{scheme}` | LOCMAF | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
 
 Both DRM and ECCP can be active simultaneously — they use independent encryption keys
 and produce separate sets of protected tracks.
@@ -88,6 +91,11 @@ extension headers to learn the media type and codec metadata. Payloads are
 the codec bitstream as defined by moqmi (AVCC length-prefixed NALUs for
 video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
 — this namespace is intended for interop testing, not direct ffplay playback.
+
+### LOCMAF
+This locmaf namespace implements Low Overhead CMAF (LOCMAF), a LOC-inspired variant of CMAF which uses MoQT key-value pairs to extract only the required information from CMAF headers in order to create a low overhead. If this option is used the packaging will be `locmaf` and both the catalog `initData` field and object payloads will use key-value pairs for storing CMAF headers. Each object starts with a LOCMAF full header or a LOCMAF delta header. The first moof header in a group is always sent as a LOCMAF full header which contains all required moof field. The following moof headers in a group will be sent as LOCMAF delta headers which only store the difference between two consecutive moof headers and ignores fields with no difference.
+
+LOCMAF carries all information needed to reconstruct a valid CMAF file and therefore supports DRM. Only fields necessary for playback are sent in LOCMAF so to reconstruct a valid CMAF header an empty header needs to be created and the fields signaled via LOCMAF need to replace the fields in the created header.
 
 ## Session setup
 
@@ -266,7 +274,7 @@ moqlivemock supports two independent content protection modes that can run simul
 Use `-kid`, `-iv`, and optionally `-cenckey` flags. If no cenc key is provided, the
 key-id is used as the key. The ClearKey license endpoint is served at `/clearkey` on
 the side server, so `-sideport` must be set. For production behind a reverse proxy,
-use `-laurl` to specify the external license URL announced in the catalog.
+use `-laurl` to specify the external license URL announced in the catalog. The ClearKey license server always returns the key id as the cenc key, so `-kid` must match `-cenckey`.
 
 ```sh
 # Local development
@@ -277,7 +285,7 @@ go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccdde
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces namespace `cmsf/eccp-cbcs` with tracks like `video_400kbps_avc_eccp`.
+This announces namespace `cmsf/eccp-cbcs` and `locmaf/eccp-cbcs with tracks like `video_400kbps_avc_eccp`.
 
 #### Commercial DRM (CPIX)
 
@@ -288,7 +296,7 @@ Supported systems: Widevine, PlayReady, FairPlay.
 go run . -drmpath ../../assets/testdrm/drm_config_test.json
 ```
 
-This announces namespace `cmsf/drm-{scheme}` with tracks like `video_400kbps_avc_drm`.
+This announces namespace `cmsf/drm-{scheme}` and `locmaf/drm-{scheme}` with tracks like `video_400kbps_avc_drm`.
 
 #### Both simultaneously
 
@@ -300,7 +308,7 @@ go run . -drmpath ../../assets/drm/drm_config.json \
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces three namespaces: `cmsf/clear`, `cmsf/drm-cbcs`, and `cmsf/eccp-cbcs`.
+This announces three namespaces per DRM-capable packaging. For CMSF these are: `cmaf/clear`, `cmaf/drm-cbcs`, and `cmaf/eccp-cbcs`.
 
 #### Subscriber examples
 
@@ -312,10 +320,10 @@ so no extra flags are needed except choosing the right namespace and track names
 go run . -muxout - | ffplay -
 
 # ECCP-protected content
-go run . -namespace cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - | ffplay -
+go run . -namespace cmaf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - | ffplay -
 
 # DRM-protected content
-go run . -namespace cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
+go run . -namespace cmaf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
 
 # LOC packaging — AVC reframed to AnnexB, AAC reframed to ADTS
 go run . -namespace msf/clear -videoout video.h264 -audioout audio.aac
@@ -324,10 +332,10 @@ ffplay audio.aac
 
 # moq-mi packaging — raw moqmi payloads written through unchanged
 go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
-```
 
-### LOCMAF
-This repository implements Low Overhead CMAF (LOCMAF), a LOC-inspirded variant of CMAF which uses MoQT key-value pairs to extract only the required information from CMAF headers in order to create a low overhead. This can be enabled by adding the `-packaging locmaf` flag to `mlmpub`, or you can include both locmaf and uncompressed media in different namespaces by using `-packaging cmaf-and-locmaf`. If this option is used the MSF packaging will be `locmaf` and both the MSF `initData` field and object payloads will use key-value pairs for storing CMAF headers. The first moof header in a group is always sent as a complete locmaf header, but the following moof headers in a group will be sent as delta moof headers which only store the difference between two consecutive moof headers.
+# LOCMAF packaging
+go run . -namespace locmaf/clear -videoname _avc -audioname _aac -muxout - | ffplay -
+```
 
 ## QUIC / WebTransport Configuration
 
