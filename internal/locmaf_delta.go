@@ -45,7 +45,7 @@ func (c *MoofDeltaCompressor) CreateMoofProperty(moof *mp4.MoofBox, moov *mp4.Mo
 	return createSizedLocmafProperty(headerID, payload), nil
 }
 
-// MoofDeltaCompressor stores the values of the fields transmitted in the previous locmaf object.
+// MoofDeltaDecompressor stores the values of the fields transmitted in the previous locmaf object.
 type MoofDeltaDecompressor struct {
 	previous map[locmafID][]byte
 }
@@ -53,12 +53,16 @@ type MoofDeltaDecompressor struct {
 // DecompressMoof decompresses a locmaf object to create a moof box.
 // Both moof, and delta moof properties are accepted.
 func (d *MoofDeltaDecompressor) DecompressMoof(data []byte,
-	seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, error) {
+	seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, []byte, error) {
 	object, err := parseLocmafObject(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("failed to parse LOCMAF object: %w", err)
 	}
-	return d.decompressMoofProperty(object.headerID, object.properties, seqnum, moov, len(object.mdatPayload))
+	moof, err := d.decompressMoofProperty(object.headerID, object.properties, seqnum, moov, len(object.mdatPayload))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decompress moof property: %w", err)
+	}
+	return moof, object.mdatPayload, nil
 }
 
 // decompressMoofProptery converts a moof or delta moof property to a moof box.
@@ -106,7 +110,7 @@ func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte,
 	deltaFields := make(map[locmafID][]byte)
 
 	for key, currentValue := range current {
-		if key == moofLocmafIDs.BaseMediaDecodeTime {
+		if key == moofLocmafIDs.baseMediaDecodeTime {
 			continue
 		}
 		previousValue := previous[key]
@@ -140,7 +144,7 @@ func applyMoofDelta(previous, deltaFields map[locmafID][]byte, moov *mp4.MoovBox
 	if err != nil {
 		return nil, err
 	}
-	current[moofLocmafIDs.BaseMediaDecodeTime] = appendVarint(nil, baseMediaDecodeTime)
+	current[moofLocmafIDs.baseMediaDecodeTime] = appendVarint(nil, baseMediaDecodeTime)
 
 	deletedFields, ok, err := readVarintList(moofDeltaDeletedLocmafIDs, deltaFields)
 	if err != nil {
@@ -167,9 +171,9 @@ func applyMoofDelta(previous, deltaFields map[locmafID][]byte, moov *mp4.MoovBox
 }
 
 func deriveNextBaseMediaDecodeTime(previous map[locmafID][]byte, moov *mp4.MoovBox) (uint64, error) {
-	baseMediaDecodeTime, ok := readVarint(moofLocmafIDs.BaseMediaDecodeTime, previous)
+	baseMediaDecodeTime, ok := readVarint(moofLocmafIDs.baseMediaDecodeTime, previous)
 	if !ok {
-		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.BaseMediaDecodeTime)
+		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.baseMediaDecodeTime)
 	}
 
 	previousDuration, err := moofFieldDuration(previous, moov)
@@ -183,18 +187,18 @@ func deriveNextBaseMediaDecodeTime(previous map[locmafID][]byte, moov *mp4.MoovB
 }
 
 func moofFieldDuration(fields map[locmafID][]byte, moov *mp4.MoovBox) (uint64, error) {
-	sampleCount, ok := readVarint(moofLocmafIDs.SampleCount, fields)
+	sampleCount, ok := readVarint(moofLocmafIDs.sampleCount, fields)
 	if !ok {
-		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.SampleCount)
+		return 0, fmt.Errorf("missing previous locmaf id=%d", moofLocmafIDs.sampleCount)
 	}
 
-	sampleDurations, ok, err := readVarintList(moofLocmafIDs.SampleDurations, fields)
+	sampleDurations, ok, err := readVarintList(moofLocmafIDs.sampleDurations, fields)
 	if err != nil {
 		return 0, err
 	}
 	if ok {
 		if uint64(len(sampleDurations)) != sampleCount {
-			return 0, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.SampleDurations)
+			return 0, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.sampleDurations)
 		}
 		var duration uint64
 		for _, sampleDuration := range sampleDurations {
@@ -203,7 +207,7 @@ func moofFieldDuration(fields map[locmafID][]byte, moov *mp4.MoovBox) (uint64, e
 		return duration, nil
 	}
 
-	defaultSampleDuration, ok := readVarint(moofLocmafIDs.DefaultSampleDuration, fields)
+	defaultSampleDuration, ok := readVarint(moofLocmafIDs.defaultSampleDuration, fields)
 	if !ok {
 		if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
 			return 0, fmt.Errorf("moov or trex not defined")
@@ -247,6 +251,8 @@ func diffMoofFieldValue(id locmafID, current, previous []byte) ([]byte, error) {
 			delta = appendSignedVarint(delta, currentValue-previousValue)
 		}
 		return delta, nil
+	case moofDeltaRawBytes:
+		return append([]byte(nil), current...), nil
 	default:
 		return nil, fmt.Errorf("unknown delta value kind")
 	}
@@ -289,6 +295,8 @@ func applyMoofFieldDelta(id locmafID, delta, previous []byte) ([]byte, error) {
 			}
 		}
 		return current, nil
+	case moofDeltaRawBytes:
+		return append([]byte(nil), delta...), nil
 	default:
 		return nil, fmt.Errorf("unknown delta value kind")
 	}
@@ -299,9 +307,13 @@ type moofDeltaValueType int
 const (
 	moofDeltaScalar moofDeltaValueType = iota
 	moofDeltaVarintList
+	moofDeltaRawBytes
 )
 
 func moofDeltaValueKind(id locmafID) moofDeltaValueType {
+	if id == moofLocmafIDs.initializationVector {
+		return moofDeltaRawBytes
+	}
 	if id%2 == 1 {
 		return moofDeltaVarintList
 	}
@@ -320,7 +332,7 @@ func readSingleMoofFieldValue(id locmafID, value []byte) (int64, error) {
 }
 
 func readMoofFieldValues(id locmafID, value []byte) ([]int64, error) {
-	if id == moofLocmafIDs.SampleCompositionTimeOffsets {
+	if id == moofLocmafIDs.sampleCompositionTimeOffsets {
 		values, _, err := readSignedVarintList(id, map[locmafID][]byte{id: value})
 		return values, err
 	}
@@ -359,7 +371,7 @@ func readSignedDeltaValues(id locmafID, value []byte) ([]int64, error) {
 // Delta fields are always signed varints, while full moof fields keep the encoding
 // used by CompressMoof and decompressMoofUsingFieldValues.
 func appendLocmafFieldValue(id locmafID, payload []byte, value int64) ([]byte, error) {
-	if id == moofLocmafIDs.SampleCompositionTimeOffsets {
+	if id == moofLocmafIDs.sampleCompositionTimeOffsets {
 		return appendSignedVarint(payload, value), nil
 	}
 	if value < 0 {
