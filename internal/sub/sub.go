@@ -620,23 +620,7 @@ func (h *Handler) initLOCWriter(mediaType string, w interface{ Write([]byte) err
 func decompressLocmafObject(payload []byte, seqnum uint32,
 	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
 
-	_, n, err := quicvarint.Parse(payload)
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmaf header")
-	}
-	pos := n
-
-	locPayloadLength, n, err := quicvarint.Parse(payload[pos:])
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmaf payload length")
-	}
-	pos += n
-	if pos+int(locPayloadLength) > len(payload) {
-		return nil, fmt.Errorf("locmaf payload exceeds object length")
-	}
-	mdatData := payload[pos+int(locPayloadLength):]
-
-	moof, err := decompressor.DecompressMoof(payload, seqnum, moov)
+	moof, mdatData, err := decompressor.DecompressMoof(payload, seqnum, moov)
 	if err != nil {
 		return nil, err
 	}

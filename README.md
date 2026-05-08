@@ -93,9 +93,11 @@ video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
 — this namespace is intended for interop testing, not direct ffplay playback.
 
 ### LOCMAF
-This locmaf namespace implements Low Overhead CMAF (LOCMAF), a LOC-inspired variant of CMAF which uses MoQT key-value pairs to extract only the required information from CMAF headers in order to create a low overhead. If this option is used the packaging will be `locmaf` and both the catalog `initData` field and object payloads will use key-value pairs for storing CMAF headers. Each object starts with a LOCMAF full header or a LOCMAF delta header. The first moof header in a group is always sent as a LOCMAF full header which contains all required moof field. The following moof headers in a group will be sent as LOCMAF delta headers which only store the difference between two consecutive moof headers and ignores fields with no difference.
+This locmaf namespace implements Low Overhead CMAF (LOCMAF), a LOC-inspired variant of CMAF which uses MoQT key-value pairs to extract only the required information from CMAF headers in order to create a low overhead. If this option is used the packaging will be `locmaf` and both the catalog `initData` field and object payloads will use key-value pairs for storing CMAF headers. Each object starts with a LOCMAF full moof or a LOCMAF delta moof. The first moof header in a group is always sent as a LOCMAF full moof which contains all required moof field. The following moof headers in a group will be sent as a LOCMAF delta moof which only store the difference between two consecutive moof headers and ignores fields with no difference.
 
 LOCMAF carries all information needed to reconstruct a valid CMAF file and therefore supports DRM. Only fields necessary for playback are sent in LOCMAF so to reconstruct a valid CMAF header an empty header needs to be created and the fields signaled via LOCMAF need to replace the fields in the created header.
+
+QUIC varints are used but since composition time offset requires signed integers and since the LOCMAF delta moofs store the differences as signed integers (except for the deltedFields field), zigzag-scanning is used to encode signed varints.
 
 ## Session setup
 
