@@ -339,6 +339,20 @@ go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
 go run . -namespace locmaf/clear -videoname _avc -audioname _aac -muxout - | ffplay -
 ```
 
+### Generating LOCMAF test assets
+For testing purposes in non-moqlivemock applications, a command for generating test assets is provided. 
+It writes to file, a CMAF init segment, a LOCMAF init segment, and 2 objects of LOCMAF full moof + payload, 
+and LOCMAF delta moof + payload. 
+
+To run this file use
+```sh
+cd cmd/locmaf
+go run . testgen
+```
+
+It is possible to change the input and output file via the flags ```-input``` and ```-out```.
+The asset is encrypted cbcs to test that encrypted LOCMAF fields work.
+
 ## QUIC / WebTransport Configuration
 
 Since `quic-go` v0.59.0 and `webtransport-go` v0.10.0, the QUIC config must enable
