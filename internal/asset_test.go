@@ -239,6 +239,7 @@ func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
 		Timescale: &timescale,
 		Width:     &width,
 		Height:    &height,
+		Role:      "video",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, decompressedInit)
@@ -363,7 +364,8 @@ func TestCompressDecompressProtectedInitPreservesProtectionFields(t *testing.T) 
 			timescale := int(protectedTrack.TimeScale)
 			width := int(originalFile.Init.Moov.Trak.Tkhd.Width >> 16)
 			height := int(originalFile.Init.Moov.Trak.Tkhd.Height >> 16)
-			trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height}
+			role := protectedTrack.ContentType
+			trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height, Role: role}
 			decompressedInit, err := DecompressInit(compressed, trackInfo)
 			require.NoError(t, err)
 

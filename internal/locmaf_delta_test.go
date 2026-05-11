@@ -20,7 +20,7 @@ func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
 	deltaFields, err := separateFields(parsedObject1.properties)
 	require.NoError(t, err)
-	_, hasBaseMediaDecodeTime := deltaFields[moofLocmafIDs.baseMediaDecodeTime]
+	_, hasBaseMediaDecodeTime := deltaFields[moofBaseMediaDecodeTime]
 	require.False(t, hasBaseMediaDecodeTime)
 
 	decoder := &MoofDeltaDecompressor{}
@@ -87,15 +87,15 @@ func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 
 func TestMoofDeltaFieldsUseSignedVarints(t *testing.T) {
 	current := map[locmafID][]byte{
-		moofLocmafIDs.defaultSampleDuration: appendVarint(nil, 3),
-		moofLocmafIDs.sampleSizes: append(
+		moofDefaultSampleDuration: appendVarint(nil, 3),
+		moofSampleSizes: append(
 			appendVarint(nil, 10),
 			appendVarint(nil, 4)...,
 		),
 	}
 	previous := map[locmafID][]byte{
-		moofLocmafIDs.defaultSampleDuration: appendVarint(nil, 5),
-		moofLocmafIDs.sampleSizes: append(
+		moofDefaultSampleDuration: appendVarint(nil, 5),
+		moofSampleSizes: append(
 			appendVarint(nil, 7),
 			appendVarint(nil, 6)...,
 		),
@@ -105,14 +105,14 @@ func TestMoofDeltaFieldsUseSignedVarints(t *testing.T) {
 	require.NoError(t, err)
 
 	durationDelta, ok, err := readSignedVarintList(
-		moofLocmafIDs.defaultSampleDuration,
+		moofDefaultSampleDuration,
 		deltaFields,
 	)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []int64{-2}, durationDelta)
 
-	sizeDeltas, ok, err := readSignedVarintList(moofLocmafIDs.sampleSizes, deltaFields)
+	sizeDeltas, ok, err := readSignedVarintList(moofSampleSizes, deltaFields)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []int64{3, -2}, sizeDeltas)
@@ -122,11 +122,11 @@ func TestMoofDeltaInitializationVectorUsesRawBytes(t *testing.T) {
 	current := []byte{0x00, 0x40, 0x80, 0xff}
 	previous := []byte{0x01, 0x02, 0x03, 0x04}
 
-	delta, err := diffMoofFieldValue(moofLocmafIDs.initializationVector, current, previous)
+	delta, err := diffMoofFieldValue(moofInitializationVector, current, previous)
 	require.NoError(t, err)
 	require.Equal(t, current, delta)
 
-	applied, err := applyMoofFieldDelta(moofLocmafIDs.initializationVector, delta, previous)
+	applied, err := applyMoofFieldDelta(moofInitializationVector, delta, previous)
 	require.NoError(t, err)
 	require.Equal(t, current, applied)
 }
@@ -135,7 +135,7 @@ func TestMoofDeltaDeletedFieldsUseUnsignedVarints(t *testing.T) {
 	deltaFields, err := diffMoofFields(
 		map[locmafID][]byte{},
 		map[locmafID][]byte{
-			moofLocmafIDs.defaultSampleDuration: appendVarint(nil, 5),
+			moofDefaultSampleDuration: appendVarint(nil, 5),
 		},
 	)
 	require.NoError(t, err)
@@ -143,13 +143,13 @@ func TestMoofDeltaDeletedFieldsUseUnsignedVarints(t *testing.T) {
 	deletedFields, ok, err := readVarintList(moofDeltaDeletedLocmafIDs, deltaFields)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Equal(t, []uint64{uint64(moofLocmafIDs.defaultSampleDuration)}, deletedFields)
+	require.Equal(t, []uint64{uint64(moofDefaultSampleDuration)}, deletedFields)
 }
 
 func TestDeriveNextBaseMediaDecodeTimeUsesDefaultSampleDuration(t *testing.T) {
 	previous := map[locmafID][]byte{
-		moofLocmafIDs.baseMediaDecodeTime: appendVarint(nil, 100),
-		moofLocmafIDs.sampleCount:         appendVarint(nil, 3),
+		moofBaseMediaDecodeTime: appendVarint(nil, 100),
+		moofSampleCount:         appendVarint(nil, 3),
 	}
 	moov := &mp4.MoovBox{
 		Mvex: &mp4.MvexBox{
@@ -173,9 +173,15 @@ func TestCompressMoofEncodesInitializationVectorsAsRawBytes(t *testing.T) {
 
 	traf := &mp4.TrafBox{
 		Tfhd:     mp4.CreateTfhd(1),
+		Tfdt:     mp4.CreateTfdt(0),
+		Trun:     mp4.CreateTrun(0),
 		Senc:     senc,
 		Children: []mp4.Box{senc},
 	}
+	traf.Trun.AddSamples([]mp4.Sample{
+		mp4.NewSample(0, 0, 0, 0),
+		mp4.NewSample(0, 0, 0, 0),
+	})
 	moof := &mp4.MoofBox{Traf: traf}
 	moov := &mp4.MoovBox{
 		Mvex: &mp4.MvexBox{
@@ -187,14 +193,14 @@ func TestCompressMoofEncodesInitializationVectorsAsRawBytes(t *testing.T) {
 
 	fields, err := extractImportantMoofFields(moof, moov)
 	require.NoError(t, err)
-	require.Equal(t, append(append([]byte(nil), iv0...), iv1...), fields[moofLocmafIDs.initializationVector])
+	require.Equal(t, append(append([]byte(nil), iv0...), iv1...), fields[moofInitializationVector])
 }
 
 func TestReconstructSencReadsRawInitializationVectorBytes(t *testing.T) {
 	iv0 := []byte{0x00, 0x40, 0x80, 0xff, 0x01, 0x41, 0x81, 0xfe, 0x02, 0x42, 0x82, 0xfd, 0x03, 0x43, 0x83, 0xfc}
 	iv1 := []byte{0x10, 0x50, 0x90, 0xef, 0x11, 0x51, 0x91, 0xee, 0x12, 0x52, 0x92, 0xed, 0x13, 0x53, 0x93, 0xec}
 	fields := map[locmafID][]byte{
-		moofLocmafIDs.initializationVector: append(append([]byte(nil), iv0...), iv1...),
+		moofInitializationVector: append(append([]byte(nil), iv0...), iv1...),
 	}
 
 	senc, err := reconstructSencFromFields(fields, 2, 16, false)
@@ -306,12 +312,12 @@ func TestCompressMoofOmitsSampleSizesForSingleSampleFragment(t *testing.T) {
 	fields, err := separateFields(parsedObject.properties)
 	require.NoError(t, err)
 
-	sampleCountValue, ok := readVarint(moofLocmafIDs.sampleCount, fields)
+	sampleCountValue, ok := readVarint(moofSampleCount, fields)
 	require.True(t, ok)
 	require.EqualValues(t, 1, sampleCountValue)
-	_, hasSampleSizes := fields[moofLocmafIDs.sampleSizes]
+	_, hasSampleSizes := fields[moofSampleSizes]
 	require.False(t, hasSampleSizes)
-	_, hasDefaultSampleSize := fields[moofLocmafIDs.defaultSampleSize]
+	_, hasDefaultSampleSize := fields[moofDefaultSampleSize]
 	require.False(t, hasDefaultSampleSize)
 
 	rebuilt, err := DecompressMoof(object, 1, moov)
@@ -330,10 +336,10 @@ func TestCompressMoofKeepsSampleSizesForMultiSampleFragment(t *testing.T) {
 	fields, err := separateFields(payload)
 	require.NoError(t, err)
 
-	sampleCountValue, ok := readVarint(moofLocmafIDs.sampleCount, fields)
+	sampleCountValue, ok := readVarint(moofSampleCount, fields)
 	require.True(t, ok)
 	require.EqualValues(t, 2, sampleCountValue)
-	sampleSizes, hasSampleSizes, err := readVarintList(moofLocmafIDs.sampleSizes, fields)
+	sampleSizes, hasSampleSizes, err := readVarintList(moofSampleSizes, fields)
 	require.NoError(t, err)
 	require.True(t, hasSampleSizes)
 	require.True(t, len(sampleSizes) == 2)
@@ -349,7 +355,7 @@ func TestDecompressMoofDefaultsMissingCompositionOffsetsToZero(t *testing.T) {
 
 	fields, err := separateFields(parsedObject.properties)
 	require.NoError(t, err)
-	delete(fields, moofLocmafIDs.sampleCompositionTimeOffsets)
+	delete(fields, moofSampleCompositionTimeOffsets)
 
 	modifiedObject := append(
 		createSizedLocmafProperty(parsedObject.headerID, encodeFields(fields)),

@@ -10,120 +10,83 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
+type locmafPropertyID int
+
 const (
-	MoovHeader      = 21
-	MoofHeader      = 23
-	MoofDeltaHeader = 25
+	MoovHeader      locmafPropertyID = 21
+	MoofHeader      locmafPropertyID = 23
+	MoofDeltaHeader locmafPropertyID = 25
 )
 
 type locmafID int
 
-var moofLocmafIDs = struct {
-	//tfhd
-	sampleDescriptionIndex locmafID
-	defaultSampleDuration  locmafID
-	defaultSampleSize      locmafID
-	defaultSampleFlags     locmafID
+const (
+	// tfhd
+	moofSampleDescriptionIndex locmafID = 2
+	moofDefaultSampleDuration  locmafID = 4
+	moofDefaultSampleSize      locmafID = 6
+	moofDefaultSampleFlags     locmafID = 8
 
-	//tfdt
-	baseMediaDecodeTime locmafID
+	// tfdt
+	moofBaseMediaDecodeTime locmafID = 10
 
-	//trun
-	sampleCount                  locmafID
-	firstSampleFlags             locmafID
-	sampleSizes                  locmafID
-	sampleDurations              locmafID
-	sampleCompositionTimeOffsets locmafID
-	sampleFlags                  locmafID
+	// trun
+	moofFirstSampleFlags             locmafID = 12
+	moofSampleCount                  locmafID = 14
+	moofSampleSizes                  locmafID = 1
+	moofSampleDurations              locmafID = 3
+	moofSampleCompositionTimeOffsets locmafID = 5
+	moofSampleFlags                  locmafID = 7
 
-	//senc
-	perSampleIVSize      locmafID
-	initializationVector locmafID
-	subsampleCount       locmafID
-	bytesOfClearData     locmafID
-	bytesOfProtectedData locmafID
-}{
-	sampleDescriptionIndex:       2,
-	defaultSampleDuration:        4,
-	defaultSampleSize:            6,
-	defaultSampleFlags:           8,
-	baseMediaDecodeTime:          10,
-	firstSampleFlags:             12,
-	sampleCount:                  16,
-	sampleSizes:                  1,
-	sampleDurations:              3,
-	sampleCompositionTimeOffsets: 5,
-	sampleFlags:                  7,
-	perSampleIVSize:              14,
-	initializationVector:         9,
-	subsampleCount:               11,
-	bytesOfClearData:             13,
-	bytesOfProtectedData:         15,
-}
+	// senc
+	moofPerSampleIVSize      locmafID = 16
+	moofInitializationVector locmafID = 9
+	moofSubsampleCount       locmafID = 11
+	moofBytesOfClearData     locmafID = 13
+	moofBytesOfProtectedData locmafID = 15
+)
 
-var moovLocmafIDs = struct {
-	//mvhd
-	movieTimescale locmafID
-	//tkhd
-	tkhdFlags locmafID
-	matrix    locmafID
-	//elst
-	mediaTime locmafID
-	//stsd
-	format locmafID
+const (
+	// mvhd
+	moovMovieTimescale locmafID = 2
 
-	//Video
-	width  locmafID
-	height locmafID
-	colr   locmafID
-	pasp   locmafID
+	// tkhd
+	moovTkhdFlags locmafID = 4
 
-	//Audio
-	channelCount locmafID
-	chnl         locmafID
+	// elst
+	moovMediaTime locmafID = 6
 
-	//stsd
-	codecConfigurationBox locmafID
-	//schm
-	schemeType locmafID
-	//tenc
-	tencVersion            locmafID
-	defaultCryptByteBlock  locmafID
-	defaultSkipByteBlock   locmafID
-	defaultKID             locmafID
-	defaultPerSampleIVSize locmafID
-	defaultConstantIVSize  locmafID
-	defaultConstantIV      locmafID
+	// stsd
+	moovFormat locmafID = 8
 
-	//trex
-	defaultSampleDuration locmafID
-	defaultSampleSize     locmafID
-	defaultSampleFlags    locmafID
-}{
-	movieTimescale:         2,
-	tkhdFlags:              34,
-	matrix:                 4,
-	mediaTime:              6,
-	format:                 8,
-	width:                  10,
-	height:                 12,
-	colr:                   3,
-	pasp:                   5,
-	channelCount:           14,
-	chnl:                   7,
-	codecConfigurationBox:  1,
-	schemeType:             18,
-	tencVersion:            36,
-	defaultCryptByteBlock:  20,
-	defaultSkipByteBlock:   22,
-	defaultKID:             11,
-	defaultPerSampleIVSize: 24,
-	defaultConstantIVSize:  26,
-	defaultConstantIV:      9,
-	defaultSampleDuration:  28,
-	defaultSampleSize:      30,
-	defaultSampleFlags:     32,
-}
+	// Video
+	moovColr locmafID = 1
+	moovPasp locmafID = 3
+
+	// Audio
+	moovChannelCount locmafID = 10
+	moovChnl         locmafID = 5
+
+	// stsd
+	moovCodecConfigurationBox locmafID = 7
+
+	// schm
+	moovSchemeType locmafID = 12
+
+	// tenc
+	moovDefaultKID             locmafID = 9
+	moovDefaultConstantIV      locmafID = 11
+	moovTencVersion            locmafID = 14
+	moovDefaultCryptByteBlock  locmafID = 16
+	moovDefaultSkipByteBlock   locmafID = 18
+	moovDefaultPerSampleIVSize locmafID = 20
+	moovDefaultConstantIVSize  locmafID = 22
+
+	// trex
+	moovDefaultSampleDuration locmafID = 24
+	moovDefaultSampleSize     locmafID = 26
+	moovDefaultSampleFlags    locmafID = 28
+)
 
 // CompressMoof compresses a moof box by converting it to locmaf format.
 func CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox) ([]byte, error) {
@@ -163,31 +126,31 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locma
 		return nil, fmt.Errorf("tfhd is nil")
 	}
 	if tfhd.SampleDescriptionIndex != moov.Mvex.Trex.DefaultSampleDescriptionIndex {
-		importantFields[moofLocmafIDs.sampleDescriptionIndex] = appendVarint(nil, uint64(tfhd.SampleDescriptionIndex))
+		importantFields[moofSampleDescriptionIndex] = appendVarint(nil, uint64(tfhd.SampleDescriptionIndex))
 	}
 	if tfhd.DefaultSampleDuration != moov.Mvex.Trex.DefaultSampleDuration {
-		importantFields[moofLocmafIDs.defaultSampleDuration] = appendVarint(nil, uint64(tfhd.DefaultSampleDuration))
+		importantFields[moofDefaultSampleDuration] = appendVarint(nil, uint64(tfhd.DefaultSampleDuration))
 	}
 	if !singleSample && tfhd.DefaultSampleSize != moov.Mvex.Trex.DefaultSampleSize {
-		importantFields[moofLocmafIDs.defaultSampleSize] = appendVarint(nil, uint64(tfhd.DefaultSampleSize))
+		importantFields[moofDefaultSampleSize] = appendVarint(nil, uint64(tfhd.DefaultSampleSize))
 	}
 	if tfhd.DefaultSampleFlags != moov.Mvex.Trex.DefaultSampleFlags {
-		importantFields[moofLocmafIDs.defaultSampleFlags] = appendVarint(nil, uint64(tfhd.DefaultSampleFlags))
+		importantFields[moofDefaultSampleFlags] = appendVarint(nil, uint64(tfhd.DefaultSampleFlags))
 	}
 
 	tfdt := moof.Traf.Tfdt
 	if tfdt == nil {
 		return nil, fmt.Errorf("tfdt is nil")
 	}
-	importantFields[moofLocmafIDs.baseMediaDecodeTime] = appendVarint(nil, tfdt.BaseMediaDecodeTime())
+	importantFields[moofBaseMediaDecodeTime] = appendVarint(nil, tfdt.BaseMediaDecodeTime())
 
 	if trun == nil {
 		return nil, fmt.Errorf("trun is nil")
 	}
-	importantFields[moofLocmafIDs.sampleCount] = appendVarint(nil, uint64(len(trun.Samples)))
+	importantFields[moofSampleCount] = appendVarint(nil, uint64(len(trun.Samples)))
 	firstSampleFlags, firstSampleFlagsPresent := trun.FirstSampleFlags()
 	if firstSampleFlagsPresent {
-		importantFields[moofLocmafIDs.firstSampleFlags] = appendVarint(nil, uint64(firstSampleFlags))
+		importantFields[moofFirstSampleFlags] = appendVarint(nil, uint64(firstSampleFlags))
 	}
 
 	var sizes []byte
@@ -202,16 +165,16 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locma
 		compositionTimeOffsets = appendSignedVarint(compositionTimeOffsets, int64(sample.CompositionTimeOffset))
 	}
 	if trun.HasSampleDuration() {
-		importantFields[moofLocmafIDs.sampleDurations] = durations
+		importantFields[moofSampleDurations] = durations
 	}
 	if trun.HasSampleFlags() {
-		importantFields[moofLocmafIDs.sampleFlags] = flags
+		importantFields[moofSampleFlags] = flags
 	}
 	if trun.HasSampleSize() && !singleSample {
-		importantFields[moofLocmafIDs.sampleSizes] = sizes
+		importantFields[moofSampleSizes] = sizes
 	}
 	if trun.HasSampleCompositionTimeOffset() {
-		importantFields[moofLocmafIDs.sampleCompositionTimeOffsets] = compositionTimeOffsets
+		importantFields[moofSampleCompositionTimeOffsets] = compositionTimeOffsets
 	}
 
 	senc, perSampleIVSize, err := getParsedSencBox(moof, moov)
@@ -220,14 +183,14 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locma
 	}
 	if senc != nil {
 		if perSampleIVSize != getDefaultPerSampleIVSize(moov, moof.Traf.Tfhd.TrackID) {
-			importantFields[moofLocmafIDs.perSampleIVSize] = appendVarint(nil, uint64(perSampleIVSize))
+			importantFields[moofPerSampleIVSize] = appendVarint(nil, uint64(perSampleIVSize))
 		}
 		if perSampleIVSize > 0 && len(senc.IVs) > 0 {
 			allIVs := make([]byte, 0)
 			for _, iv := range senc.IVs {
 				allIVs = append(allIVs, iv...)
 			}
-			importantFields[moofLocmafIDs.initializationVector] = allIVs
+			importantFields[moofInitializationVector] = allIVs
 		}
 		if len(senc.SubSamples) > 0 {
 			totalSubsamples := 0
@@ -245,9 +208,9 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locma
 					bytesOfProtectedData = appendVarint(bytesOfProtectedData, uint64(subSample.BytesOfProtectedData))
 				}
 			}
-			importantFields[moofLocmafIDs.subsampleCount] = subSampleCounts
-			importantFields[moofLocmafIDs.bytesOfClearData] = bytesOfClearData
-			importantFields[moofLocmafIDs.bytesOfProtectedData] = bytesOfProtectedData
+			importantFields[moofSubsampleCount] = subSampleCounts
+			importantFields[moofBytesOfClearData] = bytesOfClearData
+			importantFields[moofBytesOfProtectedData] = bytesOfProtectedData
 		}
 	}
 	return importantFields, nil
@@ -288,47 +251,47 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 	traf.Tfhd.DefaultSampleFlags = trex.DefaultSampleFlags
 	perSampleIVSize := getDefaultPerSampleIVSize(moov, traf.Tfhd.TrackID)
 
-	if sampleDescriptionIndex, ok := readVarint(moofLocmafIDs.sampleDescriptionIndex, fieldValues); ok {
+	if sampleDescriptionIndex, ok := readVarint(moofSampleDescriptionIndex, fieldValues); ok {
 		traf.Tfhd.SampleDescriptionIndex = uint32(sampleDescriptionIndex)
 		traf.Tfhd.Flags |= mp4.TfhdSampleDescriptionIndexPresentFlag
 	}
 
-	if defaultSampleDuration, ok := readVarint(moofLocmafIDs.defaultSampleDuration, fieldValues); ok {
+	if defaultSampleDuration, ok := readVarint(moofDefaultSampleDuration, fieldValues); ok {
 		traf.Tfhd.DefaultSampleDuration = uint32(defaultSampleDuration)
 		traf.Tfhd.Flags |= mp4.TfhdDefaultSampleDurationPresentFlag
 	}
 
-	defaultSampleSize, hasDefaultSampleSize := readVarint(moofLocmafIDs.defaultSampleSize, fieldValues)
+	defaultSampleSize, hasDefaultSampleSize := readVarint(moofDefaultSampleSize, fieldValues)
 	if hasDefaultSampleSize {
 		traf.Tfhd.DefaultSampleSize = uint32(defaultSampleSize)
 		traf.Tfhd.Flags |= mp4.TfhdDefaultSampleSizePresentFlag
 	}
 
-	if defaultSampleFlags, ok := readVarint(moofLocmafIDs.defaultSampleFlags, fieldValues); ok {
+	if defaultSampleFlags, ok := readVarint(moofDefaultSampleFlags, fieldValues); ok {
 		traf.Tfhd.DefaultSampleFlags = uint32(defaultSampleFlags)
 		traf.Tfhd.Flags |= mp4.TfhdDefaultSampleFlagsPresentFlag
 	}
 
-	if ivSizeValue, ok := readVarint(moofLocmafIDs.perSampleIVSize, fieldValues); ok {
+	if ivSizeValue, ok := readVarint(moofPerSampleIVSize, fieldValues); ok {
 		perSampleIVSize = uint8(ivSizeValue)
 	}
 
-	baseMediaDecodeTime, ok := readVarint(moofLocmafIDs.baseMediaDecodeTime, fieldValues)
+	baseMediaDecodeTime, ok := readVarint(moofBaseMediaDecodeTime, fieldValues)
 	if !ok {
-		return nil, fmt.Errorf("missing locmaf id=%d", moofLocmafIDs.baseMediaDecodeTime)
+		return nil, fmt.Errorf("missing locmaf id=%d", moofBaseMediaDecodeTime)
 	}
 	traf.Tfdt.SetBaseMediaDecodeTime(uint64(baseMediaDecodeTime))
 
-	if firstSampleFlags, ok := readVarint(moofLocmafIDs.firstSampleFlags, fieldValues); ok {
+	if firstSampleFlags, ok := readVarint(moofFirstSampleFlags, fieldValues); ok {
 		traf.Trun.SetFirstSampleFlags(uint32(firstSampleFlags))
 	}
-	sampleCountValue, ok := readVarint(moofLocmafIDs.sampleCount, fieldValues)
+	sampleCountValue, ok := readVarint(moofSampleCount, fieldValues)
 	if !ok {
-		return nil, fmt.Errorf("missing locmaf id=%d", moofLocmafIDs.sampleCount)
+		return nil, fmt.Errorf("missing locmaf id=%d", moofSampleCount)
 	}
 	sampleCount := int(sampleCountValue)
 	sampleCompositionTimeOffsets, hasCompositionTimeOffsets, err :=
-		readSignedVarintList(moofLocmafIDs.sampleCompositionTimeOffsets, fieldValues)
+		readSignedVarintList(moofSampleCompositionTimeOffsets, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -337,10 +300,10 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 		traf.Trun.Flags &^= mp4.TrunSampleCompositionTimeOffsetPresentFlag
 	}
 	if len(sampleCompositionTimeOffsets) != sampleCount {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.sampleCompositionTimeOffsets)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSampleCompositionTimeOffsets)
 	}
 
-	sampleSizes, ok, err := readVarintList(moofLocmafIDs.sampleSizes, fieldValues)
+	sampleSizes, ok, err := readVarintList(moofSampleSizes, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -355,7 +318,7 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 		}
 	}
 
-	sampleDurations, ok, err := readVarintList(moofLocmafIDs.sampleDurations, fieldValues)
+	sampleDurations, ok, err := readVarintList(moofSampleDurations, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -363,7 +326,7 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 		sampleDurations = repeatUint64(uint64(traf.Tfhd.DefaultSampleDuration), sampleCount)
 	}
 
-	sampleFlags, ok, err := readVarintList(moofLocmafIDs.sampleFlags, fieldValues)
+	sampleFlags, ok, err := readVarintList(moofSampleFlags, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -372,13 +335,13 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 	}
 
 	if len(sampleDurations) != sampleCount {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.sampleDurations)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSampleDurations)
 	}
 	if len(sampleFlags) != sampleCount {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.sampleFlags)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSampleFlags)
 	}
 	if len(sampleSizes) != sampleCount {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.sampleSizes)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSampleSizes)
 	}
 
 	for i := 0; i < sampleCount; i++ {
@@ -419,7 +382,7 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		return nil, fmt.Errorf("mvhd not defined")
 	}
 
-	movieTimescale, ok := readVarint(moovLocmafIDs.movieTimescale, fieldValues)
+	movieTimescale, ok := readVarint(moovMovieTimescale, fieldValues)
 	if ok {
 		moov.Mvhd.Timescale = uint32(movieTimescale)
 	}
@@ -436,12 +399,12 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		return nil, fmt.Errorf("no timescale found in MSF track")
 	}
 
-	tkhdFlags, ok := readVarint(moovLocmafIDs.tkhdFlags, fieldValues)
+	tkhdFlags, ok := readVarint(moovTkhdFlags, fieldValues)
 	if ok {
 		trak.Tkhd.Flags = uint32(tkhdFlags)
 	}
 
-	mediaTime, ok := readVarint(moovLocmafIDs.mediaTime, fieldValues)
+	mediaTime, ok := readVarint(moovMediaTime, fieldValues)
 	if ok {
 		elstEntry := ensureTrackElstEntry(trak)
 		elstEntry.MediaTime = int64(mediaTime)
@@ -476,14 +439,14 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		entry.SampleRate = uint16(*track.SampleRate)
 	}
 
-	channelCount, ok := readVarint(moovLocmafIDs.channelCount, fieldValues)
+	channelCount, ok := readVarint(moovChannelCount, fieldValues)
 	if ok {
 		if audioEntry, ok := sampleEntry.(*mp4.AudioSampleEntryBox); ok {
 			audioEntry.ChannelCount = uint16(channelCount)
 		}
 	}
 
-	colrBox, ok, err := readBoxField(moovLocmafIDs.colr, fieldValues)
+	colrBox, ok, err := readBoxField(moovColr, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +454,7 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		setSampleEntryChildBox(sampleEntry, colrBox)
 	}
 
-	codecConfigurationBox, ok, err := readBoxField(moovLocmafIDs.codecConfigurationBox, fieldValues)
+	codecConfigurationBox, ok, err := readBoxField(moovCodecConfigurationBox, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +462,7 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		setSampleEntryChildBox(sampleEntry, codecConfigurationBox)
 	}
 
-	paspBox, ok, err := readBoxField(moovLocmafIDs.pasp, fieldValues)
+	paspBox, ok, err := readBoxField(moovPasp, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +470,7 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		setSampleEntryChildBox(sampleEntry, paspBox)
 	}
 
-	chnlBox, ok, err := readBoxField(moovLocmafIDs.chnl, fieldValues)
+	chnlBox, ok, err := readBoxField(moovChnl, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +482,7 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		addDefaultEncryptionBoxes(sampleEntry)
 	}
 
-	schemeTypeCode, ok := readVarint(moovLocmafIDs.schemeType, fieldValues)
+	schemeTypeCode, ok := readVarint(moovSchemeType, fieldValues)
 	if ok {
 		sinf := getSampleEntrySinf(sampleEntry)
 		if sinf != nil && sinf.Schm != nil {
@@ -536,34 +499,34 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 
 	tenc := getSampleEntryTenc(sampleEntry)
 
-	tencVersion, ok := readVarint(moovLocmafIDs.tencVersion, fieldValues)
+	tencVersion, ok := readVarint(moovTencVersion, fieldValues)
 	if ok && tenc != nil {
 		tenc.Version = byte(tencVersion)
 	}
 
-	defaultCryptByteBlock, ok := readVarint(moovLocmafIDs.defaultCryptByteBlock, fieldValues)
+	defaultCryptByteBlock, ok := readVarint(moovDefaultCryptByteBlock, fieldValues)
 	if ok && tenc != nil {
 		tenc.DefaultCryptByteBlock = uint8(defaultCryptByteBlock)
 	}
 
-	defaultSkipByteBlock, ok := readVarint(moovLocmafIDs.defaultSkipByteBlock, fieldValues)
+	defaultSkipByteBlock, ok := readVarint(moovDefaultSkipByteBlock, fieldValues)
 	if ok && tenc != nil {
 		tenc.DefaultSkipByteBlock = uint8(defaultSkipByteBlock)
 	}
 
-	if defaultKID, ok := fieldValues[moovLocmafIDs.defaultKID]; ok {
+	if defaultKID, ok := fieldValues[moovDefaultKID]; ok {
 		if tenc != nil && len(defaultKID) == 16 {
 			tenc.DefaultKID = append(mp4.UUID(nil), defaultKID...)
 		}
 	}
 
-	defaultPerSampleIVSize, ok := readVarint(moovLocmafIDs.defaultPerSampleIVSize, fieldValues)
+	defaultPerSampleIVSize, ok := readVarint(moovDefaultPerSampleIVSize, fieldValues)
 	if ok && tenc != nil {
 		tenc.DefaultPerSampleIVSize = uint8(defaultPerSampleIVSize)
 	}
 
-	defaultConstantIVSize, hasConstantIVSize := readVarint(moovLocmafIDs.defaultConstantIVSize, fieldValues)
-	defaultConstantIV, hasConstantIV := fieldValues[moovLocmafIDs.defaultConstantIV]
+	defaultConstantIVSize, hasConstantIVSize := readVarint(moovDefaultConstantIVSize, fieldValues)
+	defaultConstantIV, hasConstantIV := fieldValues[moovDefaultConstantIV]
 	if hasConstantIV && tenc != nil {
 		if hasConstantIVSize && int(defaultConstantIVSize) != len(defaultConstantIV) {
 			defaultConstantIV = defaultConstantIV[:0]
@@ -571,17 +534,17 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		tenc.DefaultConstantIV = append([]byte(nil), defaultConstantIV...)
 	}
 
-	defaultSampleDuration, ok := readVarint(moovLocmafIDs.defaultSampleDuration, fieldValues)
+	defaultSampleDuration, ok := readVarint(moovDefaultSampleDuration, fieldValues)
 	if ok && moov.Mvex != nil && moov.Mvex.Trex != nil {
 		moov.Mvex.Trex.DefaultSampleDuration = uint32(defaultSampleDuration)
 	}
 
-	defaultSampleSize, ok := readVarint(moovLocmafIDs.defaultSampleSize, fieldValues)
+	defaultSampleSize, ok := readVarint(moovDefaultSampleSize, fieldValues)
 	if ok && moov.Mvex != nil && moov.Mvex.Trex != nil {
 		moov.Mvex.Trex.DefaultSampleSize = uint32(defaultSampleSize)
 	}
 
-	defaultSampleFlags, ok := readVarint(moovLocmafIDs.defaultSampleFlags, fieldValues)
+	defaultSampleFlags, ok := readVarint(moovDefaultSampleFlags, fieldValues)
 	if ok && moov.Mvex != nil && moov.Mvex.Trex != nil {
 		moov.Mvex.Trex.DefaultSampleFlags = uint32(defaultSampleFlags)
 	}
@@ -627,7 +590,7 @@ func separateFields(data []byte) (map[locmafID][]byte, error) {
 	return fieldValues, nil
 }
 
-func createSizedLocmafProperty(headerID int64, payload []byte) []byte {
+func createSizedLocmafProperty(headerID locmafPropertyID, payload []byte) []byte {
 	locmafHeader := prependVarintSize(payload)
 	locmafHeader = append(appendVarint(nil, uint64(headerID)), locmafHeader...)
 	return locmafHeader
@@ -656,7 +619,7 @@ func encodeFields(fields map[locmafID][]byte) []byte {
 }
 
 type locmafObject struct {
-	headerID    int64
+	headerID    locmafPropertyID
 	properties  []byte
 	mdatPayload []byte
 }
@@ -684,7 +647,7 @@ func parseLocmafObject(payload []byte) (*locmafObject, error) {
 	mdatPayload := payload[pos+int(propertiesLength):]
 
 	return &locmafObject{
-		headerID:    int64(headerID),
+		headerID:    locmafPropertyID(headerID),
 		properties:  propertiesPayload,
 		mdatPayload: mdatPayload,
 	}, nil
@@ -699,7 +662,7 @@ func extractImportantMoovFields(moov *mp4.MoovBox) (map[locmafID][]byte, error) 
 	if moov.Mvhd == nil {
 		return nil, fmt.Errorf("mvhd not defined")
 	}
-	importantFields[moovLocmafIDs.movieTimescale] = appendVarint(nil, uint64(moov.Mvhd.Timescale))
+	importantFields[moovMovieTimescale] = appendVarint(nil, uint64(moov.Mvhd.Timescale))
 
 	track := moov.Trak
 	if track == nil && len(moov.Traks) > 0 {
@@ -709,50 +672,50 @@ func extractImportantMoovFields(moov *mp4.MoovBox) (map[locmafID][]byte, error) 
 		track.Mdia.Minf.Stbl == nil || track.Mdia.Minf.Stbl.Stsd == nil || len(track.Mdia.Minf.Stbl.Stsd.Children) == 0 {
 		return nil, fmt.Errorf("track sample description not defined")
 	}
-	importantFields[moovLocmafIDs.tkhdFlags] = appendVarint(nil, uint64(track.Tkhd.Flags))
+	importantFields[moovTkhdFlags] = appendVarint(nil, uint64(track.Tkhd.Flags))
 
 	if track.Edts != nil && len(track.Edts.Elst) > 0 && len(track.Edts.Elst[0].Entries) > 0 {
 		mediaTime := track.Edts.Elst[0].Entries[0].MediaTime
 		if mediaTime < 0 {
-			return nil, fmt.Errorf("unable to set locmaf id=%d: negative media time", moovLocmafIDs.mediaTime)
+			return nil, fmt.Errorf("unable to set locmaf id=%d: negative media time", moovMediaTime)
 		}
-		importantFields[moovLocmafIDs.mediaTime] = appendVarint(nil, uint64(mediaTime))
+		importantFields[moovMediaTime] = appendVarint(nil, uint64(mediaTime))
 	}
 
 	sampleEntry := track.Mdia.Minf.Stbl.Stsd.Children[0]
 	format := sampleEntry.Type()
 	if len(format) != 4 {
-		return nil, fmt.Errorf("unable to set locmaf id=%d: expected 4-byte code, got %q", moovLocmafIDs.format, format)
+		return nil, fmt.Errorf("unable to set locmaf id=%d: expected 4-byte code, got %q", moovFormat, format)
 	}
 	formatCode := uint32(format[0])<<24 | uint32(format[1])<<16 | uint32(format[2])<<8 | uint32(format[3])
-	importantFields[moovLocmafIDs.format] = appendVarint(nil, uint64(formatCode))
+	importantFields[moovFormat] = appendVarint(nil, uint64(formatCode))
 
 	switch entry := sampleEntry.(type) {
 	case *mp4.VisualSampleEntryBox:
 		if colr, err := findChildBoxByType(entry.Children, "colr"); err != nil {
-			if err := setFieldBox(importantFields, moovLocmafIDs.colr, colr); err != nil {
-				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovLocmafIDs.colr, err)
+			if err := setFieldBox(importantFields, moovColr, colr); err != nil {
+				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovColr, err)
 			}
 		}
 		if pasp, err := findChildBoxByType(entry.Children, "pasp"); err != nil {
-			if err = setFieldBox(importantFields, moovLocmafIDs.pasp, pasp); err != nil {
-				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovLocmafIDs.pasp, err)
+			if err = setFieldBox(importantFields, moovPasp, pasp); err != nil {
+				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovPasp, err)
 			}
 		}
 	case *mp4.AudioSampleEntryBox:
-		importantFields[moovLocmafIDs.channelCount] = appendVarint(nil, uint64(entry.ChannelCount))
+		importantFields[moovChannelCount] = appendVarint(nil, uint64(entry.ChannelCount))
 
 		if chnl, err := findChildBoxByType(entry.Children, "chnl"); err != nil {
-			if err := setFieldBox(importantFields, moovLocmafIDs.chnl, chnl); err != nil {
-				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovLocmafIDs.chnl, err)
+			if err := setFieldBox(importantFields, moovChnl, chnl); err != nil {
+				return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovChnl, err)
 			}
 		}
 	}
 
 	codecConfigurationBox, _ := getCodecConfigurationBox(sampleEntry)
 	if codecConfigurationBox != nil {
-		if err := setFieldBox(importantFields, moovLocmafIDs.codecConfigurationBox, codecConfigurationBox); err != nil {
-			return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovLocmafIDs.codecConfigurationBox, err)
+		if err := setFieldBox(importantFields, moovCodecConfigurationBox, codecConfigurationBox); err != nil {
+			return nil, fmt.Errorf("unable to set locmaf id=%d: %w", moovCodecConfigurationBox, err)
 		}
 	}
 
@@ -762,35 +725,35 @@ func extractImportantMoovFields(moov *mp4.MoovBox) (map[locmafID][]byte, error) 
 			schemeType := sinf.Schm.SchemeType
 			if len(schemeType) != 4 {
 				return nil, fmt.Errorf("unable to set locmaf id=%d: expected 4-byte code, got %q",
-					moovLocmafIDs.schemeType, schemeType)
+					moovSchemeType, schemeType)
 			}
 			schemeTypeCode := uint32(schemeType[0])<<24 | uint32(schemeType[1])<<16 |
 				uint32(schemeType[2])<<8 | uint32(schemeType[3])
 
-			importantFields[moovLocmafIDs.schemeType] = appendVarint(nil, uint64(schemeTypeCode))
+			importantFields[moovSchemeType] = appendVarint(nil, uint64(schemeTypeCode))
 		}
 
 		if sinf.Schi != nil && sinf.Schi.Tenc != nil {
 			tenc := sinf.Schi.Tenc
-			importantFields[moovLocmafIDs.tencVersion] = appendVarint(nil, uint64(tenc.Version))
-			importantFields[moovLocmafIDs.defaultCryptByteBlock] = appendVarint(nil, uint64(tenc.DefaultCryptByteBlock))
-			importantFields[moovLocmafIDs.defaultSkipByteBlock] = appendVarint(nil, uint64(tenc.DefaultSkipByteBlock))
+			importantFields[moovTencVersion] = appendVarint(nil, uint64(tenc.Version))
+			importantFields[moovDefaultCryptByteBlock] = appendVarint(nil, uint64(tenc.DefaultCryptByteBlock))
+			importantFields[moovDefaultSkipByteBlock] = appendVarint(nil, uint64(tenc.DefaultSkipByteBlock))
 			if len(tenc.DefaultKID) == 16 {
-				importantFields[moovLocmafIDs.defaultKID] = append([]byte(nil), tenc.DefaultKID...)
+				importantFields[moovDefaultKID] = append([]byte(nil), tenc.DefaultKID...)
 			}
-			importantFields[moovLocmafIDs.defaultPerSampleIVSize] = appendVarint(nil, uint64(tenc.DefaultPerSampleIVSize))
+			importantFields[moovDefaultPerSampleIVSize] = appendVarint(nil, uint64(tenc.DefaultPerSampleIVSize))
 			if len(tenc.DefaultConstantIV) > 0 {
-				importantFields[moovLocmafIDs.defaultConstantIVSize] = appendVarint(nil, uint64(len(tenc.DefaultConstantIV)))
-				importantFields[moovLocmafIDs.defaultConstantIV] = append([]byte(nil), tenc.DefaultConstantIV...)
+				importantFields[moovDefaultConstantIVSize] = appendVarint(nil, uint64(len(tenc.DefaultConstantIV)))
+				importantFields[moovDefaultConstantIV] = append([]byte(nil), tenc.DefaultConstantIV...)
 			}
 		}
 	}
 
 	if moov.Mvex != nil && moov.Mvex.Trex != nil {
-		importantFields[moovLocmafIDs.defaultSampleDuration] = appendVarint(
+		importantFields[moovDefaultSampleDuration] = appendVarint(
 			nil, uint64(moov.Mvex.Trex.DefaultSampleDuration))
-		importantFields[moovLocmafIDs.defaultSampleSize] = appendVarint(nil, uint64(moov.Mvex.Trex.DefaultSampleSize))
-		importantFields[moovLocmafIDs.defaultSampleFlags] = appendVarint(nil, uint64(moov.Mvex.Trex.DefaultSampleFlags))
+		importantFields[moovDefaultSampleSize] = appendVarint(nil, uint64(moov.Mvex.Trex.DefaultSampleSize))
+		importantFields[moovDefaultSampleFlags] = appendVarint(nil, uint64(moov.Mvex.Trex.DefaultSampleFlags))
 	}
 	return importantFields, nil
 }
@@ -844,10 +807,12 @@ func getSampleEntryTenc(sampleEntry mp4.Box) *mp4.TencBox {
 	return sinf.Schi.Tenc
 }
 
-func ensurePrimarySampleEntry(init *mp4.InitSegment, fieldValues map[locmafID][]byte, role string) (*mp4.TrakBox, error) {
+func ensurePrimarySampleEntry(init *mp4.InitSegment,
+	fieldValues map[locmafID][]byte, role string) (*mp4.TrakBox, error) {
+
 	moov := init.Moov
 	format := ""
-	if formatCode, ok := readVarint(moovLocmafIDs.format, fieldValues); ok {
+	if formatCode, ok := readVarint(moovFormat, fieldValues); ok {
 		format = uint32ToFourCC(uint32(formatCode))
 	} else {
 		return nil, fmt.Errorf("no format code provided")
@@ -1069,16 +1034,16 @@ func repeatUint64(value uint64, count int) []uint64 {
 
 func reconstructSencFromFields(fieldValues map[locmafID][]byte, sampleCount int,
 	perSampleIVSize uint8, createEmpty bool) (*mp4.SencBox, error) {
-	ivsPayload, hasIVs := fieldValues[moofLocmafIDs.initializationVector]
-	subSampleCounts, hasSubSampleCounts, err := readVarintList(moofLocmafIDs.subsampleCount, fieldValues)
+	ivsPayload, hasIVs := fieldValues[moofInitializationVector]
+	subSampleCounts, hasSubSampleCounts, err := readVarintList(moofSubsampleCount, fieldValues)
 	if err != nil {
 		return nil, err
 	}
-	bytesOfClearData, hasBytesOfClearData, err := readVarintList(moofLocmafIDs.bytesOfClearData, fieldValues)
+	bytesOfClearData, hasBytesOfClearData, err := readVarintList(moofBytesOfClearData, fieldValues)
 	if err != nil {
 		return nil, err
 	}
-	bytesOfProtectedData, hasBytesOfProtectedData, err := readVarintList(moofLocmafIDs.bytesOfProtectedData, fieldValues)
+	bytesOfProtectedData, hasBytesOfProtectedData, err := readVarintList(moofBytesOfProtectedData, fieldValues)
 	if err != nil {
 		return nil, err
 	}
@@ -1091,19 +1056,19 @@ func reconstructSencFromFields(fieldValues map[locmafID][]byte, sampleCount int,
 
 	if hasIVs {
 		if perSampleIVSize == 0 {
-			return nil, fmt.Errorf("locmaf id=%d present but per-sample IV size is 0", moofLocmafIDs.initializationVector)
+			return nil, fmt.Errorf("locmaf id=%d present but per-sample IV size is 0", moofInitializationVector)
 		}
 		if len(ivsPayload)%int(perSampleIVSize) != 0 {
-			return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.initializationVector)
+			return nil, fmt.Errorf("locmaf id=%d length mismatch", moofInitializationVector)
 		}
 		if len(ivsPayload)/int(perSampleIVSize) != sampleCount {
-			return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.initializationVector)
+			return nil, fmt.Errorf("locmaf id=%d length mismatch", moofInitializationVector)
 		}
 		senc.SetPerSampleIVSize(perSampleIVSize)
 	}
 
 	if hasSubSampleCounts && len(subSampleCounts) != sampleCount {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.subsampleCount)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSubsampleCount)
 	}
 
 	totalSubsamples := 0
@@ -1114,13 +1079,13 @@ func reconstructSencFromFields(fieldValues map[locmafID][]byte, sampleCount int,
 	}
 
 	if hasBytesOfClearData && len(bytesOfClearData) != totalSubsamples {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.bytesOfClearData)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofBytesOfClearData)
 	}
 	if hasBytesOfProtectedData && len(bytesOfProtectedData) != totalSubsamples {
-		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofLocmafIDs.bytesOfProtectedData)
+		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofBytesOfProtectedData)
 	}
 	if (hasBytesOfClearData || hasBytesOfProtectedData) && !hasSubSampleCounts {
-		return nil, fmt.Errorf("missing locmaf id=%d", moofLocmafIDs.subsampleCount)
+		return nil, fmt.Errorf("missing locmaf id=%d", moofSubsampleCount)
 	}
 
 	for i := range sampleCount {
@@ -1139,10 +1104,10 @@ func reconstructSencFromFields(fieldValues map[locmafID][]byte, sampleCount int,
 				clearData := bytesOfClearData[j]
 				protectedData := bytesOfProtectedData[j]
 				if clearData > 0xffff {
-					return nil, fmt.Errorf("invalid locmaf id=%d", moofLocmafIDs.bytesOfClearData)
+					return nil, fmt.Errorf("invalid locmaf id=%d", moofBytesOfClearData)
 				}
 				if protectedData > 0xffffffff {
-					return nil, fmt.Errorf("invalid locmaf id=%d", moofLocmafIDs.bytesOfProtectedData)
+					return nil, fmt.Errorf("invalid locmaf id=%d", moofBytesOfProtectedData)
 				}
 				subsamples[j] = mp4.SubSamplePattern{
 					BytesOfClearData:     uint16(clearData),
