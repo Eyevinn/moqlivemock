@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- CENC IV reuse across CMAF fragments: track per-`ContentTrack` running IV
+  and chain it through successive `GenCMAFChunk` calls using mp4ff's new
+  `EncryptFragment` return value (mp4ff #499)
+
+### Changed
+
+- Bumped mp4ff to v0.52.0 (new `EncryptFragment` signature returning the
+  next IV so callers can avoid IV reuse on cenc)
+
 ## [0.8.0] - 2026-05-05
 
 ### Added

@@ -59,6 +59,10 @@ type ContentTrack struct {
 	contentProtectionRefIDs []string
 	cenc                    *CENCInfo
 	ipd                     *mp4.InitProtectData
+	// currentIV is the per-track running IV used for encrypting the next fragment.
+	// mp4.EncryptFragment chains IVs across fragments (incremented by the number of
+	// encrypted AES blocks) so that callers using the same key avoid IV reuse.
+	currentIV []byte
 }
 
 type Asset struct {
@@ -405,6 +409,10 @@ func addProtectionInfoToTrack(ct ContentTrack, drm *DRMInfo, suffix string, prot
 	protectedCt.Name = ct.Name + suffix
 	protectedCt.Protection = prot
 	protectedCt.cenc = drm.cenc
+	// Each ContentTrack instance owns its IV state. Tracks copied from this one
+	// (e.g., via Asset.GetTrackByName for a new subscription) share the initial
+	// slice header until the first EncryptFragment call replaces it.
+	protectedCt.currentIV = append([]byte(nil), drm.cenc.iv...)
 	refIDs := make([]string, 0, len(drm.ContentProtections))
 	for _, cp := range drm.ContentProtections {
 		refIDs = append(refIDs, cp.RefID)
@@ -908,6 +916,8 @@ func (t *ContentTrack) CalcSample(nr uint64) (startTime, origNr uint64) {
 
 // encryptFragment encrypts an encoded fragment and returns the encrypted bytes.
 // For mp4ff.EncryptFragment to work the fragment is first decoded, then encrypted, then finally encoded.
+// mp4.EncryptFragment returns the next IV to use; we store it on the track so consecutive
+// fragments chain without IV reuse (cenc) or carry the constant IV forward (cbcs).
 func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	bytesReader := bytes.NewReader(fragmentBytes)
 	var pos uint64 = 0
@@ -933,10 +943,14 @@ func (t *ContentTrack) encryptFragment(fragmentBytes []byte) ([]byte, error) {
 	decodedFrag.AddChild(moof)
 	decodedFrag.AddChild(mdat)
 
-	err = mp4.EncryptFragment(decodedFrag, t.cenc.key, t.cenc.iv, t.ipd)
+	if t.currentIV == nil {
+		t.currentIV = append([]byte(nil), t.cenc.iv...)
+	}
+	nextIV, err := mp4.EncryptFragment(decodedFrag, t.cenc.key, t.currentIV, t.ipd)
 	if err != nil {
 		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
+	t.currentIV = nextIV
 	sw := bits.NewFixedSliceWriter(int(decodedFrag.Size()))
 	err = decodedFrag.EncodeSW(sw)
 	if err != nil {
