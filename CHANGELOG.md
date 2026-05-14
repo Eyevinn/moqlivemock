@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- LOCMAF (Low Overhead CMAF) packaging: a LOC-inspired variant of CMAF that
+  encodes only the non-derivable `moof`/`moov` fields as MoQT key-value pairs
+  using QUIC varints. The first object of every group is a LOCMAF *full* moof
+  (carries every required field); subsequent objects in the group are LOCMAF
+  *delta* moofs that only carry the fields that changed since the previous
+  moof. Signed fields (composition time offsets, delta differences) use
+  zigzag-encoded varints. The catalog `initData` field is the LOCMAF-encoded
+  `moov`, so subscribers reconstruct a valid CMAF init segment by decoding
+  the LOCMAF fields and merging them into an empty CMAF template
+- LOCMAF namespaces in mlmpub: `locmaf/clear` (always), `locmaf/drm-{scheme}`
+  (when `-drmpath` is set) and `locmaf/eccp-{scheme}` (when `-kid`/`-iv` are
+  set). LOCMAF carries all information needed to reconstruct a valid CMAF
+  file and therefore supports both commercial DRM (CPIX) and ClearKey/ECCP
+- LOCMAF subscriber support in mlmsub: decodes full and delta moofs against
+  the LOCMAF-encoded `moov` from the catalog and rewrites a standard CMAF
+  fragment for the mux/video/audio outputs
+- `cmd/locmaf` test asset generator: writes a CMAF init segment, the
+  matching LOCMAF init, and two LOCMAF objects (full moof + delta moof) so
+  other LOCMAF implementations can test against a reference asset. Output is
+  encrypted (cbcs) to exercise the encrypted-field path. Input and output
+  paths are configurable via `-input` / `-out`
+- `cmd/locmaf roundtrip` subcommand: encodes a fragmented MP4 through the
+  LOCMAF encoder/decoder, verifies sample-level fidelity (mdat byte-equal
+  and matching size / duration / effective flags / composition-time offset
+  / decode time per ISO 14496-12 §8.8.8.2), and prints wire-overhead
+  statistics for the init segment and per-moof. Useful for validating
+  LOCMAF compression and fidelity against arbitrary fMP4 inputs
+- `MoofDeltaCompressor` / `MoofDeltaDecompressor` types in `internal` that
+  maintain the per-track previous-moof state used to encode and decode
+  LOCMAF delta moofs
+
 ### Fixed
 
 - CENC IV reuse across CMAF fragments: track per-`ContentTrack` running IV
