@@ -6,6 +6,7 @@ import (
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,66 @@ func TestMoofDeltaRequiresPreviousMoof(t *testing.T) {
 	require.ErrorContains(t, err, "missing previous moof state")
 }
 
+// Forward-compat: a future LOCMAF revision may introduce additional
+// top-level objects (e.g. prft, sidx). Existing receivers should log and
+// skip such objects without erroring, so they can stream alongside the
+// known moof/moof-delta objects.
+func TestDecompressMoofSkipsUnknownObjects(t *testing.T) {
+	_, moov := loadVideoTrack(t)
+	const unknownHeaderID locmafPropertyID = 99
+	payload := encodeFields(map[locmafID][]byte{1: {0xab, 0xcd}})
+	object := createSizedLocmafProperty(unknownHeaderID, payload)
+
+	decoder := &MoofDeltaDecompressor{}
+	moof, mdat, err := decoder.DecompressMoof(object, 0, moov)
+	require.NoError(t, err)
+	require.Nil(t, moof)
+	require.Nil(t, mdat)
+}
+
+// A delta moof normally omits moofBaseMediaDecodeTime; the receiver derives
+// it from the previous moof's state. When the actual BMDT diverges (a
+// discontinuity such as a splice or stream-tear), the encoder must emit
+// moofBaseMediaDecodeTime as an absolute value in the delta moof and the
+// decoder must use that value verbatim instead of the derivation.
+func TestMoofDeltaEmitsAbsoluteBMDTOnDiscontinuity(t *testing.T) {
+	_, moov := loadVideoTrack(t)
+
+	// Previous moof: 2 samples × 512 ticks → contiguous next BMDT = 1024.
+	previous := map[locmafID][]byte{
+		moofBaseMediaDecodeTime:   appendVarint(nil, 0),
+		moofSampleCount:           appendVarint(nil, 2),
+		moofDefaultSampleDuration: appendVarint(nil, 512),
+	}
+
+	// Contiguous current (BMDT = 1024) should leave BMDT out of the delta.
+	contiguous := cloneFieldValues(previous)
+	contiguous[moofBaseMediaDecodeTime] = appendVarint(nil, 1024)
+	deltaContiguous, err := diffMoofFields(contiguous, previous, moov)
+	require.NoError(t, err)
+	require.NotContains(t, deltaContiguous, moofBaseMediaDecodeTime,
+		"contiguous BMDT should not appear in delta")
+
+	// Discontinuous current (BMDT = 999999) should be carried as absolute.
+	discontinuous := cloneFieldValues(previous)
+	discontinuous[moofBaseMediaDecodeTime] = appendVarint(nil, 999999)
+	deltaDiscontinuous, err := diffMoofFields(discontinuous, previous, moov)
+	require.NoError(t, err)
+	require.Contains(t, deltaDiscontinuous, moofBaseMediaDecodeTime,
+		"discontinuous BMDT should appear in delta")
+	emitted, _, err := quicvarint.Parse(deltaDiscontinuous[moofBaseMediaDecodeTime])
+	require.NoError(t, err)
+	require.EqualValues(t, 999999, emitted,
+		"absolute BMDT must be encoded as an unsigned varint, not a delta")
+
+	// Round-trip via applyMoofDelta restores the absolute value.
+	applied, err := applyMoofDelta(previous, deltaDiscontinuous, moov)
+	require.NoError(t, err)
+	restored, _, err := quicvarint.Parse(applied[moofBaseMediaDecodeTime])
+	require.NoError(t, err)
+	require.EqualValues(t, 999999, restored)
+}
+
 func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	track, moov := loadVideoTrack(t)
 	compressor := &MoofDeltaCompressor{}
@@ -101,7 +162,7 @@ func TestMoofDeltaFieldsUseSignedVarints(t *testing.T) {
 		),
 	}
 
-	deltaFields, err := diffMoofFields(current, previous)
+	deltaFields, err := diffMoofFields(current, previous, nil)
 	require.NoError(t, err)
 
 	durationDelta, ok, err := readSignedVarintList(
@@ -137,6 +198,7 @@ func TestMoofDeltaDeletedFieldsUseUnsignedVarints(t *testing.T) {
 		map[locmafID][]byte{
 			moofDefaultSampleDuration: appendVarint(nil, 5),
 		},
+		nil,
 	)
 	require.NoError(t, err)
 

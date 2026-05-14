@@ -94,7 +94,7 @@ func loadProtectedTestGeneratorTrack(inputPath string) (*internal.ContentTrack, 
 
 func generateFullMoofObjects(track *internal.ContentTrack, count int) ([][]byte, error) {
 	objects := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		var compressor internal.MoofDeltaCompressor
 		object, err := track.GenLocmafChunk(uint32(i), uint64(i), uint64(i+1), &compressor)
 		if err != nil {

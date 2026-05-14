@@ -3,7 +3,7 @@ package internal
 import (
 	"bytes"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -125,16 +125,21 @@ func extractImportantMoofFields(moof *mp4.MoofBox, moov *mp4.MoovBox) (map[locma
 	if tfhd == nil {
 		return nil, fmt.Errorf("tfhd is nil")
 	}
-	if tfhd.SampleDescriptionIndex != moov.Mvex.Trex.DefaultSampleDescriptionIndex {
+	trex := moov.Mvex.Trex
+	// Only emit a tfhd default when the tfhd actually carries the override flag
+	// AND its value differs from trex. Without the Has*() guard the zero from
+	// an unset tfhd field would be written as an explicit zero, suppressing
+	// the trex default on the decoder side.
+	if tfhd.HasSampleDescriptionIndex() && tfhd.SampleDescriptionIndex != trex.DefaultSampleDescriptionIndex {
 		importantFields[moofSampleDescriptionIndex] = appendVarint(nil, uint64(tfhd.SampleDescriptionIndex))
 	}
-	if tfhd.DefaultSampleDuration != moov.Mvex.Trex.DefaultSampleDuration {
+	if tfhd.HasDefaultSampleDuration() && tfhd.DefaultSampleDuration != trex.DefaultSampleDuration {
 		importantFields[moofDefaultSampleDuration] = appendVarint(nil, uint64(tfhd.DefaultSampleDuration))
 	}
-	if !singleSample && tfhd.DefaultSampleSize != moov.Mvex.Trex.DefaultSampleSize {
+	if !singleSample && tfhd.HasDefaultSampleSize() && tfhd.DefaultSampleSize != trex.DefaultSampleSize {
 		importantFields[moofDefaultSampleSize] = appendVarint(nil, uint64(tfhd.DefaultSampleSize))
 	}
-	if tfhd.DefaultSampleFlags != moov.Mvex.Trex.DefaultSampleFlags {
+	if tfhd.HasDefaultSampleFlags() && tfhd.DefaultSampleFlags != trex.DefaultSampleFlags {
 		importantFields[moofDefaultSampleFlags] = appendVarint(nil, uint64(tfhd.DefaultSampleFlags))
 	}
 
@@ -238,7 +243,14 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 	if moov == nil || moov.Mvex == nil || moov.Mvex.Trex == nil {
 		return nil, fmt.Errorf("moov or trex not defined")
 	}
-	frag, err := mp4.CreateFragment(seqnum, 1)
+	// LOCMAF does not carry track_id (CMAF allows only one track per moov),
+	// so reuse whatever the moov advertises. Falls back to 1 if the caller
+	// hasn't populated tkhd.
+	trackID := uint32(1)
+	if moov.Trak != nil && moov.Trak.Tkhd != nil && moov.Trak.Tkhd.TrackID != 0 {
+		trackID = moov.Trak.Tkhd.TrackID
+	}
+	frag, err := mp4.CreateFragment(seqnum, trackID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
@@ -344,7 +356,7 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 		return nil, fmt.Errorf("locmaf id=%d length mismatch", moofSampleSizes)
 	}
 
-	for i := 0; i < sampleCount; i++ {
+	for i := range sampleCount {
 		traf.Trun.AddSample(mp4.NewSample(uint32(sampleFlags[i]), uint32(sampleDurations[i]),
 			uint32(sampleSizes[i]), int32(sampleCompositionTimeOffsets[i])))
 	}
@@ -404,10 +416,13 @@ func DecompressInit(data []byte, track Track) (*mp4.InitSegment, error) {
 		trak.Tkhd.Flags = uint32(tkhdFlags)
 	}
 
-	mediaTime, ok := readVarint(moovMediaTime, fieldValues)
+	mediaTime, ok, err := readSignedVarint(moovMediaTime, fieldValues)
+	if err != nil {
+		return nil, fmt.Errorf("invalid locmaf id=%d: %w", moovMediaTime, err)
+	}
 	if ok {
 		elstEntry := ensureTrackElstEntry(trak)
-		elstEntry.MediaTime = int64(mediaTime)
+		elstEntry.MediaTime = mediaTime
 	}
 
 	trak.Mdia.Mdhd.Timescale = uint32(*track.Timescale)
@@ -602,9 +617,7 @@ func encodeFields(fields map[locmafID][]byte) []byte {
 	for key := range fields {
 		keys = append(keys, key)
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
+	slices.Sort(keys)
 
 	payload := make([]byte, 0)
 	for _, key := range keys {
@@ -676,10 +689,7 @@ func extractImportantMoovFields(moov *mp4.MoovBox) (map[locmafID][]byte, error) 
 
 	if track.Edts != nil && len(track.Edts.Elst) > 0 && len(track.Edts.Elst[0].Entries) > 0 {
 		mediaTime := track.Edts.Elst[0].Entries[0].MediaTime
-		if mediaTime < 0 {
-			return nil, fmt.Errorf("unable to set locmaf id=%d: negative media time", moovMediaTime)
-		}
-		importantFields[moovMediaTime] = appendVarint(nil, uint64(mediaTime))
+		importantFields[moovMediaTime] = appendSignedVarint(nil, mediaTime)
 	}
 
 	sampleEntry := track.Mdia.Minf.Stbl.Stsd.Children[0]
@@ -826,13 +836,21 @@ func ensurePrimarySampleEntry(init *mp4.InitSegment,
 }
 
 func createSampleEntryForFormat(format, mediaType string) mp4.Box {
+	switch format {
+	case "stpp":
+		// Namespace / schemaLocation are not currently carried in the
+		// LOCMAF moov payload, so the reconstructed StppBox has empty
+		// strings. Consumers that need the namespace should supply it
+		// out-of-band (e.g. as a catalog-side field) — see TODO.
+		return mp4.NewStppBox("", "", "")
+	case "wvtt":
+		return &mp4.WvttBox{}
+	}
 	switch mediaType {
 	case "audio":
-		entry := mp4.CreateAudioSampleEntryBox(format, 0, 0, 0, nil)
-		return entry
+		return mp4.CreateAudioSampleEntryBox(format, 0, 0, 0, nil)
 	default:
-		entry := mp4.CreateVisualSampleEntryBox(format, 0, 0, nil)
-		return entry
+		return mp4.CreateVisualSampleEntryBox(format, 0, 0, nil)
 	}
 }
 
@@ -1172,6 +1190,20 @@ func readVarint(id locmafID, fieldValues map[locmafID][]byte) (uint64, bool) {
 	return varint, true
 }
 
+// readSignedVarint reads a single zigzag-encoded signed varint from the
+// fieldValues map.
+func readSignedVarint(id locmafID, fieldValues map[locmafID][]byte) (int64, bool, error) {
+	value, ok := fieldValues[id]
+	if !ok {
+		return 0, false, nil
+	}
+	decoded, _, err := parseSignedVarint(value)
+	if err != nil {
+		return 0, true, err
+	}
+	return decoded, true, nil
+}
+
 // readVarintList reads a sequence of varints from the fieldValues map with the specified locmafID.
 // Returned values are: the uint64-encoded varint array and a bool representing
 // if the map contained a field with the specified locmafID.
@@ -1193,9 +1225,8 @@ func readVarintList(id locmafID, fieldValues map[locmafID][]byte) ([]uint64, boo
 	return varintList, true, nil
 }
 
-// readSignedVarintList reads a sequence of signed varints from the fieldValues map with the specified locmafID.
-// Returned values are: the uint64-encoded varint array and a bool representing
-// if the map contained a field with the specified locmafID.
+// readSignedVarintList reads a sequence of signed (zigzag-encoded) varints
+// for the given id. The bool is false if the field is absent.
 func readSignedVarintList(id locmafID, fieldValues map[locmafID][]byte) ([]int64, bool, error) {
 	value, ok := fieldValues[id]
 	if !ok {
