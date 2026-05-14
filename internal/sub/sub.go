@@ -568,6 +568,10 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 						"error", err)
 					return
 				}
+				if o.Payload == nil {
+					// Unknown LOCMAF object skipped; move on to the next one.
+					continue
+				}
 			}
 
 			if h.cenc != nil {
@@ -623,6 +627,11 @@ func decompressLocmafObject(payload []byte, seqnum uint32,
 	moof, mdatData, err := decompressor.DecompressMoof(payload, seqnum, moov)
 	if err != nil {
 		return nil, err
+	}
+	if moof == nil {
+		// Unknown LOCMAF object — already logged in the decompressor; emit
+		// nothing so the receiver moves on to the next object.
+		return nil, nil
 	}
 
 	frag := mp4.NewFragment()

@@ -10,7 +10,7 @@ func main() {
 	command := "experiments"
 	if len(args) > 0 {
 		switch args[0] {
-		case "testgen":
+		case "testgen", "roundtrip":
 			command = args[0]
 			args = args[1:]
 		case "help", "-h", "--help":
@@ -23,6 +23,8 @@ func main() {
 	switch command {
 	case "testgen":
 		err = runTestFileGeneratorCommand(args)
+	case "roundtrip":
+		err = runRoundtripCommand(args)
 	default:
 		err = fmt.Errorf("unknown command %q", command)
 	}
@@ -33,8 +35,9 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Fprintf(os.Stderr, "usage: locmaf [experiments|testgen] [flags]\n")
+	fmt.Fprintf(os.Stderr, "usage: locmaf [experiments|testgen|roundtrip] [flags]\n")
 	fmt.Fprintf(os.Stderr, "\n")
 	fmt.Fprintf(os.Stderr, "commands:\n")
 	fmt.Fprintf(os.Stderr, "  testgen      generate LOCMAF test files\n")
+	fmt.Fprintf(os.Stderr, "  roundtrip    encode an fMP4 through LOCMAF and verify fidelity\n")
 }

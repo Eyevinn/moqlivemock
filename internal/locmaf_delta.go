@@ -3,9 +3,11 @@ package internal
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"math"
 
 	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/quic-go/quic-go/quicvarint"
 )
 
 const moofDeltaDeletedLocmafIDs locmafID = 17
@@ -28,7 +30,7 @@ func (c *MoofDeltaCompressor) CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox)
 		return MoofHeader, encodeFields(importantFields), nil
 	}
 
-	deltaFields, err := diffMoofFields(importantFields, c.previous)
+	deltaFields, err := diffMoofFields(importantFields, c.previous, moov)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -51,7 +53,10 @@ type MoofDeltaDecompressor struct {
 }
 
 // DecompressMoof decompresses a locmaf object to create a moof box.
-// Both moof, and delta moof properties are accepted.
+// Both moof and delta moof object IDs are accepted. Objects carrying an
+// unrecognised header ID are silently skipped (after a warn-level log) so
+// receivers can interoperate with future LOCMAF additions like prft or
+// sidx. Skipped objects are signalled by a nil *MoofBox return value.
 func (d *MoofDeltaDecompressor) DecompressMoof(data []byte,
 	seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox, []byte, error) {
 	object, err := parseLocmafObject(data)
@@ -62,12 +67,21 @@ func (d *MoofDeltaDecompressor) DecompressMoof(data []byte,
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to decompress moof property: %w", err)
 	}
+	if moof == nil {
+		return nil, nil, nil
+	}
 	return moof, object.mdatPayload, nil
 }
 
-// decompressMoofProptery converts a moof or delta moof property to a moof box.
+// decompressMoofProperty converts a moof or delta moof property to a moof
+// box. Unknown header IDs return a nil moof (caller treats as skip).
 func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID locmafPropertyID, data []byte,
 	seqnum uint32, moov *mp4.MoovBox, mdatPayloadLength int) (*mp4.MoofBox, error) {
+	if headerID != MoofHeader && headerID != MoofDeltaHeader {
+		slog.Warn("locmaf: skipping unknown object",
+			"id", int(headerID), "payloadLength", len(data))
+		return nil, nil
+	}
 	if len(data) == 0 && headerID != MoofDeltaHeader {
 		return nil, fmt.Errorf("empty locmaf moof data")
 	}
@@ -89,8 +103,6 @@ func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID locmafPropertyID
 			return nil, err
 		}
 		d.previous = cloneFieldValues(fieldValues)
-	default:
-		return nil, fmt.Errorf("unsupported moof header id=%d", headerID)
 	}
 
 	return decompressMoofUsingFieldValues(fieldValues, seqnum, moov, mdatPayloadLength)
@@ -106,11 +118,20 @@ func cloneFieldValues(fields map[locmafID][]byte) map[locmafID][]byte {
 
 // diffMoofFields returns the difference in each field value
 // as a map if the field value is not equal to the previous value.
-func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte, error) {
+//
+// moofBaseMediaDecodeTime is handled specially: a delta moof normally omits
+// it and the receiver derives BMDT as previous_bmdt + sum(previous_durations).
+// When the derivation does not match the actual current value (e.g. across
+// a splice, audio pre-roll, or stream-tear re-anchor), the absolute current
+// BMDT is emitted in the delta moof so the receiver can re-anchor in-band.
+func diffMoofFields(current, previous map[locmafID][]byte, moov *mp4.MoovBox) (map[locmafID][]byte, error) {
 	deltaFields := make(map[locmafID][]byte)
 
 	for key, currentValue := range current {
 		if key == moofBaseMediaDecodeTime {
+			if shouldEmitAbsoluteBMDT(currentValue, previous, moov) {
+				deltaFields[key] = append([]byte(nil), currentValue...)
+			}
 			continue
 		}
 		previousValue := previous[key]
@@ -137,14 +158,40 @@ func diffMoofFields(current, previous map[locmafID][]byte) (map[locmafID][]byte,
 	return deltaFields, nil
 }
 
+// shouldEmitAbsoluteBMDT reports whether the delta moof needs to carry the
+// absolute current BMDT (because the implicit derivation from the previous
+// moof's state would yield a different value, or because the derivation is
+// not possible at all).
+func shouldEmitAbsoluteBMDT(currentValue []byte, previous map[locmafID][]byte, moov *mp4.MoovBox) bool {
+	derived, err := deriveNextBaseMediaDecodeTime(previous, moov)
+	if err != nil {
+		return true
+	}
+	currentBMDT, _, err := quicvarint.Parse(currentValue)
+	if err != nil {
+		return true
+	}
+	return currentBMDT != derived
+}
+
 // applyMoofDelta creates a current field value map by looking at the previous map, and the current delta map.
+//
+// moofBaseMediaDecodeTime is handled specially: an explicit value in the
+// delta (an absolute BMDT, encoded the same way as in a full moof)
+// overrides the implicit derivation from previous_bmdt + sum(durations).
+// This lets the encoder re-anchor the timeline across a discontinuity
+// without a new top-level header ID.
 func applyMoofDelta(previous, deltaFields map[locmafID][]byte, moov *mp4.MoovBox) (map[locmafID][]byte, error) {
 	current := cloneFieldValues(previous)
-	baseMediaDecodeTime, err := deriveNextBaseMediaDecodeTime(previous, moov)
-	if err != nil {
-		return nil, err
+	if explicitBMDT, ok := deltaFields[moofBaseMediaDecodeTime]; ok {
+		current[moofBaseMediaDecodeTime] = append([]byte(nil), explicitBMDT...)
+	} else {
+		baseMediaDecodeTime, err := deriveNextBaseMediaDecodeTime(previous, moov)
+		if err != nil {
+			return nil, err
+		}
+		current[moofBaseMediaDecodeTime] = appendVarint(nil, baseMediaDecodeTime)
 	}
-	current[moofBaseMediaDecodeTime] = appendVarint(nil, baseMediaDecodeTime)
 
 	deletedFields, ok, err := readVarintList(moofDeltaDeletedLocmafIDs, deltaFields)
 	if err != nil {
@@ -158,6 +205,10 @@ func applyMoofDelta(previous, deltaFields map[locmafID][]byte, moov *mp4.MoovBox
 
 	for key, deltaValue := range deltaFields {
 		if key == moofDeltaDeletedLocmafIDs {
+			continue
+		}
+		if key == moofBaseMediaDecodeTime {
+			// Already applied above as an absolute override.
 			continue
 		}
 		value, err := applyMoofFieldDelta(key, deltaValue, previous[key])

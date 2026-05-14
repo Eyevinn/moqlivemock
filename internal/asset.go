@@ -459,7 +459,7 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 			}
 			return videoTracks[i].SampleBitrate < videoTracks[j].SampleBitrate
 		})
-		for i := 0; i < len(videoTracks); i++ {
+		for i := range videoTracks {
 			if videoTracks[i].Duration != videoTracks[0].Duration {
 				return nil, fmt.Errorf("video tracks have different durations")
 			}
@@ -816,7 +816,7 @@ func calcCmafBitrate(ct *ContentTrack) (int, error) {
 		return 0, fmt.Errorf("measure CMAF chunk for %s: %w", ct.Name, err)
 	}
 	rawBytes := 0
-	for i := 0; i < batch; i++ {
+	for i := range batch {
 		rawBytes += len(ct.Samples[i].Data)
 	}
 	overheadBytes := len(chunk) - rawBytes + cmafObjectOverheadBytes
