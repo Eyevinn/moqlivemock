@@ -100,6 +100,48 @@ func TestLOCBitrateHEVCExceedsParameterSetOverheadAVC(t *testing.T) {
 	}
 }
 
+// TestLocmafBitrateIsLowerThanCmaf asserts that for the same source track
+// the LOCMAF catalog bitrate is strictly lower than the CMAF catalog
+// bitrate. This guards against regressions where the locmaf-packaged
+// Track ends up reporting the CMAF wire bitrate (which was the case
+// before calcLocmafBitrate was introduced).
+func TestLocmafBitrateIsLowerThanCmaf(t *testing.T) {
+	asset, err := LoadAsset("../assets/test10s", 1, 1)
+	require.NoError(t, err)
+
+	cmafCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0, "cmaf")
+	require.NoError(t, err)
+	locmafCat, err := asset.GenCMAFCatalogEntry("locmaf/clear", ProtectionNone, 0, "locmaf")
+	require.NoError(t, err)
+
+	cmafByName := indexTracks(cmafCat.Tracks, "")
+	locmafByName := indexTracks(locmafCat.Tracks, "")
+	require.NotEmpty(t, cmafByName)
+	require.NotEmpty(t, locmafByName)
+
+	for name, cmafTrack := range cmafByName {
+		locmafTrack, ok := locmafByName[name]
+		require.True(t, ok, "track %s missing from LOCMAF catalog", name)
+		require.NotNil(t, cmafTrack.Bitrate)
+		require.NotNil(t, locmafTrack.Bitrate)
+
+		// LOCMAF moofs are dramatically smaller than CMAF moofs at
+		// sample-level fragmentation; the per-track bitrate must reflect
+		// that.
+		require.Less(t, *locmafTrack.Bitrate, *cmafTrack.Bitrate,
+			"%s: LOCMAF bitrate %d should be lower than CMAF bitrate %d",
+			name, *locmafTrack.Bitrate, *cmafTrack.Bitrate)
+
+		// LOCMAF should still exceed the raw sample bitrate — there is
+		// always some per-object framing and the per-group full moof.
+		ct := asset.GetTrackByName(name)
+		require.NotNil(t, ct)
+		require.Greater(t, *locmafTrack.Bitrate, int(ct.SampleBitrate),
+			"%s: LOCMAF bitrate %d should exceed raw sample bitrate %d",
+			name, *locmafTrack.Bitrate, ct.SampleBitrate)
+	}
+}
+
 func indexTracks(tracks []Track, suffix string) map[string]Track {
 	out := make(map[string]Track, len(tracks))
 	for _, tr := range tracks {
