@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `MoofDeltaCompressor` / `MoofDeltaDecompressor` types in `internal` that
   maintain the per-track previous-moof state used to encode and decode
   LOCMAF delta moofs
+- `locmafVersion` string field on CMSF catalog `Track` entries when
+  `packaging == "locmaf"`, currently `"0.1"`. Lets receivers detect that
+  the encoder is ahead and fall back to a non-LOCMAF packaging rather
+  than silently mis-decoding a behaviourally-changed field. Tracked by
+  the `internal.LocmafVersion` constant. See `docs/LOCMAF.md` for the
+  rationale and the planned stabilisation path
 
 ### Fixed
 
