@@ -101,6 +101,12 @@ type Track struct {
 	// CMSF adds: "cmaf", a custom Low Overhead CMAF variant uses "locmaf".
 	Packaging string `json:"packaging"`
 
+	// LocmafVersion advertises the LOCMAF wire-format version when
+	// Packaging == "locmaf". Receivers should compare against their
+	// highest supported version and fall back if the encoder is ahead.
+	// Omitted for non-LOCMAF packagings.
+	LocmafVersion string `json:"locmafVersion,omitempty"`
+
 	// IsLive indicates whether new objects will be added to the track.
 	// Required field at the track level (MSF Section 5.1.15).
 	IsLive bool `json:"isLive"`

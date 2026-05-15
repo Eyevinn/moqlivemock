@@ -574,6 +574,9 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				Timescale:   Ptr(int(ct.TimeScale)),
 				Language:    ct.Language,
 			}
+			if packaging == "locmaf" {
+				track.LocmafVersion = LocmafVersion
+			}
 
 			// Populate optional fields if available
 			switch ct.ContentType {
