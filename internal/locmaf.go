@@ -10,6 +10,14 @@ import (
 	"github.com/quic-go/quic-go/quicvarint"
 )
 
+// LocmafVersion is the LOCMAF wire-format version advertised in the CMSF
+// catalog Track entry. The format is still evolving so any change that
+// is not strictly additive at the header-ID level (for example the BMDT
+// override in delta moofs) bumps this value. Receivers compare against
+// their highest supported version and fall back when the encoder is
+// ahead.
+const LocmafVersion = "0.1"
+
 type locmafPropertyID int
 
 const (

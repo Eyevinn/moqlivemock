@@ -83,6 +83,43 @@ We want each group to be independent, but inside each group we assume
 that all objects are delivered in order. The main target of LOCMAF
 is to compress the series of moof boxes inside a group.
 
+## CMSF catalog signalling: `locmafVersion`
+
+While the LOCMAF wire format is still evolving, the CMSF catalog Track
+entry carries an explicit version string in a field named
+`locmafVersion`. The current value is **`"0.1"`**.
+
+```json
+{
+  "name": "video_400kbps_avc",
+  "packaging": "locmaf",
+  "locmafVersion": "0.1",
+  "initData": "...",
+  "...": "..."
+}
+```
+
+The field is present only when `packaging == "locmaf"` and is omitted
+otherwise. Receivers should compare against their highest supported
+version and fall back to a non-LOCMAF packaging (or refuse the track)
+when the encoder is ahead.
+
+The reason for an explicit catalog-level version is that the header-ID
+space + skip-unknown rule only handles *additive* new top-level object
+kinds. Behavioural changes inside existing kinds — like the absolute
+`moofBaseMediaDecodeTime` override that was added to the delta moof —
+would silently mis-decode at an older receiver, because the same field
+ID is being reinterpreted. The version field lets a receiver detect
+that case before it starts reading wire bytes.
+
+When the format stabilises the version can be frozen at `"1.0"` and
+treated as informational; further evolution falls back to the header-ID
+space as the additive extensibility mechanism. If there is interest in
+LOCMAF beyond the current implementations, it would make sense to
+publish the wire format and the catalog signalling as an IETF Internet
+Draft so that the IDs and version semantics become a coordinated spec
+rather than an in-tree convention.
+
 ## Where LOCMAF wins: the moof delta stream
 
 A typical `moof` box for N samples of unencrypted content is
