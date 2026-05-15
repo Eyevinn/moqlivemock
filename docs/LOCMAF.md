@@ -187,6 +187,42 @@ delta stream's compounding benefit per-fragment is much larger when each
 fragment is small and similar to its neighbour — exactly the low-latency
 regime.
 
+### Catalog `bitrate` impact on the bundled assets
+
+The CMSF catalog `bitrate` field reports the wire bitrate of the track,
+including the relevant per-object framing overhead. On the bundled
+`assets/test10s` content at one sample per MoQ object (the default for
+`mlmpub`), the LOCMAF and CMAF reports look like this:
+
+| track | sample [bps] | cmaf [bps] | locmaf [bps] | saved [bps] | saved % |
+| ----- | -----------: | ---------: | -----------: | ----------: | ------: |
+| `audio_monotonic_128kbps_aac`  | 128 001 | 171 501 | 131 887 | 39 614 | 23.1 % |
+| `audio_monotonic_128kbps_opus` | 128 400 | 174 800 | 132 536 | 42 264 | 24.2 % |
+| `audio_monotonic_192kbps_ac3`  | 192 000 | 221 000 | 194 636 | 26 364 | 11.9 % |
+| `video_400kbps_avc`            | 373 200 | 396 400 | 376 488 | 19 912 |  5.0 % |
+| `video_400kbps_hevc`           | 299 392 | 322 592 | 302 680 | 19 912 |  6.2 % |
+| `video_600kbps_avc`            | 559 505 | 582 705 | 562 793 | 19 912 |  3.4 % |
+| `video_600kbps_hevc`           | 408 785 | 431 985 | 412 073 | 19 912 |  4.6 % |
+| `video_900kbps_avc`            | 844 504 | 867 704 | 847 792 | 19 912 |  2.3 % |
+| `video_900kbps_hevc`           | 610 182 | 633 382 | 613 470 | 19 912 |  3.1 % |
+
+The savings figure is **per object, not per byte of mdat**: 19 912 bps
+saved / 8 / 25 fps ≈ 99.6 bytes saved per moof, matching the
+"~100 B CMAF moof becomes a 2 B LOCMAF delta moof" headline. The
+per-track *percentage* therefore looks smaller on high-bitrate video
+(the mdat dominates) and larger on low-bitrate audio (the moof header
+is a much bigger fraction of the wire cost). For the 128 kbps AAC track
+that the user typically asks about, the catalog bitrate drops from
+171.5 kbps (CMAF) to 131.9 kbps (LOCMAF) — a 23% saving against the
+CMAF-reported wire bitrate, and only ~3% above the raw sample bitrate
+(the remaining LOCMAF wire cost is ~2 B/object × ~47 obj/s ≈ 750 bps
+plus 8 B/object MoQ framing).
+
+These numbers come from the `internal.calcLocmafBitrate` measurement
+path: one full + one delta LOCMAF chunk generated with a fresh
+`MoofDeltaCompressor`, amortised over a 1 s MoQ group. Re-runnable via
+`go test ./internal/ -run TestLocmafBitrateIsLowerThanCmaf -v`.
+
 ### Prerequisite: commensurate media timescales
 
 The two-byte steady state described above depends on one assumption from

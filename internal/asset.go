@@ -556,9 +556,20 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 			}
 
 			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
-			cmafBitrate, err := calcCmafBitrate(&ct)
-			if err != nil {
-				return nil, fmt.Errorf("could not calculate CMAF bitrate for track %s: %w", ct.Name, err)
+			var (
+				bitrate int
+				bErr    error
+			)
+			if packaging == "locmaf" {
+				bitrate, bErr = calcLocmafBitrate(&ct)
+				if bErr != nil {
+					return nil, fmt.Errorf("could not calculate LOCMAF bitrate for track %s: %w", ct.Name, bErr)
+				}
+			} else {
+				bitrate, bErr = calcCmafBitrate(&ct)
+				if bErr != nil {
+					return nil, fmt.Errorf("could not calculate CMAF bitrate for track %s: %w", ct.Name, bErr)
+				}
 			}
 
 			track := Track{
@@ -570,7 +581,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				AltGroup:    &altGroup,
 				InitData:    initData,
 				Codec:       ct.SpecData.Codec(),
-				Bitrate:     &cmafBitrate,
+				Bitrate:     &bitrate,
 				Timescale:   Ptr(int(ct.TimeScale)),
 				Language:    ct.Language,
 			}
@@ -825,6 +836,57 @@ func calcCmafBitrate(ct *ContentTrack) (int, error) {
 	overheadBytes := len(chunk) - rawBytes + cmafObjectOverheadBytes
 	objectRate := float64(ct.TimeScale) / float64(ct.SampleDur) / float64(batch)
 	return int(float64(ct.SampleBitrate) + 8*float64(overheadBytes)*objectRate), nil
+}
+
+// calcLocmafBitrate returns the wire bitrate of a LOCMAF-packaged track in
+// bits per second. It measures one full and one delta LOCMAF chunk (using
+// adjacent samples from the start of the loop) and amortises the per-group
+// full moof over a 1-second group of subsequent delta moofs. The full moof
+// happens once per MoQ group; deltas happen every other object.
+func calcLocmafBitrate(ct *ContentTrack) (int, error) {
+	batch := ct.SampleBatch
+	if batch <= 0 {
+		batch = 1
+	}
+	if uint64(batch) > uint64(len(ct.Samples)) {
+		batch = len(ct.Samples)
+	}
+	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
+		return int(ct.SampleBitrate), nil
+	}
+	var compressor MoofDeltaCompressor
+	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), &compressor)
+	if err != nil {
+		return 0, fmt.Errorf("measure LOCMAF full chunk for %s: %w", ct.Name, err)
+	}
+	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), &compressor)
+	if err != nil {
+		return 0, fmt.Errorf("measure LOCMAF delta chunk for %s: %w", ct.Name, err)
+	}
+	rawFull := 0
+	for i := range batch {
+		rawFull += len(ct.Samples[i].Data)
+	}
+	rawDelta := 0
+	for i := range batch {
+		rawDelta += len(ct.Samples[batch+i].Data)
+	}
+	fullOverhead := len(fullChunk) - rawFull + cmafObjectOverheadBytes
+	deltaOverhead := len(deltaChunk) - rawDelta + cmafObjectOverheadBytes
+
+	// Objects per second = samples per second / batch.
+	objectsPerSec := float64(ct.TimeScale) / float64(ct.SampleDur) / float64(batch)
+	// One full moof per MoQ group (one group per second at MoqGroupDurMS=1000).
+	fullsPerSec := 1000.0 / float64(MoqGroupDurMS)
+	deltasPerSec := objectsPerSec - fullsPerSec
+	if deltasPerSec < 0 {
+		// Very large batches (one object spans multiple groups) — keep
+		// the math sane by collapsing to a single full-equivalent rate.
+		fullsPerSec = objectsPerSec
+		deltasPerSec = 0
+	}
+	extraBytesPerSec := float64(fullOverhead)*fullsPerSec + float64(deltaOverhead)*deltasPerSec
+	return int(float64(ct.SampleBitrate) + 8*extraBytesPerSec), nil
 }
 
 // calcLOCBitrate returns the wire bitrate of a LOC-packaged track in bits per
