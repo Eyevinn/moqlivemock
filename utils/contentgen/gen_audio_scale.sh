@@ -20,7 +20,7 @@ done
 echo "Fragment duration: ${fragment_duration}ms"
 
 # Create a 10.5-second silent base (slightly longer to avoid truncated last frame)
-ffmpeg -f lavfi -i "anullsrc=r=48000:cl=stereo:d=10.1" -c:a pcm_s16le silent_base.wav
+ffmpeg -f lavfi -i "anullsrc=r=48000:cl=stereo:d=10.5" -c:a pcm_s16le silent_base.wav
 
 # Frequencies for extended C-major scale (C4 to E5)
 # C4=261.63, D4=293.66, E4=329.63, F4=349.23, G4=392.00, A4=440.00, B4=493.88, C5=523.25, D5=587.33, E5=659.25
@@ -62,7 +62,7 @@ for config in "${codec_configs[@]}"; do
   # Add opus-specific options
   if [[ "$codec" == "opus" ]]; then
     ffmpeg -y -i c_major_scale.wav \
-      -t 10.1 \
+      -t 10.5 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -strict -2 \
@@ -74,7 +74,7 @@ for config in "${codec_configs[@]}"; do
       "output/$output"
   else
     ffmpeg -y -i c_major_scale.wav \
-      -t 10.1 \
+      -t 10.5 \
       -c:a "$codec" \
       -b:a "$bitrate" \
       -ar 48000 \

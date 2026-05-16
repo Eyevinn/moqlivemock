@@ -1002,10 +1002,16 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*m
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
+		// Use the source sample's actual duration. For uniform-duration
+		// sources this equals t.SampleDur; for a source with a short
+		// trailing sample (which we no longer ship, but defensively support)
+		// it preserves the correct per-sample dur on the wire — using
+		// t.SampleDur would over-claim the duration of the short sample and
+		// confuse strict audio renderers (Safari).
 		fs := mp4.FullSample{
 			Sample: mp4.Sample{
 				Flags: orig.Flags,
-				Dur:   uint32(t.SampleDur),
+				Dur:   orig.Dur,
 				Size:  uint32(len(orig.Data)),
 			},
 			DecodeTime: startTime,

@@ -68,6 +68,94 @@ func TestPrepareTrack(t *testing.T) {
 	}
 }
 
+// TestAACLoopWrap verifies that the AAC asset (469 uniform 1024-ts samples,
+// 10.005333 s of music) produces an emission pattern that averages exactly
+// 10 s of music per wall-clock loop over the 4-loop / 40 s / 1875-frame
+// period. The snap-logic in CalcSample handles the [469,469,469,468] cycle
+// implicitly via integer modulo against LoopDur=480000. The drift-free
+// invariant — that effective music time equals 40 s exactly at nr=1875 —
+// is what eliminates the Safari per-loop latency creep.
+func TestAACLoopWrap(t *testing.T) {
+	fh, err := os.Open("../assets/test10s/audio_monotonic_128kbps_aac.mp4")
+	require.NoError(t, err)
+	defer fh.Close()
+	ct, err := InitContentTrack(fh, "aac", 1, 1)
+	require.NoError(t, err)
+
+	require.Equal(t, uint32(48000), ct.TimeScale)
+	require.Equal(t, uint32(1024), ct.SampleDur)
+	require.Equal(t, 469, len(ct.Samples), "expected 469 uniform music samples")
+	// Mimic what setLoopDuration assigns for audio in a non-zero group.
+	ct.LoopDur = 10 * ct.TimeScale // 480000
+
+	cases := []struct {
+		nr   uint64
+		bmdt uint64
+		orig uint64
+		desc string
+	}{
+		{0, 0, 0, "first emitted fragment"},
+		{1, 1024, 1, "second fragment"},
+		{46, 47104, 46, "last fragment of group 0"},
+		{47, 48128, 47, "first fragment of group 1"},
+		{468, 479232, 468, "last source sample of loop 0"},
+		{469, 480256, 0, "loop 1 wrap → source idx 0"},
+		{937, 959488, 468, "last source sample of loop 1"},
+		{938, 960512, 0, "loop 2 wrap → source idx 0"},
+		{1406, 1439744, 468, "last source sample of loop 2"},
+		{1407, 1440768, 0, "loop 3 wrap → source idx 0"},
+		// Loop 3 only consumes 468 source samples (the snap-to-frame in
+		// CalcSample makes the 4th loop in each period one frame shorter),
+		// keeping the cumulative pattern correct.
+		{1874, 1918976, 467, "last sample of the 468-frame 4th loop"},
+		{1875, 1920000, 0, "period reset (4th wrap) — back to source idx 0"},
+	}
+	for _, c := range cases {
+		bmdt, orig := ct.CalcSample(c.nr)
+		require.Equalf(t, c.bmdt, bmdt, "BMDT for nr=%d (%s)", c.nr, c.desc)
+		require.Equalf(t, c.orig, orig, "origNr for nr=%d (%s)", c.nr, c.desc)
+	}
+
+	// Drift-free invariant: after 1875 emitted frames, the effective music
+	// time is *exactly* 40 s in this track's timescale. This is the property
+	// that prevents per-loop latency creep.
+	require.Equal(t, uint64(40)*uint64(ct.TimeScale), uint64(1875)*uint64(ct.SampleDur))
+}
+
+// TestAACGroupBounds verifies the MoQ group boundaries (samples per 1-s
+// wall-clock group) for AAC. With SampleDur=1024 at TS=48000 a 1-s group
+// holds 48000/1024 = 46.875 frames, so groups have 47 samples except group 7
+// (which lands on the exact integer boundary 8*48000 = 375*1024).
+func TestAACGroupBounds(t *testing.T) {
+	fh, err := os.Open("../assets/test10s/audio_monotonic_128kbps_aac.mp4")
+	require.NoError(t, err)
+	defer fh.Close()
+	ct, err := InitContentTrack(fh, "aac", 1, 1)
+	require.NoError(t, err)
+
+	cases := []struct {
+		groupNr                uint64
+		expectStart, expectEnd uint64
+	}{
+		{0, 0, 47},     // 47 samples
+		{1, 47, 94},    // 47
+		{2, 94, 141},   // 47
+		{3, 141, 188},  // 47
+		{4, 188, 235},  // 47
+		{5, 235, 282},  // 47
+		{6, 282, 329},  // 47
+		{7, 329, 375},  // 46  (8*48000 = 375*1024 exactly → no ceil bump)
+		{8, 375, 422},  // 47
+		{9, 422, 469},  // 47  (last samples before the loop wrap)
+		{10, 469, 516}, // 47  (straddles the wrap; first sample is loop 1 source idx 0)
+	}
+	for _, c := range cases {
+		startNr, endNr := calcMoQGroup(ct, c.groupNr, MoqGroupDurMS)
+		require.Equalf(t, c.expectStart, startNr, "startNr for group %d", c.groupNr)
+		require.Equalf(t, c.expectEnd, endNr, "endNr for group %d", c.groupNr)
+	}
+}
+
 func TestLoadAsset(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
