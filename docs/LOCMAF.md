@@ -6,6 +6,18 @@ packaging format in [CMSF][CMSF] and was developed as part of
 the Master Thesis work by Hugo Björs under the supervision of Torbjörn
 Einarsson at Eyevinn 2026.
 
+A central motivation is **DRM-protected live streaming**. LOC carries
+raw codec frames and cannot transport the per-sample encryption
+metadata (CENC `senc` IVs, subsample maps, `tenc` defaults) that the
+browser EME / CDM pipeline needs to decrypt. LOCMAF preserves the
+CMAF structure that carries this metadata, so a CMAF-protected source
+survives the LOCMAF round-trip and decrypts in MSE / EME with the
+standard Widevine / PlayReady / FairPlay / ClearKey systems. The CMSF
+catalog signals DRM exactly as it does for plain CMAF
+(`contentProtections` array + per-track `contentProtectionRefIDs`).
+See [DRM with LOCMAF](#drm-with-locmaf) for the pipeline and the
+measured cenc / cbcs wire-cost impact.
+
 LOCMAF provides a way to reconstruct full CMAF headers, segments, and chunks
 which are semantically equivalent to the sender side input.
 They may differ in some syntactic details and total size, but all samples
@@ -222,6 +234,51 @@ These numbers come from the `internal.calcLocmafBitrate` measurement
 path: one full + one delta LOCMAF chunk generated with a fresh
 `MoofDeltaCompressor`, amortised over a 1 s MoQ group. Re-runnable via
 `go test ./internal/ -run TestLocmafBitrateIsLowerThanCmaf -v`.
+
+### Scope: CMAF-shaped MP4 only
+
+LOCMAF's "one MoQ object = one `moof` + one `mdat`" wire mapping, and
+most of the elisions described above, rely on the structural
+restrictions that CMAF (ISO/IEC 23000-19) places on ISOBMFF. LOCMAF
+targets the **`cmfc` structural brand** at minimum; the stricter `cmf2`
+brand (which §7.7.3 requires for self-decodable fragments) is a
+superset — see the `tfhd`-vs-`trex` defaults footnote[^cmf2-defaults].
+The specific rules LOCMAF leans on:
+
+- **Exactly one media track** per CMAF Track / CMAF Header
+  (§7.3.2: "The MovieBox SHALL contain exactly one track containing
+  media data"). LOCMAF therefore encodes a single track per LOCMAF
+  stream, with the moov stamped at catalog time and `track_id` dropped
+  on the wire — the catalog already names the track.
+- **Exactly one `trun`** per `TrackFragmentBox`
+  (Table 4 — Boxes Contained in CMAF Fragment; Format Req. = 1). Both
+  the delta-moof field list and the implicit-BMDT derivation assume a
+  single, total ordering of samples per moof; the moof field IDs 1, 3,
+  5, 7 are single per-sample lists rather than per-trun lists.
+- **Exactly one `mdat`** per CMAF Chunk
+  (§7.3.3.2: "A CMAF Chunk SHALL contain one ISOBMF segment …
+  constrained to include one MovieFragmentBox followed by one
+  MediaDataBox"). LOCMAF objects map 1:1 to CMAF Chunks at sample-level
+  fragmentation, so the `mdat` is the suffix of the MoQ object and its
+  8-byte `size + 'mdat'` header is dropped — its length is derived
+  from the MoQ object length minus the LOCMAF wrapper.
+- **Sample byte offsets are moof-relative**
+  (§7.3.2.3 point 5 and §7.5.16: `data-offset-present` SHALL be 1 with
+  `data_offset` relative to the start of the `MovieFragmentBox`).
+  LOCMAF can therefore reconstruct the offset deterministically and
+  never carries `data_offset` over the wire.
+- **Encrypted-content `saio` has `entry_count == 1`** (§8.2.2). The
+  per-sample auxiliary information for an entire chunk is one
+  contiguous block keyed off a single offset, which matches what
+  LOCMAF carries: one `moofInitializationVector` (id 9) blob plus one
+  `moofSubsampleCount` / `moofBytesOfClearData` / `moofBytesOfProtectedData`
+  list per fragment, never multiple groups of auxiliary info.
+
+General fragmented MP4 may contain multiple `traf` / `trun` boxes per
+moof, multiple `mdat` boxes per fragment, or multiple tracks multiplexed
+into one file (and `mdat` need not be tightly packed). LOCMAF does not
+address those layouts directly: source content must be CMAF-conformant
+— or trivially repackaged into CMAF — before LOCMAF encoding.
 
 ### Prerequisite: commensurate media timescales
 
@@ -581,6 +638,275 @@ emitted; the moov payload typically lands at 50–80 B plus the codec config
 box. For encrypted content the tenc-related IDs (9, 11, 12, 14, 16, 18,
 20, 22) appear, and the moov grows by the size of the codec-specific keys
 and IVs.
+
+## DRM with LOCMAF
+
+LOCMAF's primary motivation is **low-latency, low-overhead DRM-protected
+streaming over MoQ**. Encrypted CMAF content survives the LOCMAF
+compression and reconstruction round-trip unchanged at the bytes that
+matter for decryption, so the standard CMSF / MSE / EME / CDM pipeline
+takes over on the receiver as if the content had arrived as plain CMAF.
+
+### End-to-end pipeline
+
+```
+   ┌─────────────────┐
+   │ Encrypted CMAF  │  (mdat = ciphertext; senc has per-sample IVs +
+   │ at the encoder  │   subsample maps; tenc carries default KID / IV)
+   └────────┬────────┘
+            │  encode
+            ▼
+   ┌─────────────────┐
+   │ LOCMAF on wire  │  mdat bytes carried verbatim (no re-encryption);
+   │ (moof + mdat)   │  senc data packed into LOCMAF moof field IDs
+   │                 │  9, 11, 13, 15, 16; tenc defaults carried in
+   │                 │  catalog initData via IDs 9, 11, 12, 14, 16, 18,
+   │                 │  20, 22
+   └────────┬────────┘
+            │  decode
+            ▼
+   ┌─────────────────┐
+   │ Reconstructed   │  mdat byte-equal to source; senc rebuilt
+   │ CMAF fragment   │  from LOCMAF fields; trex/tenc rebuilt from
+   │                 │  catalog initData
+   └────────┬────────┘
+            │  MSE append
+            ▼
+   ┌─────────────────┐
+   │ MSE / EME       │  Browser CDM (Widevine, PlayReady, FairPlay,
+   │ + CDM           │  ClearKey) decrypts using the per-sample IV +
+   │                 │  KID, same as any CMAF stream
+   └─────────────────┘
+```
+
+The crucial property: **the mdat payload is byte-equal end-to-end**.
+LOCMAF is "byte-lossy at the trun level but playback-lossless" for
+unprotected content, and the same applies to encrypted content — the
+moof structure may differ between source and reconstruction, but the
+ciphertext bytes the CDM sees do not.
+
+### Catalog DRM signalling
+
+CMSF carries DRM information at the catalog level (root-level
+`contentProtections` array, plus a per-track `contentProtectionRefIDs`
+that points at one or more entries). The structures used in this
+project mirror DASH-IF IOP 6:
+
+```json
+{
+  "contentProtections": [
+    {
+      "refID": "widevine",
+      "defaultKID": ["abcdef0123456789abcdef0123456789"],
+      "scheme": "cbcs",
+      "drmSystem": {
+        "systemID": "edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",
+        "robustness": "SW_SECURE_CRYPTO",
+        "laURL": { "url": "https://lic.example.com/widevine", "type": "POST" },
+        "pssh": "base64-pssh-box"
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "name": "video_400kbps_avc_drm",
+      "packaging": "locmaf",
+      "locmafVersion": "0.1",
+      "contentProtectionRefIDs": ["widevine", "playready", "fairplay"],
+      "initData": "..."
+    }
+  ]
+}
+```
+
+`refID` allows a single DRM-system description to be reused across many
+tracks. A receiver picks the first `refID` whose `drmSystem.systemID`
+matches a CDM it can talk to, then uses the named `pssh` / `laURL` /
+`authzURL` / `certURL` to set up the MediaKeySession exactly as it
+would for a standard CMSF stream. LOCMAF is invisible to the EME layer
+— it is purely a transport-side compression.
+
+The `locmafVersion` field discussed in
+[CMSF catalog signalling](#cmsf-catalog-signalling-locmafversion)
+applies to DRM-protected tracks too: a receiver that doesn't support
+the encoder's LOCMAF revision should refuse the track regardless of
+whether it can handle the DRM scheme.
+
+### `cenc` vs `cbcs` on the wire
+
+The two main CMAF protection schemes differ in how they handle the
+initialization vector, but both use the same sub-sample encryption for
+video (where only the NAL unit payloads are encrypted; the NAL headers
+and slice prefixes stay in the clear so a parser can still walk the
+stream). The LOCMAF wire-cost implications:
+
+| scheme | per-sample IV (id 9) | subsample maps (ids 11/13/15) on video | typical extra wire cost per delta moof |
+| ------ | -------------------- | -------------------------------------- | -------------------------------------- |
+| `cenc` | per-sample, 8 or 16 B; raw bytes, no delta | per-sample, ~3 B/subsample (clear+protected) | **8–16 B IV + subsample bytes per sample** |
+| `cbcs` | none — constant IV from `tenc.default_constant_iv` carried once in the moov | per-sample, ~3 B/subsample | **subsample bytes only**, no IV per sample |
+
+Two important consequences:
+
+- **Audio is sub-sample-encryption-free under both schemes** (the whole
+  sample is a single fully-encrypted block, no clear NAL prefixes), so
+  cbcs audio has *no* per-fragment encryption signalling at all and
+  the cbcs audio LOCMAF wire bytes equal the clear audio LOCMAF wire
+  bytes. cenc audio still carries the per-sample IV.
+- **Video carries the subsample maps under both schemes**, so the
+  IDs 11 / 13 / 15 cost (~10 B per sample) applies to cbcs video too.
+  The only cbcs-vs-cenc per-fragment delta on video is the per-sample
+  IV (~16 B per sample) — i.e. cenc video pays for both the IV *and*
+  the subsamples, while cbcs video pays for the subsamples only.
+
+This is why Hugo's thesis §6.2.2 shows the cbcs delta moof carrying
+`bytesOfClearData` / `bytesOfProtectedData` (for video) while the cenc
+delta moof additionally carries `initializationVector` on every sample.
+
+### Catalog `bitrate` impact on the bundled DRM-protected assets
+
+The catalog `bitrate` field reflects this end-to-end. Measured on
+`assets/test10s` at one sample per MoQ object with ECCP (ClearKey /
+explicit-key) protection in both schemes:
+
+**`cenc` (per-sample IV):**
+
+| track | sample [bps] | cmaf [bps] | locmaf [bps] | saved [bps] | saved % |
+| ----- | -----------: | ---------: | -----------: | ----------: | ------: |
+| `audio_monotonic_128kbps_aac_eccp`  | 128 001 | 197 376 | 138 637 | 58 739 | 29.8 % |
+| `audio_monotonic_128kbps_opus_eccp` | 128 400 | 202 400 | 139 736 | 62 664 | 31.0 % |
+| `audio_monotonic_192kbps_ac3_eccp`  | 192 000 | 238 250 | 199 136 | 39 114 | 16.4 % |
+| `video_400kbps_avc_eccp`            | 373 200 | 412 000 | 382 096 | 29 904 |  7.3 % |
+| `video_400kbps_hevc_eccp`           | 299 392 | 338 192 | 308 096 | 30 096 |  8.9 % |
+| `video_600kbps_avc_eccp`            | 559 505 | 598 305 | 568 417 | 29 888 |  5.0 % |
+| `video_900kbps_avc_eccp`            | 844 504 | 883 304 | 853 416 | 29 888 |  3.4 % |
+| `video_900kbps_hevc_eccp`           | 610 182 | 648 982 | 618 902 | 30 080 |  4.6 % |
+
+**`cbcs` (constant IV):**
+
+| track | sample [bps] | cmaf [bps] | locmaf [bps] | saved [bps] | saved % |
+| ----- | -----------: | ---------: | -----------: | ----------: | ------: |
+| `audio_monotonic_128kbps_aac_eccp`  | 128 001 | 191 376 | 131 887 | 59 489 | 31.1 % |
+| `audio_monotonic_128kbps_opus_eccp` | 128 400 | 196 000 | 132 536 | 63 464 | 32.4 % |
+| `audio_monotonic_192kbps_ac3_eccp`  | 192 000 | 234 250 | 194 636 | 39 614 | 16.9 % |
+| `video_400kbps_avc_eccp`            | 373 200 | 408 800 | 378 496 | 30 304 |  7.4 % |
+| `video_400kbps_hevc_eccp`           | 299 392 | 334 992 | 304 504 | 30 488 |  9.1 % |
+| `video_600kbps_avc_eccp`            | 559 505 | 595 105 | 564 817 | 30 288 |  5.1 % |
+| `video_900kbps_avc_eccp`            | 844 504 | 880 104 | 849 816 | 30 288 |  3.4 % |
+| `video_900kbps_hevc_eccp`           | 610 182 | 645 782 | 615 294 | 30 488 |  4.7 % |
+
+A few observations:
+
+- **Audio cbcs LOCMAF == audio clear LOCMAF** on the moof side. AAC
+  128 kbps clear LOCMAF was 131 887 bps; AAC 128 kbps cbcs LOCMAF is
+  also 131 887 bps. Audio doesn't use sub-sample encryption, so the
+  constant IV lives once in the moov and the per-fragment LOCMAF
+  payload is identical to the clear case.
+- **Video cbcs LOCMAF carries the subsample signalling** (IDs 11 / 13
+  / 15) on every fragment, so it pays an extra ~10 B per object
+  relative to clear video LOCMAF — about 2 kbps at 25 fps. Compare
+  `video_400kbps_avc` clear LOCMAF (376 488 bps) with the cbcs
+  counterpart `video_400kbps_avc_eccp` (378 496 bps): the 2 008 bps
+  difference is exactly that subsample carriage.
+- **Video pays a small per-group IDR cost** that audio doesn't,
+  independent of DRM. The first sample of every group is an IDR (sync
+  sample) with different `sample_flags` than the non-sync samples that
+  follow, so the first delta moof of each group carries a
+  `moofSampleFlags` delta of about 3 B more than a steady-state delta.
+  At 1-second groups and 25 fps that's around 25 bps additional video
+  bitrate (one event per group). It shows up in both clear and
+  protected video, on top of the per-fragment subsample signalling for
+  the protected case.
+- **`cenc` LOCMAF costs roughly 6–7 kbps more than `cbcs`** for audio
+  (47 objects/s × 16 B per-sample IV × 8 ≈ 6 kbps) and a similar extra
+  ~3 kbps for 25 fps video — exactly the per-sample IV overhead that
+  cbcs avoids.
+- **LOCMAF saves *more* relative to CMAF on DRM-protected content than
+  on clear content** (AAC: 31% on cbcs / 30% on cenc vs 23% on clear)
+  because the CMAF moof grows more under encryption (senc box + saio
+  + saiz) while the LOCMAF moof only adds what it actually needs to
+  carry.
+
+For CENC the **counter-prediction optimisation** described in
+[Possible improvements → Omit CENC per-sample IVs via counter prediction](#omit-cenc-per-sample-ivs-via-counter-prediction)
+would close the cenc/cbcs gap by deriving the per-sample IV from the
+counter rule rather than transmitting it.
+
+### Per-component breakdown for one video group
+
+Decomposing one MoQ group of `video_400kbps_avc` (25 fragments at 25 fps
+= 1 second of video, 1 sample per object) into the actual bytes emitted
+per LOCMAF field. Numbers are measured by walking the wire bytes of
+each LOCMAF object and counting each field tuple's cost — the framing
+column is the `header_id` varint + `properties_length` varint pair
+(2 B per object); the rest are the per-field tuples that appear in
+`### Moof field reference`. The `mdat` payload is excluded — these are
+the bytes the LOCMAF wrapping adds on top of the sample data.
+
+| field (group total)             | clear  | cbcs eccp | cenc eccp |
+| ------------------------------- | -----: | --------: | --------: |
+| framing (header_id + length)    |   50 B |     50 B  |     50 B  |
+| `moofBaseMediaDecodeTime`       |    2 B |      2 B  |      2 B  |
+| `moofSampleCount`               |    2 B |      2 B  |      2 B  |
+| `moofSampleDurations`           |    4 B |      4 B  |      4 B  |
+| `moofSampleCompositionTimeOffsets` | 3 B |      3 B  |      3 B  |
+| `moofSampleFlags`               |   12 B |     12 B  |     12 B  |
+| `moofSubsampleCount`            |      — |      3 B  |      3 B  |
+| `moofBytesOfClearData`          |      — |     20 B  |     71 B  |
+| `moofBytesOfProtectedData`      |      — |     99 B  |     92 B  |
+| `moofInitializationVector`      |      — |       —   |    450 B  |
+| **total per 1-s group**         | **73 B** | **195 B** | **689 B** |
+
+Per-fragment kinds in the same data set:
+
+| fragment kind            | clear | cbcs eccp | cenc eccp |
+| ------------------------ | ----: | --------: | --------: |
+| full moof (group start)  |  19 B |     30 B  |     48 B  |
+| first delta (IDR → P)    |   8 B |     18 B  |     36 B  |
+| steady-state delta       |   2 B |     ~6 B  |    ~27 B  |
+
+The `sampleFlags` 12 B in every column splits as 6 B on the full moof
+(carries the IDR's effective flags as a per-sample list) and 6 B on the
+first delta moof (carries the IDR → P flags transition); subsequent
+deltas omit it. That is the per-group IDR cost.
+
+`moofInitializationVector` is the dominant cenc overhead at 450 B per
+group: 18 B per sample × 25 samples, never compressed or delta-coded.
+The [CENC IV counter-prediction optimisation](#omit-cenc-per-sample-ivs-via-counter-prediction)
+would drop that to zero, bringing cenc video close to cbcs video.
+
+`moofBytesOfProtectedData` (id 15) is the surprise contributor for both
+cbcs and cenc — about 4 B per sample regardless of scheme, because the
+encoded P-frame size varies per fragment and the delta is small but
+non-zero. `moofBytesOfClearData` (id 13) is sparser because NAL header
+sizes are mostly stable, so the encoder elides the per-sample list when
+it matches the previous moof.
+
+**Note on the catalog-bitrate measurement**: the `calcLocmafBitrate`
+function generates one full + one delta chunk and applies the delta
+size to all 24 deltas in the second. The first delta is the larger
+post-IDR delta (with the `sampleFlags` transition), so the function
+slightly overestimates the steady-state video LOCMAF bitrate. The
+real video LOCMAF wire bitrate is roughly **1.1–3.7 kbps lower** than
+the catalog reports (varying with the protection scheme); audio is not
+affected because audio has no IDR/P distinction.
+
+### Why byte-lossy moof reconstruction is safe for DRM
+
+The CDM decrypts a fragment using `tenc.default_KID` (or per-sample
+key info), the per-sample `senc.InitializationVector`, the
+subsample `BytesOfClearData` / `BytesOfProtectedData` ranges, and the
+ciphertext bytes from the `mdat`. LOCMAF carries every one of these
+verbatim — there is no transformation of the encrypted bytes and no
+loss of crypto metadata. The encoder's choices that *are* lossy
+(`tr_flags` packing, omitted `tfhd` defaults that match `trex`, the
+implicit mdat box header) all live in the parts of the moof that
+don't participate in decryption. So a fragment that decrypts on the
+source side decrypts identically on the receiver side.
+
+This holds for both `cenc` and `cbcs`, for pattern encryption (the
+`tenc.default_crypt_byte_block` / `default_skip_byte_block` ride in
+the catalog moov payload at IDs 16 / 18), and for sub-sample
+encryption.
 
 ## Init segments: less critical, but still compressible
 
