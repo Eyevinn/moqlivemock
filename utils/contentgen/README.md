@@ -19,6 +19,10 @@ sent over MoQ (MediaOverQuic) one frame at a time.
 - Each beep is 0.5 seconds with fadeout
 - AAC and Opus encoded at 128 kbps, AC-3 encoded at 192 kbps
 - Outputs fragmented MP4 files with each frame in an individual fragment
+- A small Go post-processor (`trimaudio`) strips encoder priming, drops any
+  trailing short sample, trims to the codec's target frame count, and removes
+  the elst — so the source mp4 has uniform per-sample durations starting at
+  `tfdt=0` and the publisher can loop it without per-loop drift.
 
 ## Requirements
 
@@ -59,6 +63,28 @@ Output files:
 - `output/audio_scale_128kbps_aac.mp4`
 - `output/audio_scale_128kbps_opus.mp4`
 - `output/audio_scale_192kbps_ac3.mp4`
+
+### Post-process audio for seamless looping
+
+After generating the raw audio mp4s, run the `trimaudio` tool in-place to
+strip priming, drop trailing short samples, and remove the elst:
+
+```bash
+go run ./trimaudio -inplace output/audio_*.mp4
+```
+
+Target frame counts (TS=48000):
+
+| Codec | Frame ts | Frames | Total ts | Total seconds |
+|-------|---------:|-------:|---------:|--------------:|
+| AAC   | 1024     | 469    | 480 256  | 10.005 333    |
+| Opus  | 960      | 500    | 480 000  | 10.000 000    |
+| AC-3  | 1536     | 313    | 480 768  | 10.016 000    |
+
+Each codec's loop period averages exactly 10 s wall-clock over a small
+integer number of loops (AAC: 4 loops / 40 s; Opus: 1 loop; AC-3: 2 loops /
+20 s), so the publisher's emission stays in lock-step with wall-clock and
+the audio live edge never drifts.
 
 ## Actual Bitrates
 
