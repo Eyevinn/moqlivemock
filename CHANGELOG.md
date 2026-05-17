@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-17
+
+LOCMAF (Low Overhead CMAF) packaging support and audio loop drift fixes.
+
 ### Added
 
 - LOCMAF (Low Overhead CMAF) packaging: a LOC-inspired variant of CMAF that
@@ -51,6 +55,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CENC IV reuse across CMAF fragments: track per-`ContentTrack` running IV
   and chain it through successive `GenCMAFChunk` calls using mp4ff's new
   `EncryptFragment` return value (mp4ff #499)
+- Audio 10s loop sources regenerated with uniform per-sample durations
+  (AAC 469x1024, Opus 500x960, AC-3 313x1536), no trailing short sample,
+  no `elst`, `baseMediaDecodeTime` starting at 0. `GenCMAFChunk` now
+  emits `orig.Dur` instead of `t.SampleDur` so a future non-uniform
+  source cannot silently produce sub-frame timing slop at the loop wrap.
+  Codec cycle periods average exactly 10s wall-clock (AAC 4-loop/40s,
+  Opus 1-loop/10s, AC-3 2-loop/20s); `CalcSample`'s snap-logic produces
+  a drift-free `[469,469,469,468]`-style pattern with
+  `1875 * 1024 == 40 * TimeScale` exactly. New `utils/contentgen/trimaudio`
+  post-processor strips whole-frame encoder priming, drops the trailing
+  short sample, trims to the codec's target frame count, removes the
+  `elst`, and re-anchors tfdts at 0
 
 ### Changed
 
@@ -292,7 +308,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...HEAD
+[0.9.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...v0.6.1
