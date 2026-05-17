@@ -468,7 +468,7 @@ the previous moof in the same group. Three rules govern the payload:
    | ---------------- | ------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
    | scalar           | even ID                               | single zigzag-encoded signed varint = `current_value − previous_value`            | `current_value = previous_value + delta`; re-encoded as the field's value |
    | varint-list      | odd ID (except 9)                     | zigzag-signed deltas concatenated, one per element                                | element-wise sum with the previous list                                   |
-   | raw bytes        | ID 9 (`moofInitializationVector`)     | full IV bytes verbatim — IVs are cryptographically opaque, no delta makes sense   | overwrite previous IV bytes                                               |
+   | raw bytes        | ID 9 (`moofInitializationVector`)     | full IV bytes verbatim                                                            | overwrite previous IV bytes                                               |
 
 3. **`moofDeltaDeletedLocmafIDs` (ID 17) lists fields removed since the
    previous moof.** It is a varint list of locmaf IDs. The decoder applies
