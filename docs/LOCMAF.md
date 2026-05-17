@@ -1,4 +1,22 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/logo-light.svg">
+    <img alt="LOCMAF — Low Overhead CMAF for MOQ" src="assets/logo-light.svg" width="640">
+  </picture>
+</p>
+
 # LOCMAF: Low Overhead CMAF for MOQ
+
+**Document version:** 0.1 (2026-05-17)
+**Wire-format `locmafVersion`:** `"0.1"`
+
+The document version and the wire-format `locmafVersion` are kept in
+lockstep until there is a reason to diverge. Frozen snapshots are
+preserved as git tags on this repository (`locmaf-v0.1`, …); for an
+immutable copy of a given version, view this file at the matching tag.
+See [Revision history](#revision-history) at the bottom of this
+document for a summary of changes between versions.
 
 LOCMAF is a way to stream low-latency CMAF over [MOQT][MOQT] with an
 overhead comparable to [LOC][LOC]. It is intended as a
@@ -28,7 +46,9 @@ available publicly at [moqlivemock.demo.osaas.io][mlm-demo] and on
 GitHub in the two projects [Eyevinn/moqlivemock][moqlivemock] and
 [Eyevinn/warp-player][warp-player].
 
-This is a first version and may evolve depending on feedback and experience.
+This is a first version of the format and may evolve depending on
+feedback and experience — see [Revision history](#revision-history)
+below.
 
 ## Background
 
@@ -1301,6 +1321,17 @@ that survive isolated decoding after LOCMAF→CMAF reconstruction.
 
 - **Efficient DRM in MoQ using Low Overhead CMAF** — Hugo Björs, KTH
   Master Thesis, 2026 (to appear)
+
+## Revision history
+
+| Document version | Wire `locmafVersion` | Date       | Summary                                                       |
+| ---------------- | -------------------- | ---------- | ------------------------------------------------------------- |
+| 0.1              | `"0.1"`              | 2026-05-17 | First documented version. Initial wire format and DRM signal. |
+
+Frozen snapshots of this document are preserved as git tags on this
+repository (`locmaf-v0.1`, …). To read the document exactly as it
+existed for a given version, view this file at the matching tag on
+GitHub.
 
 [LOC]: https://datatracker.ietf.org/doc/draft-ietf-moq-loc/
 [MOQT]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
