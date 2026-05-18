@@ -37,7 +37,7 @@ const (
 	laURL      = "http://localhost:8081/clearkey"
 )
 
-const deltaResetIntervalHeader = "Objects per group"
+const objectsPerGroupHeader = "Objects per group"
 const locmafDeltaMoofsPerGroupHeader = "#LOCMAF Delta Moofs per group"
 
 type experimentResult struct {
@@ -46,7 +46,7 @@ type experimentResult struct {
 	AssetName                string
 	Protection               string
 	SamplesPerFragment       int
-	DeltaResetInterval       int
+	ObjectsPerGroup          int
 	Fragments                int
 	Samples                  int
 	MdatBytes                int
@@ -70,6 +70,7 @@ type resultColumn struct {
 type typstCell struct {
 	value string
 	raw   bool
+	bold  bool
 }
 
 type deltaHeaderFieldUsage struct {
@@ -93,7 +94,6 @@ func runExperimentsCommand(args []string) error {
 	inputPath := flags.String("input", defaultInput, "MP4 file in assets/test10s to use as the baseline experiment asset")
 	assetDir := flags.String("asset-dir", "", "directory containing test assets; defaults to the input file directory")
 	drmScheme := flags.String("drm-scheme", "cbcs", "preferred DRM scheme ordering for DRM experiments: cenc or cbcs")
-	deltaResetInterval := flags.Int("delta-reset-interval", 25, "reset the delta moof compressor every N media samples; 0 disables periodic resets")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -106,14 +106,10 @@ func runExperimentsCommand(args []string) error {
 		*assetDir = filepath.Dir(*inputPath)
 	}
 
-	return runExperiments(*inputPath, *assetDir, *drmScheme, *deltaResetInterval)
+	return runExperiments(*inputPath, *assetDir, *drmScheme)
 }
 
-func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval int) error {
-	if deltaResetInterval < 0 {
-		return fmt.Errorf("delta reset interval must be >= 0")
-	}
-
+func runExperiments(inputPath, assetDir, drmScheme string) error {
 	inputName := strings.TrimSuffix(filepath.Base(inputPath), filepath.Ext(inputPath))
 
 	clearAsset, err := internal.LoadAsset(assetDir, 1, 1)
@@ -126,7 +122,7 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 	}
 
 	var results []experimentResult
-	sampleCountResults, err := runSampleCountExperiment("fragment-size", inputTrack, deltaResetInterval)
+	sampleCountResults, err := runSampleCountExperiment("fragment-size", inputTrack)
 	if err != nil {
 		return err
 	}
@@ -136,7 +132,7 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 	if audioTrack == nil {
 		return fmt.Errorf("audio fragment-size track %q not found in %s", audioFragmentAssetName, assetDir)
 	}
-	audioSampleCountResults, err := runSampleCountExperiment("fragment-size-audio", audioTrack, samplesPerGroup(audioTrack))
+	audioSampleCountResults, err := runSampleCountExperiment("fragment-size-audio", audioTrack)
 	if err != nil {
 		return err
 	}
@@ -150,17 +146,17 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 	}
 	results = append(results, initHeaderResults...)
 
-	deltaResetResults, err := runDeltaResetExperiment(audioTrack, 1)
+	objectGroupResults, err := runObjectGroupSizeExperiment(audioTrack, 1)
 	if err != nil {
 		return err
 	}
-	results = append(results, deltaResetResults...)
+	results = append(results, objectGroupResults...)
 
-	assetResults, err := runBitrateExperiment(clearAsset, inputTrack, deltaResetInterval, 1)
+	assetResults, err := runBitrateExperiment(clearAsset, inputTrack, 1)
 	if err != nil {
 		return err
 	}
-	assetResults, err = appendBitrateTrack(assetResults, audioTrack, deltaResetInterval, 1)
+	assetResults, err = appendBitrateTrack(assetResults, audioTrack, 1)
 	if err != nil {
 		return err
 	}
@@ -179,7 +175,7 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 	}
 	results = append(results, locHeaderResults...)
 
-	drmResults, err := runDRMExperiment(assetDir, inputTrack, drmSchemes, deltaResetInterval, 1)
+	drmResults, err := runDRMExperiment(assetDir, inputTrack, drmSchemes, 1)
 	if err != nil {
 		return err
 	}
@@ -187,7 +183,7 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 
 	printResults(results)
 	fieldUsageResults, err := runDeltaHeaderFieldUsageExperiment(assetDir, inputTrack, audioTrack,
-		deltaResetInterval, samplesPerGroup(audioTrack))
+		samplesPerGroup(inputTrack), samplesPerGroup(audioTrack))
 	if err != nil {
 		return err
 	}
@@ -195,10 +191,10 @@ func runExperiments(inputPath, assetDir, drmScheme string, deltaResetInterval in
 	if err := writeMarkdownResults("table.md", results, fieldUsageResults); err != nil {
 		return fmt.Errorf("write markdown results: %w", err)
 	}
-	if err := writeTransposedTypstResults("typst-tables.txt", results, fieldUsageResults, false); err != nil {
+	if err := writeTypstTableVariables("typst-tables.txt", results, fieldUsageResults, false); err != nil {
 		return fmt.Errorf("write typst results: %w", err)
 	}
-	if err := writeTransposedTypstResults("typst-tables-raw.txt", results, fieldUsageResults, true); err != nil {
+	if err := writeTypstTableVariables("typst-tables-raw.txt", results, fieldUsageResults, true); err != nil {
 		return fmt.Errorf("write raw typst results: %w", err)
 	}
 	return nil
@@ -268,12 +264,13 @@ func measureInitHeaders(protectionLabel string, asset *internal.Asset, trackName
 	}, nil
 }
 
-func runSampleCountExperiment(testName string, track *internal.ContentTrack, deltaResetInterval int) ([]experimentResult, error) {
+func runSampleCountExperiment(testName string, track *internal.ContentTrack) ([]experimentResult, error) {
 	cases := fragmentSizeCases(track)
+	objectsPerGroup := samplesPerGroup(track)
 
 	results := make([]experimentResult, 0, len(cases))
 	for _, tc := range cases {
-		result, err := measureTrack(testName, tc.name, track, tc.samples, deltaResetInterval)
+		result, err := measureTrack(testName, tc.name, track, tc.samples, objectsPerGroup)
 		if err != nil {
 			return nil, fmt.Errorf("measure %s case %q: %w", testName, tc.name, err)
 		}
@@ -307,31 +304,31 @@ func fragmentSizeCases(track *internal.ContentTrack) []struct {
 	}
 }
 
-func runDeltaResetExperiment(track *internal.ContentTrack, samplesPerFragment int) ([]experimentResult, error) {
+func runObjectGroupSizeExperiment(track *internal.ContentTrack, samplesPerFragment int) ([]experimentResult, error) {
 	groupSamples := samplesPerGroup(track)
 	cases := []struct {
-		name               string
-		deltaResetInterval int
+		name            string
+		objectsPerGroup int
 	}{
-		{name: "1 object/group", deltaResetInterval: 1},
-		{name: fmt.Sprintf("%d objects/group", groupSamples), deltaResetInterval: groupSamples},
-		{name: fmt.Sprintf("%d objects/group", groupSamples*measuredGroups), deltaResetInterval: groupSamples * measuredGroups},
+		{name: "1 object/group", objectsPerGroup: 1},
+		{name: fmt.Sprintf("%d objects/group", groupSamples), objectsPerGroup: groupSamples},
+		{name: fmt.Sprintf("%d objects/group", groupSamples*measuredGroups), objectsPerGroup: groupSamples * measuredGroups},
 	}
 
 	results := make([]experimentResult, 0, len(cases))
 	for _, tc := range cases {
-		result, err := measureTrackWithProtectionSampleLimit("delta-reset", tc.name, track,
-			samplesPerFragment, tc.deltaResetInterval, protectionName(track.Protection),
-			measuredSamplesForDeltaReset(track, tc.deltaResetInterval))
+		result, err := measureTrackWithProtectionSampleLimit("object-group-size", tc.name, track,
+			samplesPerFragment, tc.objectsPerGroup, protectionName(track.Protection),
+			measuredSamplesForObjectGroupSize(track, tc.objectsPerGroup))
 		if err != nil {
-			return nil, fmt.Errorf("measure delta-reset case %q: %w", tc.name, err)
+			return nil, fmt.Errorf("measure object-group-size case %q: %w", tc.name, err)
 		}
 		results = append(results, result)
 	}
 	return results, nil
 }
 
-func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTrack, deltaResetInterval, samplesPerFragment int) ([]experimentResult, error) {
+func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTrack, samplesPerFragment int) ([]experimentResult, error) {
 	tracks := tracksMatchingInput(asset, inputTrack, internal.ProtectionNone)
 	if len(tracks) == 0 {
 		return nil, fmt.Errorf("no clear %s/%s tracks found for bitrate experiment",
@@ -346,7 +343,7 @@ func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTra
 
 	results := make([]experimentResult, 0, len(tracks))
 	for i := range tracks {
-		result, err := measureTrack("asset-bitrate", bitrateCaseName(&tracks[i]), &tracks[i], samplesPerFragment, deltaResetInterval)
+		result, err := measureTrack("asset-bitrate", bitrateCaseName(&tracks[i]), &tracks[i], samplesPerFragment, samplesPerGroup(&tracks[i]))
 		if err != nil {
 			return nil, fmt.Errorf("measure bitrate track %s: %w", tracks[i].Name, err)
 		}
@@ -356,14 +353,14 @@ func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTra
 }
 
 func appendBitrateTrack(results []experimentResult, track *internal.ContentTrack,
-	deltaResetInterval, samplesPerFragment int) ([]experimentResult, error) {
+	samplesPerFragment int) ([]experimentResult, error) {
 	for _, result := range results {
 		if result.AssetName == track.Name {
 			return results, nil
 		}
 	}
 
-	result, err := measureTrack("asset-bitrate", bitrateCaseName(track), track, samplesPerFragment, deltaResetInterval)
+	result, err := measureTrack("asset-bitrate", bitrateCaseName(track), track, samplesPerFragment, samplesPerGroup(track))
 	if err != nil {
 		return nil, fmt.Errorf("measure bitrate track %s: %w", track.Name, err)
 	}
@@ -436,7 +433,7 @@ func locHeaderSize(objectID uint64, payloadLen int) int {
 		quicvarint.Len(uint64(payloadLen))
 }
 
-func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSchemes []string, deltaResetInterval, samplesPerFragment int) ([]experimentResult, error) {
+func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSchemes []string, samplesPerFragment int) ([]experimentResult, error) {
 	drm, err := internal.ParseCENCflags(drmSchemes[0], defaultKID, defaultKey, defaultIV, laURL)
 	if err != nil {
 		return nil, fmt.Errorf("configure DRM experiment: %w", err)
@@ -455,7 +452,7 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 		return nil, fmt.Errorf("protected DRM experiment track %q not found", inputTrack.Name+"_drm")
 	}
 
-	clearResult, err := measureTrackWithProtection("drm", "none", clearTrack, samplesPerFragment, deltaResetInterval, "none")
+	clearResult, err := measureTrackWithProtection("drm", "none", clearTrack, samplesPerFragment, samplesPerGroup(clearTrack), "none")
 	if err != nil {
 		return nil, fmt.Errorf("measure clear DRM baseline: %w", err)
 	}
@@ -474,7 +471,7 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 		if protectedTrack == nil {
 			return nil, fmt.Errorf("protected %s DRM experiment track %q not found", drmScheme, inputTrack.Name+"_drm")
 		}
-		protectedResult, err := measureTrackWithProtection("drm", drmScheme, protectedTrack, samplesPerFragment, deltaResetInterval, drmScheme)
+		protectedResult, err := measureTrackWithProtection("drm", drmScheme, protectedTrack, samplesPerFragment, samplesPerGroup(protectedTrack), drmScheme)
 		if err != nil {
 			return nil, fmt.Errorf("measure %s protected DRM track: %w", drmScheme, err)
 		}
@@ -483,19 +480,19 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 	return results, nil
 }
 
-func measureTrack(testName, caseName string, track *internal.ContentTrack, samplesPerFragment, deltaResetInterval int) (experimentResult, error) {
-	return measureTrackWithProtection(testName, caseName, track, samplesPerFragment, deltaResetInterval,
+func measureTrack(testName, caseName string, track *internal.ContentTrack, samplesPerFragment, objectsPerGroup int) (experimentResult, error) {
+	return measureTrackWithProtection(testName, caseName, track, samplesPerFragment, objectsPerGroup,
 		protectionName(track.Protection))
 }
 
 func measureTrackWithProtection(testName, caseName string, track *internal.ContentTrack,
-	samplesPerFragment, deltaResetInterval int, protectionLabel string) (experimentResult, error) {
-	return measureTrackWithProtectionSampleLimit(testName, caseName, track, samplesPerFragment, deltaResetInterval,
+	samplesPerFragment, objectsPerGroup int, protectionLabel string) (experimentResult, error) {
+	return measureTrackWithProtectionSampleLimit(testName, caseName, track, samplesPerFragment, objectsPerGroup,
 		protectionLabel, measuredSamples(track))
 }
 
 func measureTrackWithProtectionSampleLimit(testName, caseName string, track *internal.ContentTrack,
-	samplesPerFragment, deltaResetInterval int, protectionLabel string, sampleLimit int) (experimentResult, error) {
+	samplesPerFragment, objectsPerGroup int, protectionLabel string, sampleLimit int) (experimentResult, error) {
 	if samplesPerFragment <= 0 {
 		return experimentResult{}, fmt.Errorf("samples per fragment must be positive")
 	}
@@ -509,19 +506,19 @@ func measureTrackWithProtectionSampleLimit(testName, caseName string, track *int
 		AssetName:          track.Name,
 		Protection:         protectionLabel,
 		SamplesPerFragment: samplesPerFragment,
-		DeltaResetInterval: deltaResetInterval,
+		ObjectsPerGroup:    objectsPerGroup,
 		Samples:            sampleLimit,
 		MeasuredSeconds:    measuredSeconds(track, sampleLimit),
 	}
 
 	deltaCompressor := &internal.MoofDeltaCompressor{}
 	var sequence uint32
-	nextDeltaResetSample := uint64(0)
+	nextGroupStartSample := uint64(0)
 
 	sampleLimitSamples := uint64(result.Samples)
 	for start := uint64(0); start < sampleLimitSamples; start += uint64(samplesPerFragment) {
 		end := min(start+uint64(samplesPerFragment), sampleLimitSamples)
-		if shouldResetDeltaCompressor(start, deltaResetInterval, &nextDeltaResetSample) {
+		if shouldResetDeltaCompressor(start, objectsPerGroup, &nextGroupStartSample) {
 			deltaCompressor = &internal.MoofDeltaCompressor{}
 		}
 		chunk, err := track.GenCMAFChunk(sequence, start, end)
@@ -566,12 +563,12 @@ func measureTrackWithProtectionSampleLimit(testName, caseName string, track *int
 }
 
 func runDeltaHeaderFieldUsageExperiment(assetDir string, videoTrack, audioTrack *internal.ContentTrack,
-	videoDeltaResetInterval, audioDeltaResetInterval int) ([]deltaHeaderFieldUsage, error) {
-	videoResults, err := measureDeltaHeaderFieldUsage(videoTrack, 1, videoDeltaResetInterval, "none")
+	videoObjectsPerGroup, audioObjectsPerGroup int) ([]deltaHeaderFieldUsage, error) {
+	videoResults, err := measureDeltaHeaderFieldUsage(videoTrack, 1, videoObjectsPerGroup, "none")
 	if err != nil {
 		return nil, fmt.Errorf("measure video delta header fields: %w", err)
 	}
-	audioResults, err := measureDeltaHeaderFieldUsage(audioTrack, 1, audioDeltaResetInterval, "none")
+	audioResults, err := measureDeltaHeaderFieldUsage(audioTrack, 1, audioObjectsPerGroup, "none")
 	if err != nil {
 		return nil, fmt.Errorf("measure audio delta header fields: %w", err)
 	}
@@ -595,11 +592,11 @@ func runDeltaHeaderFieldUsageExperiment(assetDir string, videoTrack, audioTrack 
 			return nil, fmt.Errorf("protected audio delta header field usage track %q not found", audioTrack.Name+"_drm")
 		}
 
-		protectedVideoResults, err := measureDeltaHeaderFieldUsage(protectedVideoTrack, 1, videoDeltaResetInterval, scheme)
+		protectedVideoResults, err := measureDeltaHeaderFieldUsage(protectedVideoTrack, 1, videoObjectsPerGroup, scheme)
 		if err != nil {
 			return nil, fmt.Errorf("measure %s video delta header fields: %w", scheme, err)
 		}
-		protectedAudioResults, err := measureDeltaHeaderFieldUsage(protectedAudioTrack, 1, audioDeltaResetInterval, scheme)
+		protectedAudioResults, err := measureDeltaHeaderFieldUsage(protectedAudioTrack, 1, audioObjectsPerGroup, scheme)
 		if err != nil {
 			return nil, fmt.Errorf("measure %s audio delta header fields: %w", scheme, err)
 		}
@@ -611,7 +608,7 @@ func runDeltaHeaderFieldUsageExperiment(assetDir string, videoTrack, audioTrack 
 }
 
 func measureDeltaHeaderFieldUsage(track *internal.ContentTrack,
-	samplesPerFragment, deltaResetInterval int, protectionLabel string) ([]deltaHeaderFieldUsage, error) {
+	samplesPerFragment, objectsPerGroup int, protectionLabel string) ([]deltaHeaderFieldUsage, error) {
 	if samplesPerFragment <= 0 {
 		return nil, fmt.Errorf("samples per fragment must be positive")
 	}
@@ -621,12 +618,12 @@ func measureDeltaHeaderFieldUsage(track *internal.ContentTrack,
 	var sequence uint32
 	var fullHeaders int
 	var deltaHeaders int
-	nextDeltaResetSample := uint64(0)
+	nextGroupStartSample := uint64(0)
 
 	sampleLimit := uint64(measuredSamples(track))
 	for start := uint64(0); start < sampleLimit; start += uint64(samplesPerFragment) {
 		end := min(start+uint64(samplesPerFragment), sampleLimit)
-		if shouldResetDeltaCompressor(start, deltaResetInterval, &nextDeltaResetSample) {
+		if shouldResetDeltaCompressor(start, objectsPerGroup, &nextGroupStartSample) {
 			deltaCompressor = &internal.MoofDeltaCompressor{}
 		}
 		chunk, err := track.GenLocmafChunk(sequence, start, end, deltaCompressor)
@@ -674,8 +671,8 @@ func measureDeltaHeaderFieldUsage(track *internal.ContentTrack,
 			Protection:       protectionLabel,
 			DeltaFullHeaders: fullHeaders,
 			DeltaHeaders:     deltaHeaders,
-			FieldID:          "-",
-			FieldName:        "(none)",
+			FieldID:          "N/A",
+			FieldName:        "N/A",
 			Appearances:      0,
 		}}, nil
 	}
@@ -697,11 +694,11 @@ func deltaHeaderFieldUsageAssetName(trackName string) string {
 	return strings.TrimSuffix(trackName, "_drm")
 }
 
-func shouldResetDeltaCompressor(sampleNr uint64, deltaResetInterval int, nextResetSample *uint64) bool {
-	if deltaResetInterval == 0 {
+func shouldResetDeltaCompressor(sampleNr uint64, objectsPerGroup int, nextResetSample *uint64) bool {
+	if objectsPerGroup == 0 {
 		return sampleNr == 0
 	}
-	resetInterval := uint64(deltaResetInterval)
+	resetInterval := uint64(objectsPerGroup)
 	if sampleNr < *nextResetSample {
 		return false
 	}
@@ -860,7 +857,7 @@ func measuredSamples(track *internal.ContentTrack) int {
 	return min(int(track.NrSamples), samplesPerGroup(track)*measuredGroups)
 }
 
-func measuredSamplesForDeltaReset(track *internal.ContentTrack, objectsPerGroup int) int {
+func measuredSamplesForObjectGroupSize(track *internal.ContentTrack, objectsPerGroup int) int {
 	targetSamples := measuredSamples(track)
 	if objectsPerGroup <= 0 {
 		return targetSamples
@@ -1138,7 +1135,7 @@ func writeTypstResults(path string, results []experimentResult) error {
 	return f.Close()
 }
 
-func writeTransposedTypstResults(path string, results []experimentResult, fieldUsageResults []deltaHeaderFieldUsage, rawValues bool) error {
+func writeTypstTableVariables(path string, results []experimentResult, fieldUsageResults []deltaHeaderFieldUsage, rawValues bool) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -1150,7 +1147,7 @@ func writeTransposedTypstResults(path string, results []experimentResult, fieldU
 			fmt.Fprintln(f)
 		}
 		fmt.Fprintf(f, "#let %s = ", typstVariableName(group.testName))
-		printTransposedTypstTable(f, columnsForExperiment(group.testName), group.results, rawValues)
+		printTypstResultVariableTable(f, columnsForExperiment(group.testName), group.results, rawValues)
 	}
 	for _, group := range groupDeltaHeaderFieldUsageByProtection(fieldUsageResults) {
 		if len(results) > 0 {
@@ -1178,65 +1175,64 @@ func groupResultsByExperiment(results []experimentResult) []experimentResultGrou
 	return groups
 }
 
-func printTransposedTypstTable(w io.Writer, columns []resultColumn, results []experimentResult, rawValues bool) {
-	fmt.Fprintf(w, "table(\n  columns: (%s),\n", typstAutoColumns(len(results)+1))
-	for _, column := range columns {
-		values := make([]typstCell, 0, len(results)+1)
-		values = append(values, textTypstCell(column.Header))
-		for _, result := range results {
-			value := column.Value(result)
-			if rawValues && column.RawValue != nil {
-				value = column.RawValue(result)
-			}
-			if column.TSVHeader == "asset" {
-				values = append(values, assetNameTypstCell(value))
-				continue
-			}
-			values = append(values, textTypstCell(value))
-		}
-		printTypstCellValues(w, values, true)
+func printTypstResultVariableTable(w io.Writer, columns []resultColumn, results []experimentResult, rawValues bool) {
+	fmt.Fprintf(w, "table(\n  columns: (%s),\n  align: right,\n  stroke: none,\n", typstAutoColumns(len(columns)))
+	printTypstResultHeader(w, columns)
+	fmt.Fprintln(w, "  table.hline(),")
+	for _, result := range results {
+		printTypstResultRow(w, columns, result, rawValues)
 	}
 	fmt.Fprintln(w, ")")
 }
 
 func printDeltaHeaderFieldUsageTypstTable(w io.Writer, results []deltaHeaderFieldUsage) {
-	fmt.Fprintf(w, "table(\n  columns: (%s),\n", typstAutoColumns(len(results)+1))
-	printDeltaHeaderFieldUsageTypstCells(w, "Asset", results, func(result deltaHeaderFieldUsage) string {
-		return result.AssetName
-	})
-	printDeltaHeaderFieldUsageTypstCells(w, locmafDeltaMoofsPerGroupHeader, results, func(result deltaHeaderFieldUsage) string {
-		return formatAverage(deltaHeaderMoofsPerGroup(result))
-	})
-	printDeltaHeaderFieldUsageTypstCells(w, "Field ID", results, func(result deltaHeaderFieldUsage) string {
-		return result.FieldID
-	})
-	printDeltaHeaderFieldUsageTypstCells(w, "Field", results, func(result deltaHeaderFieldUsage) string {
-		return result.FieldName
-	})
-	printDeltaHeaderFieldUsageTypstCells(w, "#appearances", results, func(result deltaHeaderFieldUsage) string {
-		return fmt.Sprintf("%d", result.Appearances)
-	})
+	fmt.Fprintf(w, "table(\n  columns: (%s),\n  align: right,\n  stroke: none,\n", typstAutoColumns(4))
+	printTypstCellValues(w, []typstCell{
+		headerTypstCell("Asset"),
+		headerTypstCell(locmafDeltaMoofsPerGroupHeader),
+		headerTypstCell("Field"),
+		headerTypstCell("#appearances"),
+	}, true)
+	fmt.Fprintln(w, "  table.hline(),")
+	for _, result := range results {
+		printTypstCellValues(w, []typstCell{
+			assetNameTypstCell(result.AssetName),
+			textTypstCell(formatAverage(deltaHeaderMoofsPerGroup(result))),
+			textTypstCell(result.FieldName),
+			textTypstCell(fmt.Sprintf("%d", result.Appearances)),
+		}, true)
+	}
 	fmt.Fprintln(w, ")")
 }
 
-func printDeltaHeaderFieldUsageTypstCells(w io.Writer, header string, results []deltaHeaderFieldUsage,
-	value func(deltaHeaderFieldUsage) string) {
-	values := make([]typstCell, 0, len(results)+1)
-	values = append(values, textTypstCell(header))
-	for _, result := range results {
-		cellValue := value(result)
-		if header == "Asset" {
-			values = append(values, assetNameTypstCell(cellValue))
+func printTypstResultHeader(w io.Writer, columns []resultColumn) {
+	values := make([]typstCell, 0, len(columns))
+	for _, column := range columns {
+		values = append(values, headerTypstCell(column.Header))
+	}
+	printTypstCellValues(w, values, true)
+}
+
+func printTypstResultRow(w io.Writer, columns []resultColumn, result experimentResult, rawValues bool) {
+	values := make([]typstCell, 0, len(columns))
+	for _, column := range columns {
+		value := column.Value(result)
+		if rawValues && column.RawValue != nil {
+			value = column.RawValue(result)
+		}
+		if column.TSVHeader == "asset" {
+			values = append(values, assetNameTypstCell(value))
 			continue
 		}
-		values = append(values, textTypstCell(cellValue))
+		values = append(values, textTypstCell(value))
 	}
 	printTypstCellValues(w, values, true)
 }
 
 func printTypstTableStart(w io.Writer, columns []resultColumn) {
-	fmt.Fprintf(w, "table(\n  columns: (%s),\n", typstAutoColumns(len(columns)))
-	printTypstCells(w, typstHeaders(columns), true)
+	fmt.Fprintf(w, "table(\n  columns: (%s),\n  align: right,\n  stroke: none,\n", typstAutoColumns(len(columns)))
+	printTypstHeaderCells(w, typstHeaders(columns), true)
+	fmt.Fprintln(w, "  table.hline(),")
 }
 
 func printTypstRow(w io.Writer, columns []resultColumn, result experimentResult) {
@@ -1260,12 +1256,23 @@ func printTypstCells(w io.Writer, values []string, trailingComma bool) {
 	printTypstCellValues(w, cells, trailingComma)
 }
 
+func printTypstHeaderCells(w io.Writer, values []string, trailingComma bool) {
+	cells := make([]typstCell, 0, len(values))
+	for _, value := range values {
+		cells = append(cells, headerTypstCell(value))
+	}
+	printTypstCellValues(w, cells, trailingComma)
+}
+
 func printTypstCellValues(w io.Writer, values []typstCell, trailingComma bool) {
 	cells := make([]string, 0, len(values))
 	for _, value := range values {
 		cellText := value.value
 		if !value.raw {
 			cellText = typstText(value.value)
+		}
+		if value.bold {
+			cellText = fmt.Sprintf("#strong[%s]", cellText)
 		}
 		cells = append(cells, fmt.Sprintf("[%s]", cellText))
 	}
@@ -1301,7 +1308,8 @@ func typstText(value string) string {
 }
 
 func textTypstCell(value string) typstCell {
-	if value == deltaResetIntervalHeader {
+	value = typstAbbreviation(value)
+	if value == objectsPerGroupHeader {
 		return typstCell{
 			value: typstText("Objects") + ` #linebreak() ` + typstText("per group"),
 			raw:   true,
@@ -1316,10 +1324,55 @@ func textTypstCell(value string) typstCell {
 	return typstCell{value: value}
 }
 
+func headerTypstCell(value string) typstCell {
+	cell := textTypstCell(value)
+	cell.bold = true
+	return cell
+}
+
 func assetNameTypstCell(value string) typstCell {
+	value = typstAbbreviation(value)
 	return typstCell{
 		value: strings.ReplaceAll(typstText(value), "_", `\_ \ `),
 		raw:   true,
+	}
+}
+
+func typstAbbreviation(value string) string {
+	switch value {
+	case "video_400kbps_avc", "video_400kpbs_avc":
+		return "video400avc"
+	case "video_600kbps_avc", "video_600kpbs_avc":
+		return "video600avc"
+	case "video_900kbps_avc", "video_900kpbs_avc":
+		return "video900avc"
+	case "audio_monotonic_128kbps_aac":
+		return "audio128aac"
+	case "#LOCMAF Delta Moof / group", "#LOCMAF Delta Moofs per group":
+		return "#LDM / group"
+	case "#appearances":
+		return "Count"
+	case "Compression ratio":
+		return "CR"
+	case "Objects":
+		return "Obj."
+	case "objects":
+		return "obj."
+	case "Objects per group":
+		return "Obj. / group"
+	case "#samples / fragment", "#samples per fragment":
+		return "#smpl. / frag"
+	case "CMAF overhead/mdat size (%)":
+		return "CMAF / mdat"
+	case "LOCCMAF overhead/mdat size (%)", "LOCMAF overhead/mdat size (%)":
+		return "LOCMAF / mdat"
+	case "LOC overhead / mdat size (%)", "LOC header/mdat (%)":
+		return "LOC / mdat"
+	default:
+		value = strings.ReplaceAll(value, "Objects", "Obj.")
+		value = strings.ReplaceAll(value, "objects", "obj.")
+		value = strings.ReplaceAll(value, "Overhead", "OH")
+		return strings.ReplaceAll(value, "overhead", "OH")
 	}
 }
 
@@ -1331,8 +1384,8 @@ func typstVariableName(testName string) string {
 		return "audiofrag"
 	case "init-header":
 		return "init"
-	case "delta-reset":
-		return "deltareset"
+	case "object-group-size":
+		return "objectgroupsize"
 	case "asset-bitrate":
 		return "bitrate"
 	case "loc-header":
@@ -1352,8 +1405,8 @@ func columnsForExperiment(testName string) []resultColumn {
 		return fragmentSizeColumns()
 	case "init-header":
 		return initHeaderColumns()
-	case "delta-reset":
-		return deltaResetColumns()
+	case "object-group-size":
+		return objectGroupSizeColumns()
 	case "asset-bitrate":
 		return assetBitrateColumns()
 	case "loc-header":
@@ -1380,19 +1433,19 @@ func fragmentSizeColumns() []resultColumn {
 	return []resultColumn{
 		intColumn("#samples per fragment", "samples_per_fragment", func(r experimentResult) int { return r.SamplesPerFragment }),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("CMAF overhead (kbps)", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead (kbps)", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
+		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
 		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.DeltaLOCMAFOverheadBytes)
 		}),
 	}
 }
 
-func deltaResetColumns() []resultColumn {
+func objectGroupSizeColumns() []resultColumn {
 	return []resultColumn{
-		intColumn(deltaResetIntervalHeader, "objects_per_group", func(r experimentResult) int { return r.DeltaResetInterval }),
+		intColumn(objectsPerGroupHeader, "objects_per_group", func(r experimentResult) int { return r.ObjectsPerGroup }),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("LOCMAF overhead (kbps)", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
+		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
 	}
 }
 
@@ -1401,10 +1454,10 @@ func assetBitrateColumns() []resultColumn {
 		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
 		bitrateColumn("Mdat (kbps)", "mdat_kbps", func(r experimentResult) int { return r.MdatBytes }),
 		percentageColumn("CMAF overhead/mdat size (%)", "cmaf_overhead_mdat_percent", func(r experimentResult) float64 {
-			return ratio(r.CMAFOverheadBytes, r.MdatBytes)
+			return bitrateByteRatio(r.CMAFOverheadBytes, r.MdatBytes, r)
 		}),
 		percentageColumn("LOCMAF overhead/mdat size (%)", "locmaf_overhead_mdat_percent", func(r experimentResult) float64 {
-			return ratio(r.DeltaLOCMAFOverheadBytes, r.MdatBytes)
+			return bitrateByteRatio(r.DeltaLOCMAFOverheadBytes, r.MdatBytes, r)
 		}),
 	}
 }
@@ -1414,8 +1467,8 @@ func locHeaderColumns() []resultColumn {
 		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
 		intColumn("#LOC objects", "loc_objects", func(r experimentResult) int { return r.Fragments }),
 		bitrateColumn("Mdat (kbps)", "mdat_kbps", func(r experimentResult) int { return r.MdatBytes }),
-		bitrateColumn("LOC header (kbps)", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
-		percentageColumn("LOC header/mdat (%)", "loc_header_mdat_percent", func(r experimentResult) float64 {
+		bitrateColumn("LOC overhead", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
+		percentageColumn("LOC / mdat", "loc_header_mdat_percent", func(r experimentResult) float64 {
 			return ratio(r.LOCOverheadBytes, r.MdatBytes)
 		}),
 	}
@@ -1424,8 +1477,8 @@ func locHeaderColumns() []resultColumn {
 func drmColumns() []resultColumn {
 	return []resultColumn{
 		stringColumn("Protection", "protection", func(r experimentResult) string { return r.Protection }),
-		bitrateColumn("CMAF overhead (kbps)", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead (kbps)", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
+		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
 		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.DeltaLOCMAFOverheadBytes)
 		}),
@@ -1438,15 +1491,15 @@ func defaultColumns() []resultColumn {
 		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
 		stringColumn("Protection", "protection", func(r experimentResult) string { return r.Protection }),
 		intColumn("#samples per fragment", "samples_per_fragment", func(r experimentResult) int { return r.SamplesPerFragment }),
-		intColumn(deltaResetIntervalHeader, "objects_per_group", func(r experimentResult) int { return r.DeltaResetInterval }),
+		intColumn(objectsPerGroupHeader, "objects_per_group", func(r experimentResult) int { return r.ObjectsPerGroup }),
 		intColumn("#fragments", "fragments", func(r experimentResult) int { return r.Fragments }),
 		intColumn("#samples", "samples", func(r experimentResult) int { return r.Samples }),
 		intColumn("Mdat bytes", "mdat_bytes", func(r experimentResult) int { return r.MdatBytes }),
 		bitrateColumn("LOC header (kbps)", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
 		intColumn("#LOCMAF Full Moofs", "locmaf_full_moofs", func(r experimentResult) int { return r.DeltaFullHeaders }),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("CMAF overhead (kbps)", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead (kbps)", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
+		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
 		ratioColumn("CMAF overhead/mdat ratio", "cmaf_overhead_mdat_ratio", func(r experimentResult) float64 {
 			return ratio(r.CMAFOverheadBytes, r.MdatBytes)
 		}),
@@ -1527,7 +1580,7 @@ func percentageColumn(header, tsvHeader string, value func(experimentResult) flo
 			return fmt.Sprintf("%.2f%%", value(result)*100)
 		},
 		RawValue: func(result experimentResult) string {
-			return rawFloat(value(result) * 100)
+			return rawFloat(value(result)*100) + "%"
 		},
 	}
 }
@@ -1595,8 +1648,8 @@ func markdownTitle(testName string) string {
 		return "Asset Bitrate"
 	case "loc-header":
 		return "LOC Header"
-	case "delta-reset":
-		return "Varying the Number of Objects per Group"
+	case "object-group-size":
+		return "Object Group Size"
 	case "drm":
 		return "DRM"
 	default:
@@ -1612,6 +1665,10 @@ func bitrateKbps(bytes int, result experimentResult) float64 {
 	return float64(bytes) * 8 / durationSeconds / 1000
 }
 
+func bitrateByteRatio(numeratorBytes, denominatorBytes int, result experimentResult) float64 {
+	return ratioFloat(bitrateKbps(numeratorBytes, result), bitrateKbps(denominatorBytes, result))
+}
+
 func compressionRatio(originalBytes, compressedBytes int) float64 {
 	return ratio(originalBytes, compressedBytes)
 }
@@ -1621,4 +1678,11 @@ func ratio(numerator, denominator int) float64 {
 		return 0
 	}
 	return float64(numerator) / float64(denominator)
+}
+
+func ratioFloat(numerator, denominator float64) float64 {
+	if denominator == 0 {
+		return 0
+	}
+	return numerator / denominator
 }
