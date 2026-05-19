@@ -27,7 +27,7 @@ func (c *MoofDeltaCompressor) CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox)
 
 	if c.previous == nil {
 		c.previous = cloneFieldValues(importantFields)
-		return MoofHeader, encodeFields(importantFields), nil
+		return LocmafFullMoof, encodeFields(importantFields), nil
 	}
 
 	deltaFields, err := diffMoofFields(importantFields, c.previous, moov)
@@ -35,7 +35,7 @@ func (c *MoofDeltaCompressor) CompressMoof(moof *mp4.MoofBox, moov *mp4.MoovBox)
 		return 0, nil, err
 	}
 	c.previous = cloneFieldValues(importantFields)
-	return MoofDeltaHeader, encodeFields(deltaFields), nil
+	return LocmafDeltaMoof, encodeFields(deltaFields), nil
 }
 
 // CreateMoofProperty creates a delta moof property by compressing the moof box.
@@ -77,12 +77,12 @@ func (d *MoofDeltaDecompressor) DecompressMoof(data []byte,
 // box. Unknown header IDs return a nil moof (caller treats as skip).
 func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID locmafPropertyID, data []byte,
 	seqnum uint32, moov *mp4.MoovBox, mdatPayloadLength int) (*mp4.MoofBox, error) {
-	if headerID != MoofHeader && headerID != MoofDeltaHeader {
+	if headerID != LocmafFullMoof && headerID != LocmafDeltaMoof {
 		slog.Warn("locmaf: skipping unknown object",
 			"id", int(headerID), "payloadLength", len(data))
 		return nil, nil
 	}
-	if len(data) == 0 && headerID != MoofDeltaHeader {
+	if len(data) == 0 && headerID != LocmafDeltaMoof {
 		return nil, fmt.Errorf("empty locmaf moof data")
 	}
 
@@ -92,9 +92,9 @@ func (d *MoofDeltaDecompressor) decompressMoofProperty(headerID locmafPropertyID
 	}
 
 	switch headerID {
-	case MoofHeader:
+	case LocmafFullMoof:
 		d.previous = cloneFieldValues(fieldValues)
-	case MoofDeltaHeader:
+	case LocmafDeltaMoof:
 		if d.previous == nil {
 			return nil, fmt.Errorf("missing previous moof state for delta moof")
 		}

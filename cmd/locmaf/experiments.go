@@ -549,9 +549,9 @@ func measureTrackWithProtectionSampleLimit(testName, caseName string, track *int
 		result.LOCMAFOverheadBytes += fullHeaderBytes
 		result.DeltaLOCMAFOverheadBytes += deltaHeaderBytes
 		switch deltaHeaderID {
-		case uint64(internal.MoofHeader):
+		case uint64(internal.LocmafFullMoof):
 			result.DeltaFullHeaders++
-		case uint64(internal.MoofDeltaHeader):
+		case uint64(internal.LocmafDeltaMoof):
 			result.DeltaHeaders++
 		default:
 			return result, fmt.Errorf("unexpected delta compressor header id=%d", deltaHeaderID)
@@ -636,11 +636,11 @@ func measureDeltaHeaderFieldUsage(track *internal.ContentTrack,
 			return nil, fmt.Errorf("parse locmaf chunk seq=%d: %w", sequence, err)
 		}
 		switch headerID {
-		case uint64(internal.MoofHeader):
+		case uint64(internal.LocmafFullMoof):
 			fullHeaders++
 			sequence++
 			continue
-		case uint64(internal.MoofDeltaHeader):
+		case uint64(internal.LocmafDeltaMoof):
 			deltaHeaders++
 		default:
 			return nil, fmt.Errorf("unexpected locmaf header id=%d seq=%d", headerID, sequence)

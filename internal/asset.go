@@ -550,7 +550,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 					if err != nil {
 						return nil, fmt.Errorf("could not compress init data for track %s: %w", ct.Name, err)
 					}
-					data = createSizedLocmafProperty(MoovHeader, compressed)
+					data = createSizedLocmafProperty(LocmafInitSegment, compressed)
 				}
 				initData = base64.StdEncoding.EncodeToString(data)
 			}

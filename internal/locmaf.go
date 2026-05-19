@@ -21,9 +21,9 @@ const LocmafVersion = "0.1"
 type locmafPropertyID int
 
 const (
-	MoovHeader      locmafPropertyID = 21
-	MoofHeader      locmafPropertyID = 23
-	MoofDeltaHeader locmafPropertyID = 25
+	LocmafInitSegment locmafPropertyID = 21
+	LocmafFullMoof    locmafPropertyID = 23
+	LocmafDeltaMoof   locmafPropertyID = 25
 )
 
 type locmafID int
@@ -235,7 +235,7 @@ func DecompressMoof(data []byte, seqnum uint32, moov *mp4.MoovBox) (*mp4.MoofBox
 	if err != nil {
 		return nil, err
 	}
-	if object.headerID != MoofHeader {
+	if object.headerID != LocmafFullMoof {
 		return nil, fmt.Errorf("unsupported moof header id=%d", object.headerID)
 	}
 	fieldValues, err := separateFields(object.properties)

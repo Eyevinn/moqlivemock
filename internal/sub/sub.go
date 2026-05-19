@@ -687,7 +687,7 @@ func parseLocmafInit(track *internal.Track) (*mp4.InitSegment, error) {
 		return nil, fmt.Errorf("invalid locmaf init payload length")
 	}
 	pos += n
-	if headerID != uint64(internal.MoovHeader) {
+	if headerID != uint64(internal.LocmafInitSegment) {
 		return nil, fmt.Errorf("unsupported locmaf init header %d", headerID)
 	}
 	if locPayloadLength > uint64(len(initDataBytes)-pos) {

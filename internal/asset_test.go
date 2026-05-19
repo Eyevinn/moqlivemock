@@ -308,7 +308,7 @@ func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
 
 	headerID, _, err := quicvarint.Parse(locmafInit)
 	require.NoError(t, err)
-	require.EqualValues(t, MoovHeader, headerID)
+	require.EqualValues(t, LocmafInitSegment, headerID)
 
 	pos := 0
 	_, n, err := quicvarint.Parse(locmafInit[pos:])

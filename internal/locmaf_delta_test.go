@@ -18,7 +18,7 @@ func TestMoofDeltaCompressorRoundTrip(t *testing.T) {
 
 	parsedObject1, err := parseLocmafObject(object1)
 	require.NoError(t, err)
-	require.EqualValues(t, MoofDeltaHeader, parsedObject1.headerID)
+	require.EqualValues(t, LocmafDeltaMoof, parsedObject1.headerID)
 	deltaFields, err := separateFields(parsedObject1.properties)
 	require.NoError(t, err)
 	_, hasBaseMediaDecodeTime := deltaFields[moofBaseMediaDecodeTime]
@@ -129,7 +129,7 @@ func TestMoofDeltaAllowsEmptyDeltaPayload(t *testing.T) {
 	require.NoError(t, err)
 
 	object1 := append(
-		createSizedLocmafProperty(MoofDeltaHeader, nil),
+		createSizedLocmafProperty(LocmafDeltaMoof, nil),
 		parsedObject0.mdatPayload...,
 	)
 

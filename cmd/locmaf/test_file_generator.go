@@ -57,7 +57,7 @@ func generateArtifacts(inputPath, outputDir string) error {
 	if err != nil {
 		return fmt.Errorf("unable to compress init: %w", err)
 	}
-	initEncoding := createCompressedObject(uint64(internal.MoovHeader), compressedMoov, nil)
+	initEncoding := createCompressedObject(uint64(internal.LocmafInitSegment), compressedMoov, nil)
 
 	fullMoofObjects, err := generateFullMoofObjects(track, 2)
 	if err != nil {
@@ -117,7 +117,7 @@ func generateDeltaMoofObjects(track *internal.ContentTrack, count int) ([][]byte
 		if err != nil {
 			return nil, fmt.Errorf("parse generated LOCMAF object %d: %w", i, err)
 		}
-		if headerID == uint64(internal.MoofDeltaHeader) {
+		if headerID == uint64(internal.LocmafDeltaMoof) {
 			objects = append(objects, object)
 		}
 	}

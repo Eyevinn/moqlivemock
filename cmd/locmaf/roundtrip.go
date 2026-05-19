@@ -191,7 +191,7 @@ func roundtripMoov(moov *mp4.MoovBox, cmafInitBytes []byte, track internal.Track
 	if err != nil {
 		return initRoundtripStats{}, fmt.Errorf("compress moov: %w", err)
 	}
-	locmafInit := createCompressedObject(uint64(internal.MoovHeader), compressedMoov, nil)
+	locmafInit := createCompressedObject(uint64(internal.LocmafInitSegment), compressedMoov, nil)
 
 	decodedInit, err := internal.DecompressInit(compressedMoov, track)
 	if err != nil {
@@ -284,7 +284,7 @@ func roundtripFragments(fragments []*mp4.Fragment, encoderMoov, decoderMoov *mp4
 		stats.cmafMoofBytes += cmafMoofSize
 		stats.locmafObjectBytes += locmafObjectSize
 		kind := "delta"
-		if headerID == internal.MoofHeader {
+		if headerID == internal.LocmafFullMoof {
 			kind = "full"
 			stats.fullMoofCount++
 			stats.locmafFullMoofBytes += locmafObjectSize
