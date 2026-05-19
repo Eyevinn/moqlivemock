@@ -269,6 +269,9 @@ func decompressMoofUsingFieldValues(fieldValues map[locmafID][]byte, seqnum uint
 	traf.Tfhd.DefaultSampleDuration = trex.DefaultSampleDuration
 	traf.Tfhd.DefaultSampleSize = trex.DefaultSampleSize
 	traf.Tfhd.DefaultSampleFlags = trex.DefaultSampleFlags
+	traf.Tfhd.Flags |= mp4.TfhdDefaultSampleDurationPresentFlag |
+		mp4.TfhdDefaultSampleSizePresentFlag |
+		mp4.TfhdDefaultSampleFlagsPresentFlag
 	perSampleIVSize := getDefaultPerSampleIVSize(moov, traf.Tfhd.TrackID)
 
 	if sampleDescriptionIndex, ok := readVarint(moofSampleDescriptionIndex, fieldValues); ok {

@@ -226,6 +226,32 @@ func TestDeriveNextBaseMediaDecodeTimeUsesDefaultSampleDuration(t *testing.T) {
 	require.EqualValues(t, 220, baseMediaDecodeTime)
 }
 
+func TestDecompressMoofMarksTrexDefaultsPresentInTfhd(t *testing.T) {
+	moov := &mp4.MoovBox{
+		Mvex: &mp4.MvexBox{
+			Trex: &mp4.TrexBox{
+				DefaultSampleDuration: 1001,
+				DefaultSampleSize:     222,
+				DefaultSampleFlags:    0x1010000,
+			},
+		},
+	}
+	fields := map[locmafID][]byte{
+		moofBaseMediaDecodeTime: appendVarint(nil, 0),
+		moofSampleCount:         appendVarint(nil, 2),
+	}
+
+	moof, err := decompressMoofUsingFieldValues(fields, 1, moov, 0)
+	require.NoError(t, err)
+
+	require.True(t, moof.Traf.Tfhd.HasDefaultSampleDuration())
+	require.True(t, moof.Traf.Tfhd.HasDefaultSampleSize())
+	require.True(t, moof.Traf.Tfhd.HasDefaultSampleFlags())
+	require.EqualValues(t, 1001, moof.Traf.Tfhd.DefaultSampleDuration)
+	require.EqualValues(t, 222, moof.Traf.Tfhd.DefaultSampleSize)
+	require.EqualValues(t, 0x1010000, moof.Traf.Tfhd.DefaultSampleFlags)
+}
+
 func TestCompressMoofEncodesInitializationVectorsAsRawBytes(t *testing.T) {
 	iv0 := []byte{0x00, 0x40, 0x80, 0xff, 0x01, 0x41, 0x81, 0xfe, 0x02, 0x42, 0x82, 0xfd, 0x03, 0x43, 0x83, 0xfc}
 	iv1 := []byte{0x10, 0x50, 0x90, 0xef, 0x11, 0x51, 0x91, 0xee, 0x12, 0x52, 0x92, 0xed, 0x13, 0x53, 0x93, 0xec}
