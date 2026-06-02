@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- LOCMAF v0.2 wire codec (`internal/locmafv02`): a renumbered, independent
+  implementation of the LOCMAF packaging specified by the IETF draft
+  [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/).
+  Runs side-by-side with the v0.1 codec. The v0.2 catalog ships a raw,
+  uncompressed CMAF Header (no `moov` compression); only the `moof` is
+  encoded as LOCMAF full/delta property blocks. Wire-format `locmafVersion`
+  is `"0.2"`. `prft`, `styp`, and `emsg` field carriage are not yet
+  emitted by mlmpub, but those are additive (new reserved field IDs) and
+  land under the same `"0.2"` version
+- LOCMAF v0.2 namespaces in mlmpub: `locmaf-v0.2/clear` (always),
+  `locmaf-v0.2/drm-{scheme}` and `locmaf-v0.2/eccp-{scheme}`. Catalog
+  `Track.Packaging` stays `"locmaf"` for both v0.1 and v0.2; `locmafVersion`
+  is the discriminator
+- LOCMAF v0.2 subscriber support in mlmsub: dispatches on `locmafVersion`
+  (empty/`"0.1"` → v0.1 codec, `"0.2"` → v0.2 codec) and decodes full
+  and delta moofs back into standard CMAF fragments for the mux/video/audio
+  outputs. Includes ECCP (ClearKey) decrypt support via the `senc`/`saio`/
+  `saiz` round-trip
+- `run_mlmpub_fingerprint.sh`: convenience script that runs mlmpub with the
+  in-memory ECDSA fingerprint certificate and ClearKey/ECCP encryption for
+  browser testing
+
 ## [0.9.0] - 2026-05-17
 
 LOCMAF (Low Overhead CMAF) packaging support and audio loop drift fixes.

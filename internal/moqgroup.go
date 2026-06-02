@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 )
 
 type ObjectWriter func(objectID uint64, data []byte) (n int, err error)
@@ -41,6 +43,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
 	deltaCompressor := &MoofDeltaCompressor{}
+	v02State := locmafv02.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)
@@ -57,6 +60,13 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, deltaCompressor)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
+					groupNr, firstSample, endSample, err)
+			}
+			mq.MoQObjects = append(mq.MoQObjects, chunk)
+		case "locmaf-v0.2":
+			chunk, err := track.GenLocmafV02Chunk(uint32(groupNr), firstSample, endSample, v02State)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate locmaf-v0.2 chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
 			}
 			mq.MoQObjects = append(mq.MoQObjects, chunk)

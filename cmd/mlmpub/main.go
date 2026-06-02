@@ -211,7 +211,7 @@ func runServer(opts *options) error {
 		})
 	}
 
-	for _, packaging := range []string{"cmaf", "locmaf"} {
+	for _, packaging := range []string{"cmaf", "locmaf", "locmaf-v0.2"} {
 		// Always create the clear namespace
 		clearCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("%s/clear", packaging),
 			internal.ProtectionNone, now, packaging)

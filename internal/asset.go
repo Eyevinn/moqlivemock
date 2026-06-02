@@ -11,6 +11,8 @@ import (
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+
+	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 )
 
 const (
@@ -552,6 +554,9 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 					}
 					data = createSizedLocmafProperty(MoovHeader, compressed)
 				}
+				// "locmaf-v0.2" ships an uncompressed CMAF Header per
+				// draft-einarsson-moq-locmaf §13 — the catalog InitData
+				// is just the raw CMAF init bytes, same as plain "cmaf".
 				initData = base64.StdEncoding.EncodeToString(data)
 			}
 
@@ -560,22 +565,36 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				bitrate int
 				bErr    error
 			)
-			if packaging == "locmaf" {
+			switch packaging {
+			case "locmaf":
 				bitrate, bErr = calcLocmafBitrate(&ct)
 				if bErr != nil {
 					return nil, fmt.Errorf("could not calculate LOCMAF bitrate for track %s: %w", ct.Name, bErr)
 				}
-			} else {
+			case "locmaf-v0.2":
+				bitrate, bErr = calcLocmafV02Bitrate(&ct)
+				if bErr != nil {
+					return nil, fmt.Errorf("could not calculate LOCMAF v0.2 bitrate for track %s: %w", ct.Name, bErr)
+				}
+			default:
 				bitrate, bErr = calcCmafBitrate(&ct)
 				if bErr != nil {
 					return nil, fmt.Errorf("could not calculate CMAF bitrate for track %s: %w", ct.Name, bErr)
 				}
 			}
 
+			// Catalog `Track.Packaging` is "locmaf" for BOTH v0.1 and v0.2
+			// tracks; LocmafVersion ("0.1" / "0.2") is the version
+			// discriminator. The internal "locmaf-v0.2" string is just a
+			// publisher-side namespace label and encoder selector.
+			catalogPackaging := packaging
+			if catalogPackaging == "locmaf-v0.2" {
+				catalogPackaging = "locmaf"
+			}
 			track := Track{
 				Name:        ct.Name,
 				Namespace:   namespace,
-				Packaging:   packaging,
+				Packaging:   catalogPackaging,
 				IsLive:      true,
 				RenderGroup: &renderGroup,
 				AltGroup:    &altGroup,
@@ -585,8 +604,11 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				Timescale:   Ptr(int(ct.TimeScale)),
 				Language:    ct.Language,
 			}
-			if packaging == "locmaf" {
+			switch packaging {
+			case "locmaf":
 				track.LocmafVersion = LocmafVersion
+			case "locmaf-v0.2":
+				track.LocmafVersion = locmafv02.Version
 			}
 
 			// Populate optional fields if available
@@ -889,6 +911,52 @@ func calcLocmafBitrate(ct *ContentTrack) (int, error) {
 	return int(float64(ct.SampleBitrate) + 8*extraBytesPerSec), nil
 }
 
+// calcLocmafV02Bitrate returns the wire bitrate of a LOCMAF v0.2 packaged
+// track in bits per second, using the same one-full-one-delta probe as
+// calcLocmafBitrate. The two packagings produce different wire bytes but
+// the same chunk cadence, so the formula is identical.
+func calcLocmafV02Bitrate(ct *ContentTrack) (int, error) {
+	batch := ct.SampleBatch
+	if batch <= 0 {
+		batch = 1
+	}
+	if uint64(batch) > uint64(len(ct.Samples)) {
+		batch = len(ct.Samples)
+	}
+	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
+		return int(ct.SampleBitrate), nil
+	}
+	state := locmafv02.NewState()
+	fullChunk, err := ct.GenLocmafV02Chunk(0, 0, uint64(batch), state)
+	if err != nil {
+		return 0, fmt.Errorf("measure LOCMAF v0.2 full chunk for %s: %w", ct.Name, err)
+	}
+	deltaChunk, err := ct.GenLocmafV02Chunk(1, uint64(batch), 2*uint64(batch), state)
+	if err != nil {
+		return 0, fmt.Errorf("measure LOCMAF v0.2 delta chunk for %s: %w", ct.Name, err)
+	}
+	rawFull := 0
+	for i := range batch {
+		rawFull += len(ct.Samples[i].Data)
+	}
+	rawDelta := 0
+	for i := range batch {
+		rawDelta += len(ct.Samples[batch+i].Data)
+	}
+	fullOverhead := len(fullChunk) - rawFull + cmafObjectOverheadBytes
+	deltaOverhead := len(deltaChunk) - rawDelta + cmafObjectOverheadBytes
+
+	objectsPerSec := float64(ct.TimeScale) / float64(ct.SampleDur) / float64(batch)
+	fullsPerSec := 1000.0 / float64(MoqGroupDurMS)
+	deltasPerSec := objectsPerSec - fullsPerSec
+	if deltasPerSec < 0 {
+		fullsPerSec = objectsPerSec
+		deltasPerSec = 0
+	}
+	extraBytesPerSec := float64(fullOverhead)*fullsPerSec + float64(deltaOverhead)*deltasPerSec
+	return int(float64(ct.SampleBitrate) + 8*extraBytesPerSec), nil
+}
+
 // calcLOCBitrate returns the wire bitrate of a LOC-packaged track in bits per
 // second. It includes the raw sample bitrate, per-object MoQ + LOC extension
 // header overhead, and (for video) the VPS/SPS/PPS prepended to every IRAP
@@ -991,6 +1059,41 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 	}
 	return append(compressedMoof, f.Mdat.Data...), nil
 
+}
+
+// GenLocmafV02Chunk creates a LOCMAF v0.2 object for endNr-startNr samples,
+// using `state` as the in-group reference (nil → emits a full header and
+// allocates a fresh state in place; subsequent calls with the same state
+// emit delta headers).
+func (t *ContentTrack) GenLocmafV02Chunk(chunkNr uint32, startNr, endNr uint64,
+	state *locmafv02.State) ([]byte, error) {
+	if state == nil {
+		return nil, fmt.Errorf("locmafv02 state is nil")
+	}
+
+	f, err := t.createFragment(chunkNr, startNr, endNr)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create fragment: %w", err)
+	}
+
+	size := f.Size()
+	sw := bits.NewFixedSliceWriter(int(size))
+	if err := f.EncodeSW(sw); err != nil {
+		return nil, err
+	}
+
+	if len(t.contentProtectionRefIDs) > 0 {
+		f, err = t.encryptFragment(sw.Bytes())
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	obj, _, err := locmafv02.Compress(f.Moof, state, t.SpecData.GetInit().Moov)
+	if err != nil {
+		return nil, fmt.Errorf("unable to v0.2 compress moof: %w", err)
+	}
+	return append(obj, f.Mdat.Data...), nil
 }
 
 // createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
