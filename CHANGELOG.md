@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-02
+
+LOCMAF v0.2 wire codec aligned with the IETF draft, running side-by-side
+with v0.1.
+
 ### Added
 
 - LOCMAF v0.2 wire codec (`internal/locmafv02`): a renumbered, independent
@@ -30,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `run_mlmpub_fingerprint.sh`: convenience script that runs mlmpub with the
   in-memory ECDSA fingerprint certificate and ClearKey/ECCP encryption for
   browser testing
+
+### Changed
+
+- Bumped `golang.org/x/net` to v0.55.0 (GO-2026-5026)
 
 ## [0.9.0] - 2026-05-17
 
@@ -332,7 +341,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...HEAD
+[0.10.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...v0.7.0
