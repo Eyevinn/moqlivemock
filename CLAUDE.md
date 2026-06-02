@@ -34,7 +34,9 @@ go mod vendor               # Vendor dependencies
   - `locmaf.go` - LOCMAF full-moof encode/decode and the `moov`→`initData` codec
   - `locmaf_delta.go` - `MoofDeltaCompressor` / `MoofDeltaDecompressor` keeping
     the per-track previous-moof state used for delta moofs
-- `docs/LOCMAF.md` - LOCMAF packaging design, wire format, and version policy
+- `docs/LOCMAF.md` - LOCMAF v0.1 packaging design, wire format, and version policy
+- `docs/locmaf_v0_2.md` - LOCMAF v0.2 implementation notes (normative spec is the
+  IETF draft draft-einarsson-moq-locmaf)
 
 ### MoQ Transport Dependency
 
@@ -64,25 +66,25 @@ LOCMAF (Low Overhead CMAF — LOC-style key-value encoding of `moof`/`moov`):
 
 ### LOCMAF specification versioning
 
-The LOCMAF wire format and behaviour are versioned independently of
-moqlivemock releases. When the version changes (`internal.LocmafVersion`,
-the `Revision history` table in `docs/LOCMAF.md`, and the document version
-banner near the top of `docs/LOCMAF.md`):
+The LOCMAF wire format is versioned independently of moqlivemock
+releases. Two codecs ship side-by-side, one per namespace:
 
-1. Bump `internal.LocmafVersion` and the docs in the same commit.
-2. After that commit lands on `main`, tag it with an annotated tag
-   `locmaf-v<MAJOR>.<MINOR>` so the spec is permanently citable as
-   `docs/LOCMAF.md@locmaf-v<MAJOR>.<MINOR>`:
+- **v0.1** (`locmafVersion: "0.1"`, `internal.LocmafVersion`) — frozen.
+  Its normative spec is the in-repo `docs/LOCMAF.md`, tagged
+  `locmaf-v0.1` (commit `d5c5e04`) so it is citable as
+  `docs/LOCMAF.md@locmaf-v0.1`.
+- **v0.2** (`locmafVersion: "0.2"`, `locmafv02.Version`) — the normative
+  spec is the IETF Internet-Draft
+  [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/).
+  `docs/locmaf_v0_2.md` is no longer a spec; it records only moqlivemock's
+  per-field implementation status.
 
-   ```
-   git tag -a locmaf-v0.2 <sha> -m "LOCMAF specification v0.2"
-   git push origin locmaf-v0.2
-   ```
-
-   `locmaf-v0.1` was tagged on commit `d5c5e04`.
-
-Tags use the `locmaf-v` prefix to keep them separate from moqlivemock
-release tags (`vX.Y.Z`).
+The wire-format version (`"0.2"`) and the IETF draft revision (`-00`,
+`-01`, …) advance independently — cite the version-independent draft URL,
+not a pinned revision. From v0.2 onward the specification lives upstream
+in the IETF draft, so there is nothing in this repo to tag for new
+versions; only the v0.1 `locmaf-v` tag scheme remains (the `locmaf-v`
+prefix keeps it separate from release tags `vX.Y.Z`).
 
 LOC (raw codec frames, one per object) and moq-mi (catalogless):
 - `msf/clear` — LOC packaging (AVC + AAC/Opus, HEVC for `hev1.*`)

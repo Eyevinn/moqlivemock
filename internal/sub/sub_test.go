@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/require"
@@ -228,6 +229,145 @@ func TestDecryptInitKeepsProtectedMoovForLocmafEncryptedAudio(t *testing.T) {
 	require.NoError(t, err)
 	_, err = internal.DecryptFragment(got, h.cenc.DecryptInfo[track.Name], key)
 	require.NoError(t, err)
+}
+
+// TestDecompressLocmafV02ObjectRoundTrip covers the mlmsub-side wrapper
+// `decompressLocmafV02Object`. The wire payload for a v0.2 object is
+// `[header_id][properties_length][properties][mdat]`; the wrapper must
+// pass the entire payload to `locmafv02.Decompress` so that the receiver
+// can derive the last sample's size from the mdat-payload length per
+// draft §15.1 sample-size-derivation. This regressed once (the wrapper
+// sliced the mdat tail off before forwarding) and produced muxed
+// fragments with `sample_size = 0` that ffmpeg rejected.
+func TestDecompressLocmafV02ObjectRoundTrip(t *testing.T) {
+	asset, err := internal.LoadAsset(filepath.Join("..", "..", "assets", "test10s"), 1, 1)
+	require.NoError(t, err)
+
+	for _, trackName := range []string{
+		"video_400kbps_avc",
+		"audio_monotonic_128kbps_aac", // single-sample-per-chunk → mdat-length derivation
+	} {
+		t.Run(trackName, func(t *testing.T) {
+			track := asset.GetTrackByName(trackName)
+			require.NotNil(t, track)
+
+			state := locmafv02.NewState()
+			compressed, err := track.GenLocmafV02Chunk(0, 0, 1, state)
+			require.NoError(t, err)
+
+			rxState := locmafv02.NewState()
+			got, err := decompressLocmafV02Object(compressed, track.SpecData.GetInit().Moov, rxState)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+
+			gotMoof, gotMdat := decodeFragment(t, got)
+
+			expected, err := track.GenCMAFChunk(0, 0, 1)
+			require.NoError(t, err)
+			expectedMoof, expectedMdat := decodeFragment(t, expected)
+
+			// The decoded moof MUST have non-zero sample sizes summing
+			// to the mdat payload length — the specific regression
+			// the wrapper-slice bug produced was sample_size == 0.
+			require.NotEmpty(t, gotMoof.Traf.Trun.Samples)
+			var sumSizes uint64
+			for _, s := range gotMoof.Traf.Trun.Samples {
+				require.NotZero(t, s.Size, "reconstructed sample_size must be non-zero")
+				sumSizes += uint64(s.Size)
+			}
+			require.Equal(t, uint64(len(gotMdat.Data)), sumSizes,
+				"sum of reconstructed sample sizes must equal mdat payload length")
+
+			// Per-sample structure must match the unmodified CMAF.
+			require.Equal(t, len(expectedMoof.Traf.Trun.Samples), len(gotMoof.Traf.Trun.Samples))
+			for i, want := range expectedMoof.Traf.Trun.Samples {
+				got := gotMoof.Traf.Trun.Samples[i]
+				require.Equal(t, want.Size, got.Size, "sample %d size", i)
+				require.Equal(t, want.Dur, got.Dur, "sample %d duration", i)
+			}
+			require.Equal(t, expectedMdat.Data, gotMdat.Data)
+		})
+	}
+}
+
+// TestDecompressLocmafV02ClearKeyRoundTrip exercises the full
+// mlmpub→mlmsub ClearKey (ECCP) data plane for LOCMAF v0.2 in BOTH cbcs
+// and cenc modes, over audio (no subsamples) and video (clear+protected
+// subsamples): the publisher builds an encrypted v0.2 wire chunk, the
+// subscriber runs it through `decompressLocmafV02Object`, then decrypts
+// the reconstructed fragment. The decrypted payload must equal the
+// plain-CMAF chunk for the corresponding clear track.
+func TestDecompressLocmafV02ClearKeyRoundTrip(t *testing.T) {
+	const keyStr = "40112233445566778899aabbccddeeff"
+
+	tracks := []struct {
+		clear, protected string
+	}{
+		{"audio_monotonic_128kbps_aac", "audio_monotonic_128kbps_aac_eccp"},
+		{"video_400kbps_avc", "video_400kbps_avc_eccp"},
+	}
+
+	for _, scheme := range []string{"cbcs", "cenc"} {
+		t.Run(scheme, func(t *testing.T) {
+			eccp, err := internal.ParseCENCflags(
+				scheme,
+				"39112233445566778899aabbccddeeff",
+				keyStr,
+				"41112233445566778899aabbccddeeff",
+				"http://localhost:8081/clearkey",
+			)
+			require.NoError(t, err)
+
+			asset, err := internal.LoadAssetWithProtection(
+				filepath.Join("..", "..", "assets", "test10s"), 1, 1, nil, eccp)
+			require.NoError(t, err)
+
+			key, err := mp4.UnpackKey(keyStr)
+			require.NoError(t, err)
+
+			for _, tc := range tracks {
+				t.Run(tc.clear, func(t *testing.T) {
+					clearTrack := asset.GetTrackByName(tc.clear)
+					protectedTrack := asset.GetTrackByName(tc.protected)
+					require.NotNil(t, clearTrack)
+					require.NotNil(t, protectedTrack)
+
+					protectedInit, err := protectedTrack.SpecData.GenCMAFInitData()
+					require.NoError(t, err)
+					_, _, decryptInfo, err := internal.DecryptInit(protectedInit)
+					require.NoError(t, err)
+
+					state := locmafv02.NewState()
+					compressed, err := protectedTrack.GenLocmafV02Chunk(0, 0, 1, state)
+					require.NoError(t, err)
+
+					rxState := locmafv02.NewState()
+					got, err := decompressLocmafV02Object(compressed,
+						protectedTrack.SpecData.GetInit().Moov, rxState)
+					require.NoError(t, err)
+					require.NotNil(t, got)
+
+					// Sanity: reconstructed sample sizes must be non-zero.
+					gotMoof, gotMdat := decodeFragment(t, got)
+					require.NotEmpty(t, gotMoof.Traf.Trun.Samples)
+					for i, s := range gotMoof.Traf.Trun.Samples {
+						require.NotZero(t, s.Size, "encrypted sample %d size must be non-zero", i)
+					}
+					require.Greater(t, len(gotMdat.Data), 0)
+
+					got, err = internal.DecryptFragment(got, decryptInfo, key)
+					require.NoError(t, err)
+
+					expected, err := clearTrack.GenCMAFChunk(0, 0, 1)
+					require.NoError(t, err)
+					_, expectedMdat := decodeFragment(t, expected)
+					_, decryptedMdat := decodeFragment(t, got)
+					require.Equal(t, expectedMdat.Data, decryptedMdat.Data,
+						"decrypted payload must match the clear-track reference")
+				})
+			}
+		})
+	}
 }
 
 func decodeFragment(t *testing.T, data []byte) (*mp4.MoofBox, *mp4.MdatBox) {

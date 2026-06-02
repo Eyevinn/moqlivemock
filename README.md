@@ -117,14 +117,18 @@ LOCMAF deltas store signed differences and the composition time offset is
 itself signed, so signed values use zigzag-encoded varints (`0 → 0`,
 `-1 → 1`, `1 → 2`, `-2 → 3`, …) on top of the QUIC varint wire format.
 
-Because the format is still evolving, every track with
-`packaging == "locmaf"` advertises a `locmafVersion` string in the CMSF
-catalog (currently `"0.1"`). Receivers should compare against their
-highest supported version and fall back to a non-LOCMAF packaging when
-the encoder is ahead.
+Every track with `packaging == "locmaf"` advertises a `locmafVersion`
+string in the CMSF catalog (`"0.1"` or `"0.2"`). Receivers should compare
+against their highest supported version and fall back to a non-LOCMAF
+packaging when the encoder is ahead.
 
-See [`docs/LOCMAF.md`](docs/LOCMAF.md) for the design rationale — how
-LOCMAF maps to LL-HLS Parts / DASH Chunked CMAF, where its compression
+The normative LOCMAF **v0.2** wire format is specified by the IETF draft
+[draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/);
+see [`docs/locmaf_v0_2.md`](docs/locmaf_v0_2.md) for moqlivemock's
+implementation status.
+
+See [`docs/LOCMAF.md`](docs/LOCMAF.md) for the **v0.1** design rationale —
+how LOCMAF maps to LL-HLS Parts / DASH Chunked CMAF, where its compression
 wins come from in the sample-level low-latency regime, the
 `locmafVersion` signalling convention, and how the wire format is
 positioned to add future object types like `prft` without breaking
