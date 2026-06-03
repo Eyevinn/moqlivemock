@@ -7,7 +7,7 @@ require (
 	github.com/Eyevinn/moqtransport v0.8.1
 	github.com/Eyevinn/mp4ff v0.52.0
 	github.com/mengelbart/qlog v0.1.0
-	github.com/quic-go/quic-go v0.59.0
+	github.com/quic-go/quic-go v0.59.1
 	github.com/quic-go/webtransport-go v0.10.0
 	github.com/stretchr/testify v1.11.1
 )
