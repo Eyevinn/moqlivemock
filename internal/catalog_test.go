@@ -36,10 +36,14 @@ func TestCatalogGetTrackByName(t *testing.T) {
 
 func TestCatalogString(t *testing.T) {
 	cat := &Catalog{
-		Version: 1,
+		Version: "1",
 		Tracks: []Track{
-			{Name: "video", InitData: "short"},
-			{Name: "audio", InitData: "this_is_a_very_long_init_data_string_that_exceeds_20_chars"},
+			{Name: "video", InitRef: "init-video"},
+			{Name: "audio", InitRef: "init-audio"},
+		},
+		InitDataList: []InitData{
+			{ID: "init-video", Type: "inline", Data: "short"},
+			{ID: "init-audio", Type: "inline", Data: "this_is_a_very_long_init_data_string_that_exceeds_20_chars"},
 		},
 	}
 
@@ -57,11 +61,11 @@ func TestCatalogString(t *testing.T) {
 	assert.Contains(t, s, "len=")
 
 	// Original catalog should not be modified
-	assert.Equal(t, "this_is_a_very_long_init_data_string_that_exceeds_20_chars", cat.Tracks[1].InitData)
+	assert.Equal(t, "this_is_a_very_long_init_data_string_that_exceeds_20_chars", cat.InitDataList[1].Data)
 }
 
 func TestCatalogStringEmpty(t *testing.T) {
-	cat := &Catalog{Version: 1}
+	cat := &Catalog{Version: "1"}
 	s := cat.String()
-	assert.True(t, strings.Contains(s, `"version": 1`))
+	assert.True(t, strings.Contains(s, `"version": "1"`))
 }

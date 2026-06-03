@@ -2,6 +2,7 @@ package internal
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -126,32 +127,29 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			}
 
 			// Test that the catalog bitrates are calculated correctly based on batch size
-			catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000, "cmaf")
+			catalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 			require.NoError(t, err)
 			require.NotNil(t, catalog)
 
-			// Verify that tracks exist in the catalog
-			require.Equal(t, 12, len(catalog.Tracks))
+			// Verify that tracks exist in the catalog. Each rendition is
+			// published in both CMAF and LOCMAF packaging (12 -> 24).
+			require.Equal(t, 24, len(catalog.Tracks))
 
-			// Check that the bitrates in the catalog reflect the batch sizes
+			// Check that the bitrates in the catalog reflect the batch sizes.
+			// LOCMAF variant tracks are named <name>_locmaf and use the v0.2
+			// bitrate calculation.
 			for _, track := range catalog.Tracks {
-				// Find the corresponding ContentTrack
-				var contentTrack *ContentTrack
-				for _, group := range asset.Groups {
-					for i := range group.Tracks {
-						if group.Tracks[i].Name == track.Name {
-							contentTrack = &group.Tracks[i]
-							break
-						}
-					}
-					if contentTrack != nil {
-						break
-					}
-				}
+				assetName := strings.TrimSuffix(track.Name, LocmafTrackSuffix)
+				contentTrack := asset.GetTrackByName(assetName)
 				require.NotNil(t, contentTrack, "Track %s should exist in asset", track.Name)
 
-				// Calculate expected bitrate
-				expectedBitrate, err := calcCmafBitrate(contentTrack)
+				var expectedBitrate int
+				switch track.Packaging {
+				case "locmaf":
+					expectedBitrate, err = calcLocmafV02Bitrate(contentTrack)
+				default:
+					expectedBitrate, err = calcCmafBitrate(contentTrack)
+				}
 				require.NoError(t, err)
 
 				require.Equal(t, expectedBitrate, *track.Bitrate,

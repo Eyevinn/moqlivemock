@@ -6,13 +6,14 @@ import (
 )
 
 // Catalog represents the MSF JSON catalog as defined in
-// draft-ietf-moq-msf-00 (MOQT Streaming Format) and
+// draft-ietf-moq-msf-01 (MOQT Streaming Format) and
 // draft-ietf-moq-cmsf-00 (CMAF MOQT Streaming Format).
 // It provides information about the tracks being produced by an MSF publisher.
 type Catalog struct {
 	// Version specifies the version of MSF referenced by this catalog.
-	// Required field at the root level.
-	Version int `json:"version"`
+	// Required field at the root level. Draft-01 makes this a JSON string
+	// (value "1"), whereas draft-00 used a number.
+	Version string `json:"version"`
 
 	// GeneratedAt is the wallclock time at which this catalog was generated,
 	// expressed as milliseconds since the Unix epoch.
@@ -24,31 +25,47 @@ type Catalog struct {
 	// Optional field at the root level. Must not be included if false.
 	IsComplete bool `json:"isComplete,omitempty"`
 
-	// DeltaUpdate indicates that this catalog object represents a delta (or partial) update.
-	// Optional field at the root level.
-	DeltaUpdate bool `json:"deltaUpdate,omitempty"`
-
-	// AddTracks indicates a delta processing instruction to add new tracks.
-	// Optional field at the root level, only used in delta updates.
-	AddTracks []Track `json:"addTracks,omitempty"`
-
-	// RemoveTracks indicates a delta processing instruction to remove tracks.
-	// Optional field at the root level, only used in delta updates.
-	RemoveTracks []Track `json:"removeTracks,omitempty"`
-
-	// CloneTracks indicates a delta processing instruction to clone new tracks from previously declared tracks.
-	// Optional field at the root level, only used in delta updates.
-	CloneTracks []Track `json:"cloneTracks,omitempty"`
+	// DeltaUpdate is an ordered array of operations to apply to the catalog
+	// (draft-ietf-moq-msf-01 Section 5.1.6). Optional field at the root level,
+	// only used in delta updates.
+	DeltaUpdate []DeltaOperation `json:"deltaUpdate,omitempty"`
 
 	// Tracks is an array of track objects.
 	// Required field at the root level for non-delta updates.
 	Tracks []Track `json:"tracks,omitempty"`
+
+	// InitDataList holds initialization data referenced by tracks via InitRef
+	// (draft-ietf-moq-msf-01 Section 5.1.7). Two tracks (e.g. a CMAF track and
+	// its LOCMAF counterpart) may reference the same entry.
+	// Optional field at the root level.
+	InitDataList []InitData `json:"initDataList,omitempty"`
 
 	// ContentProtections contains content protection information.
 	// No content protection is information is repeated at the track level,
 	// all tracks must refer to this common field.
 	// Optional field at the root level, only used if content is protected.
 	ContentProtections []ContentProtection `json:"contentProtections,omitempty"`
+}
+
+// DeltaOperation is a single delta-update operation
+// (draft-ietf-moq-msf-01 Section 5.1.6).
+type DeltaOperation struct {
+	// Op is the operation type: "add", "remove" or "clone".
+	Op string `json:"op"`
+	// Tracks is the array of track objects the operation applies to.
+	Tracks []Track `json:"tracks"`
+}
+
+// InitData is an entry in the catalog-level InitDataList
+// (draft-ietf-moq-msf-01 Section 5.1.7).
+type InitData struct {
+	// ID is a reference to this initialization data, unique within the catalog.
+	ID string `json:"id"`
+	// Type is the type of reference. Currently only "inline" is defined.
+	Type string `json:"type"`
+	// Data holds the init payload as defined by Type. For "inline" it is
+	// Base64-encoded initialization data.
+	Data string `json:"data"`
 }
 
 func (c *Catalog) GetTrackByName(name string) *Track {
@@ -60,22 +77,37 @@ func (c *Catalog) GetTrackByName(name string) *Track {
 	return nil
 }
 
-// String returns a JSON string representation of the catalog with indentation.
-// The InitData fields longer than 20 characters are shortened to show only the first 20 characters
-// followed by "..." and the total length.
-func (c *Catalog) String() string {
-	// Create a deep copy of the catalog to modify InitData
-	copyCat := *c
-	copyTracks := make([]Track, len(c.Tracks))
+// InitDataFor resolves a track's InitRef against the catalog InitDataList and
+// returns the Base64-encoded init payload. The boolean is false when the track
+// has no InitRef or the referenced entry is missing.
+func (c *Catalog) InitDataFor(t *Track) (string, bool) {
+	if t == nil || t.InitRef == "" {
+		return "", false
+	}
+	for _, id := range c.InitDataList {
+		if id.ID == t.InitRef {
+			return id.Data, true
+		}
+	}
+	return "", false
+}
 
-	for i, track := range c.Tracks {
-		copyTracks[i] = track
-		if len(track.InitData) > 20 {
-			copyTracks[i].InitData = track.InitData[:20] + "..." + fmt.Sprintf("(len=%d)", len(track.InitData))
+// String returns a JSON string representation of the catalog with indentation.
+// InitDataList Data fields longer than 20 characters are shortened to show only
+// the first 20 characters followed by "..." and the total length.
+func (c *Catalog) String() string {
+	// Create a shallow copy of the catalog to shorten init payloads.
+	copyCat := *c
+	copyInit := make([]InitData, len(c.InitDataList))
+
+	for i, id := range c.InitDataList {
+		copyInit[i] = id
+		if len(id.Data) > 20 {
+			copyInit[i].Data = id.Data[:20] + "..." + fmt.Sprintf("(len=%d)", len(id.Data))
 		}
 	}
 
-	copyCat.Tracks = copyTracks
+	copyCat.InitDataList = copyInit
 
 	// Marshal with indentation
 	jsonBytes, err := json.MarshalIndent(copyCat, "", "  ")
@@ -133,9 +165,10 @@ type Track struct {
 	// Optional field at the track level.
 	AltGroup *int `json:"altGroup,omitempty"`
 
-	// InitData holds Base64 encoded initialization data for the track.
-	// Optional field at the track level. Used for CMAF init segments.
-	InitData string `json:"initData,omitempty"`
+	// InitRef points at the id field of an entry in the catalog-level
+	// InitDataList (draft-ietf-moq-msf-01 Section 5.2.13).
+	// Optional field at the track level.
+	InitRef string `json:"initRef,omitempty"`
 
 	// Dependencies holds an array of track names on which the current track is dependent.
 	// Optional field at the track level.
@@ -202,7 +235,7 @@ type Track struct {
 	EventType string `json:"eventType,omitempty"`
 
 	// ParentName defines the parent track name to be cloned.
-	// This field is only included inside a CloneTracks object.
+	// This field is only included inside a "clone" DeltaOperation's tracks.
 	ParentName string `json:"parentName,omitempty"`
 
 	// ContentProtectionRefIDs defines which content protection information should be used for this track.

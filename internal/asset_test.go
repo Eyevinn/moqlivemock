@@ -8,7 +8,6 @@ import (
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
-	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -243,14 +242,24 @@ func TestLoadAsset(t *testing.T) {
 				"loop duration should be 10s in timescale")
 		}
 	}
-	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000, "cmaf")
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 	require.NoError(t, err)
 	require.NotNil(t, cat)
-	require.Equal(t, 12, len(cat.Tracks))
-	// Check that all tracks have the namespace set
+	// Each rendition is published in both CMAF and LOCMAF packaging, so the
+	// unified catalog has twice as many media tracks as before (12 -> 24).
+	require.Equal(t, 24, len(cat.Tracks))
+	cmaf, locmaf := 0, 0
 	for _, track := range cat.Tracks {
 		require.Equal(t, "cmsf/clear", track.Namespace)
+		switch track.Packaging {
+		case "cmaf":
+			cmaf++
+		case "locmaf":
+			locmaf++
+			require.Equal(t, "0.2", track.LocmafVersion)
+		}
 	}
+	require.Equal(t, cmaf, locmaf, "equal number of cmaf and locmaf variants")
 }
 
 func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
@@ -284,54 +293,58 @@ func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
 	require.NotEqual(t, videoInitBefore, protectedVideoInit, "protected track should have modified init data")
 }
 
-func TestLocmafCatalogUsesLocmafInitData(t *testing.T) {
+// TestUnifiedCatalogSharesInitData verifies that the CMAF and LOCMAF variants
+// of each rendition reference a single shared entry in the InitDataList
+// (draft-ietf-moq-msf-01 initRef), and that every initRef resolves.
+func TestUnifiedCatalogSharesInitData(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 
-	cat, err := asset.GenCMAFCatalogEntry("locmaf/clear", ProtectionNone, 1234567890000, "locmaf")
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 	require.NoError(t, err)
 	require.NotEmpty(t, cat.Tracks)
 
-	var videoTrack *Track
+	// Locate a CMAF video track and its LOCMAF counterpart.
+	var cmafVideo, locmafVideo *Track
 	for i := range cat.Tracks {
-		if cat.Tracks[i].Role == "video" {
-			videoTrack = &cat.Tracks[i]
-			break
+		tr := &cat.Tracks[i]
+		if tr.Role != "video" {
+			continue
+		}
+		if tr.Packaging == "cmaf" && cmafVideo == nil {
+			cmafVideo = tr
+		}
+		if tr.Packaging == "locmaf" && locmafVideo == nil {
+			locmafVideo = tr
 		}
 	}
-	require.NotNil(t, videoTrack)
-	require.Equal(t, "locmaf", videoTrack.Packaging)
-	require.NotEmpty(t, videoTrack.InitData)
+	require.NotNil(t, cmafVideo)
+	require.NotNil(t, locmafVideo)
 
-	locmafInit, err := base64.StdEncoding.DecodeString(videoTrack.InitData)
-	require.NoError(t, err)
+	// The LOCMAF variant is named <cmaf>_locmaf and shares the same initRef.
+	require.Equal(t, cmafVideo.Name+LocmafTrackSuffix, locmafVideo.Name)
+	require.NotEmpty(t, cmafVideo.InitRef)
+	require.Equal(t, cmafVideo.InitRef, locmafVideo.InitRef)
 
-	headerID, _, err := quicvarint.Parse(locmafInit)
+	// The shared init data resolves to a valid CMAF init segment.
+	data, ok := cat.InitDataFor(cmafVideo)
+	require.True(t, ok)
+	require.NotEmpty(t, data)
+	initBytes, err := base64.StdEncoding.DecodeString(data)
 	require.NoError(t, err)
-	require.EqualValues(t, MoovHeader, headerID)
+	f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initBytes))
+	require.NoError(t, err)
+	require.NotNil(t, f.Init)
+	require.NotNil(t, f.Init.Moov)
 
-	pos := 0
-	_, n, err := quicvarint.Parse(locmafInit[pos:])
-	require.NoError(t, err)
-	pos += n
-	locPayloadLength, n, err := quicvarint.Parse(locmafInit[pos:])
-	require.NoError(t, err)
-	pos += n
-	require.LessOrEqual(t, pos+int(locPayloadLength), len(locmafInit))
-	locPayload := locmafInit[pos : pos+int(locPayloadLength)]
-
-	timescale := *videoTrack.Timescale
-	width := *videoTrack.Width
-	height := *videoTrack.Height
-	decompressedInit, err := DecompressInit(locPayload, Track{
-		Timescale: &timescale,
-		Width:     &width,
-		Height:    &height,
-		Role:      "video",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, decompressedInit)
-	require.NotNil(t, decompressedInit.Moov)
+	// Every track's initRef must resolve in the InitDataList.
+	for i := range cat.Tracks {
+		tr := &cat.Tracks[i]
+		if tr.InitRef != "" {
+			_, ok := cat.InitDataFor(tr)
+			require.True(t, ok, "initRef %q for track %q must resolve", tr.InitRef, tr.Name)
+		}
+	}
 }
 
 func TestGen20sCMAFStreams(t *testing.T) {
@@ -399,83 +412,6 @@ func TestClearKeyDecryptionMatchExcatly(t *testing.T) {
 		eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
 		require.NoError(t, err)
 		checkDecryptedTracksMatchExactly(t, eccp, "_eccp")
-	}
-}
-
-func TestCompressDecompressProtectedInitPreservesProtectionFields(t *testing.T) {
-	kidStr := "39112233445566778899aabbccddeeff"
-	keyStr := "40112233445566778899aabbccddeeff"
-	ivStr := "41112233445566778899aabbccddeeff"
-
-	for _, scheme := range []string{"cenc", "cbcs"} {
-		t.Run(scheme, func(t *testing.T) {
-			eccp, err := ParseCENCflags(scheme, kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
-			require.NoError(t, err)
-
-			asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
-			require.NoError(t, err)
-
-			var protectedTrack *ContentTrack
-			for groupIdx := range asset.Groups {
-				for trackIdx := range asset.Groups[groupIdx].Tracks {
-					track := &asset.Groups[groupIdx].Tracks[trackIdx]
-					if track.Protection != ProtectionNone && track.ContentType == "video" {
-						protectedTrack = track
-						break
-					}
-				}
-				if protectedTrack != nil {
-					break
-				}
-			}
-			require.NotNil(t, protectedTrack)
-
-			initData, err := protectedTrack.SpecData.GenCMAFInitData()
-			require.NoError(t, err)
-			originalFile, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(initData))
-			require.NoError(t, err)
-			require.NotNil(t, originalFile.Init)
-
-			require.NotNil(t, originalFile.Init.Moov.Trak)
-			require.NotEmpty(t, originalFile.Init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children)
-			originalSampleEntry := originalFile.Init.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children[0]
-			originalSinf := getSampleEntrySinf(originalSampleEntry)
-			originalTenc := getSampleEntryTenc(originalSampleEntry)
-			require.NotNil(t, originalSinf)
-			require.NotNil(t, originalSinf.Schm)
-			require.NotNil(t, originalTenc)
-			require.Equal(t, byte(1), originalTenc.DefaultIsProtected)
-
-			compressed, err := CompressMoov(originalFile.Init.Moov)
-			require.NoError(t, err)
-
-			timescale := int(protectedTrack.TimeScale)
-			width := int(originalFile.Init.Moov.Trak.Tkhd.Width >> 16)
-			height := int(originalFile.Init.Moov.Trak.Tkhd.Height >> 16)
-			role := protectedTrack.ContentType
-			trackInfo := Track{Timescale: &timescale, Width: &width, Height: &height, Role: role}
-			decompressedInit, err := DecompressInit(compressed, trackInfo)
-			require.NoError(t, err)
-
-			require.NotNil(t, decompressedInit.Moov.Trak)
-			require.NotEmpty(t, decompressedInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children)
-			rebuiltSampleEntry := decompressedInit.Moov.Trak.Mdia.Minf.Stbl.Stsd.Children[0]
-			rebuiltSinf := getSampleEntrySinf(rebuiltSampleEntry)
-			rebuiltTenc := getSampleEntryTenc(rebuiltSampleEntry)
-			require.NotNil(t, rebuiltSinf)
-			require.NotNil(t, rebuiltSinf.Schm)
-			require.NotNil(t, rebuiltTenc)
-
-			require.Equal(t, originalFile.Init.Moov.Trak.Tkhd.Flags, decompressedInit.Moov.Trak.Tkhd.Flags)
-			require.Equal(t, originalSinf.Schm.SchemeType, rebuiltSinf.Schm.SchemeType)
-			require.Equal(t, originalTenc.Version, rebuiltTenc.Version)
-			require.Equal(t, originalTenc.DefaultIsProtected, rebuiltTenc.DefaultIsProtected)
-			require.Equal(t, originalTenc.DefaultCryptByteBlock, rebuiltTenc.DefaultCryptByteBlock)
-			require.Equal(t, originalTenc.DefaultSkipByteBlock, rebuiltTenc.DefaultSkipByteBlock)
-			require.Equal(t, originalTenc.DefaultPerSampleIVSize, rebuiltTenc.DefaultPerSampleIVSize)
-			require.Equal(t, originalTenc.DefaultKID, rebuiltTenc.DefaultKID)
-			require.Equal(t, originalTenc.DefaultConstantIV, rebuiltTenc.DefaultConstantIV)
-		})
 	}
 }
 

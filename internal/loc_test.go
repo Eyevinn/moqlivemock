@@ -18,7 +18,7 @@ func TestGenLOCCatalogEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 
-	assert.Equal(t, 1, cat.Version)
+	assert.Equal(t, "1", cat.Version)
 	require.NotNil(t, cat.GeneratedAt)
 	assert.Equal(t, genAt, *cat.GeneratedAt)
 	require.NotEmpty(t, cat.Tracks)
@@ -32,7 +32,7 @@ func TestGenLOCCatalogEntry(t *testing.T) {
 		assert.Equal(t, "loc", tr.Packaging)
 		assert.True(t, tr.IsLive)
 		// Init data must NOT be emitted — LOC carries config in-band.
-		assert.Empty(t, tr.InitData, "LOC tracks must not include initData (%s)", tr.Name)
+		assert.Empty(t, tr.InitRef, "LOC tracks must not include initRef (%s)", tr.Name)
 		sawLOCPackaging = true
 
 		if tr.Role == "video" {

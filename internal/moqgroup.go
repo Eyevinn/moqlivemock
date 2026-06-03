@@ -42,7 +42,6 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 		endNr:      endNr,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
-	deltaCompressor := &MoofDeltaCompressor{}
 	v02State := locmafv02.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
@@ -57,16 +56,10 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			}
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		case "locmaf":
-			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, deltaCompressor)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
-					groupNr, firstSample, endSample, err)
-			}
-			mq.MoQObjects = append(mq.MoQObjects, chunk)
-		case "locmaf-v0.2":
+			// "locmaf" packaging is LOCMAF v0.2 (the only supported version).
 			chunk, err := track.GenLocmafV02Chunk(uint32(groupNr), firstSample, endSample, v02State)
 			if err != nil {
-				return nil, fmt.Errorf("failed to generate locmaf-v0.2 chunk for group %d, samples %d-%d: %w",
+				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
 			}
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
