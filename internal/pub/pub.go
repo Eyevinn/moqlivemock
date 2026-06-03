@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -285,7 +286,10 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 func PublishTrack(ctx context.Context, publisher moqtransport.Publisher,
 	asset *internal.Asset, trackName, packaging string) {
 
-	ct := asset.GetTrackByName(trackName)
+	// LOCMAF variant tracks in a unified CMSF catalog are named
+	// <contentTrack>_locmaf; strip the suffix to find the content track.
+	assetTrackName := strings.TrimSuffix(trackName, internal.LocmafTrackSuffix)
+	ct := asset.GetTrackByName(assetTrackName)
 	if ct == nil {
 		slog.Error("track not found", "track", trackName)
 		return

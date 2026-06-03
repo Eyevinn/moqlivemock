@@ -58,19 +58,20 @@ func requestClearKey(laurl string, kids []string) ([]keyInfo, error) {
 	return ckResp.Keys, nil
 }
 
-// decryptInit decrypts the init data, requests the ClearKey license server
-// and stores protection information in the Handler.
-func (h *Handler) decryptInit(track *internal.Track) error {
+// decryptInit decrypts the (Base64-encoded) init data, requests the ClearKey
+// license server, stores protection information in the Handler and returns the
+// decrypted init data Base64-encoded.
+func (h *Handler) decryptInit(track *internal.Track, initData string) (string, error) {
 	if track == nil {
-		return fmt.Errorf("track is nil")
+		return "", fmt.Errorf("track is nil")
 	}
-	initDataBytes, err := base64.StdEncoding.DecodeString(track.InitData)
+	initDataBytes, err := base64.StdEncoding.DecodeString(initData)
 	if err != nil {
-		return fmt.Errorf("failed to base64 decode init data: %w", err)
+		return "", fmt.Errorf("failed to base64 decode init data: %w", err)
 	}
 	decryptedInitBytes, _, decryptInfo, err := internal.DecryptInit(initDataBytes)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt init: %w", err)
+		return "", fmt.Errorf("failed to decrypt init: %w", err)
 	}
 	var clearKeyRefID string
 	for i, id := range track.ContentProtectionRefIDs {
@@ -79,17 +80,16 @@ func (h *Handler) decryptInit(track *internal.Track) error {
 		}
 	}
 	if clearKeyRefID == "" {
-		return fmt.Errorf("ClearKey not supported for track")
+		return "", fmt.Errorf("ClearKey not supported for track")
 	}
 	err = h.setClearKeyDecryptionKey(clearKeyRefID)
 	if err != nil {
-		return fmt.Errorf("failed to set ClearKey decryption key: %w", err)
+		return "", fmt.Errorf("failed to set ClearKey decryption key: %w", err)
 	}
 
 	decryptedInit := base64.StdEncoding.EncodeToString(decryptedInitBytes)
 	h.cenc.DecryptInfo[track.Name] = decryptInfo
-	track.InitData = decryptedInit
-	return nil
+	return decryptedInit, nil
 }
 
 func (h *Handler) decryptPayload(payload []byte, trackName string) ([]byte, error) {

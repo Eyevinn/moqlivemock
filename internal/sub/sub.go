@@ -172,40 +172,32 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			isLOC = true
 		}
 
+		// Resolve the init data the track references in the catalog
+		// InitDataList. Empty for LOC tracks (in-band config).
+		initData, _ := h.catalog.InitDataFor(track)
+
 		var protectedMoov *mp4.MoovBox
 		if track.Packaging == "locmaf" {
-			// LocmafVersion picks the codec; "" defaults to v0.1 for
-			// catalogs that predate the version field.
-			switch track.LocmafVersion {
-			case "", internal.LocmafVersion:
-				initData, moov, err := locmafInitData(*track)
-				if err != nil {
-					slog.Error("failed to parse locmaf init data", "error", err)
+			// "locmaf" is LOCMAF v0.2, which ships uncompressed CMAF init
+			// in the catalog — no translation needed downstream, but we
+			// still need to extract the moov for CENC tracks so the
+			// decrypt pipeline can pick up the tenc defaults / KID.
+			if track.LocmafVersion != "" && track.LocmafVersion != locmafv02.Version {
+				slog.Error("unsupported locmaf version", "version", track.LocmafVersion,
+					"supported", []string{locmafv02.Version})
+				return
+			}
+			if len(track.ContentProtectionRefIDs) > 0 {
+				init, perr := parseCMAFInit(initData)
+				if perr != nil {
+					slog.Error("failed to parse v0.2 locmaf init", "error", perr)
 					return
 				}
-				track.InitData = initData
-				protectedMoov = moov
-			case locmafv02.Version:
-				// v0.2 ships uncompressed CMAF init in the catalog —
-				// no translation needed downstream, but we still need
-				// to extract the moov for CENC tracks so the decrypt
-				// pipeline can pick up the tenc defaults / KID.
-				if len(track.ContentProtectionRefIDs) > 0 {
-					init, perr := parseCMAFInit(track.InitData)
-					if perr != nil {
-						slog.Error("failed to parse v0.2 locmaf init", "error", perr)
-						return
-					}
-					protectedMoov = init.Moov
-				}
-			default:
-				slog.Error("unsupported locmaf version", "version", track.LocmafVersion,
-					"supported", []string{internal.LocmafVersion, locmafv02.Version})
-				return
+				protectedMoov = init.Moov
 			}
 		}
 
-		// If track is encrypted, the InitData needs to be adjusted
+		// If track is encrypted, the init data needs to be adjusted
 		if len(track.ContentProtectionRefIDs) > 0 {
 			if h.cenc == nil {
 				h.cenc = &CENC{
@@ -218,9 +210,11 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 				}
 				h.cenc.ProtectedMoov[track.Name] = protectedMoov
 			}
-			err = h.decryptInit(track)
-			if err != nil {
-				slog.Error("failed to decrypt init data", "error", err)
+			decrypted, derr := h.decryptInit(track, initData)
+			if derr != nil {
+				slog.Error("failed to decrypt init data", "error", derr)
+			} else {
+				initData = decrypted
 			}
 		}
 		// Select video track
@@ -246,13 +240,13 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 				} else {
 					// CMAF: write init segment and set up mux
 					if h.Outs["video"] != nil {
-						err = unpackWrite(track.InitData, h.Outs["video"])
+						err = unpackWrite(initData, h.Outs["video"])
 						if err != nil {
 							slog.Error("failed to write init data", "error", err)
 						}
 					}
 					if h.mux != nil {
-						err = h.mux.AddInit(track.InitData, "video")
+						err = h.mux.AddInit(initData, "video")
 						if err != nil {
 							slog.Error("failed to add init data", "error", err)
 						}
@@ -298,13 +292,13 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 				} else {
 					// CMAF: write init segment and set up mux
 					if h.Outs["audio"] != nil {
-						err = unpackWrite(track.InitData, h.Outs["audio"])
+						err = unpackWrite(initData, h.Outs["audio"])
 						if err != nil {
 							slog.Error("failed to write init data", "error", err)
 						}
 					}
 					if h.mux != nil {
-						err = h.mux.AddInit(track.InitData, "audio")
+						err = h.mux.AddInit(initData, "audio")
 						if err != nil {
 							slog.Error("failed to add init data", "error", err)
 						}
@@ -325,7 +319,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			}
 
 			if subsTrack == track.Name && h.Outs["subs"] != nil {
-				err = unpackWrite(track.InitData, h.Outs["subs"])
+				err = unpackWrite(initData, h.Outs["subs"])
 				if err != nil {
 					slog.Error("failed to write subtitle init data", "error", err)
 				}
@@ -536,7 +530,8 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		if h.cenc != nil && h.cenc.ProtectedMoov != nil && h.cenc.ProtectedMoov[trackname] != nil {
 			moov = h.cenc.ProtectedMoov[trackname]
 		} else {
-			init, err := parseCMAFInit(track.InitData)
+			initData, _ := h.catalog.InitDataFor(track)
+			init, err := parseCMAFInit(initData)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse init data for track %s: %w", trackname, err)
 			}
@@ -544,7 +539,6 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		}
 	}
 	go func() {
-		deltaDecompressor := &internal.MoofDeltaDecompressor{}
 		v02State := locmafv02.NewState()
 		for {
 			o, err := rs.ReadObject(ctx)
@@ -557,7 +551,6 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
 			if o.ObjectID == 0 {
-				deltaDecompressor = &internal.MoofDeltaDecompressor{}
 				v02State = locmafv02.NewState()
 				attrs := []any{
 					"track", trackname,
@@ -584,27 +577,15 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 
 			if track.Packaging == "locmaf" {
-				switch track.LocmafVersion {
-				case "", internal.LocmafVersion:
-					o.Payload, err = decompressLocmafObject(o.Payload, uint32(o.GroupID), moov, deltaDecompressor)
-					if err != nil {
-						slog.Error("failed to decompress locmaf object",
-							"track", trackname,
-							"groupID", o.GroupID,
-							"objectID", o.ObjectID,
-							"error", err)
-						return
-					}
-				case locmafv02.Version:
-					o.Payload, err = decompressLocmafV02Object(o.Payload, moov, v02State)
-					if err != nil {
-						slog.Error("failed to decompress locmaf-v0.2 object",
-							"track", trackname,
-							"groupID", o.GroupID,
-							"objectID", o.ObjectID,
-							"error", err)
-						return
-					}
+				// "locmaf" is LOCMAF v0.2.
+				o.Payload, err = decompressLocmafV02Object(o.Payload, moov, v02State)
+				if err != nil {
+					slog.Error("failed to decompress locmaf object",
+						"track", trackname,
+						"groupID", o.GroupID,
+						"objectID", o.ObjectID,
+						"error", err)
+					return
 				}
 				if o.Payload == nil {
 					continue
@@ -712,32 +693,6 @@ func decompressLocmafV02Object(payload []byte, moov *mp4.MoovBox,
 	return sw.Bytes(), nil
 }
 
-func decompressLocmafObject(payload []byte, seqnum uint32,
-	moov *mp4.MoovBox, decompressor *internal.MoofDeltaDecompressor) ([]byte, error) {
-
-	moof, mdatData, err := decompressor.DecompressMoof(payload, seqnum, moov)
-	if err != nil {
-		return nil, err
-	}
-	if moof == nil {
-		// Unknown LOCMAF object — already logged in the decompressor; emit
-		// nothing so the receiver moves on to the next object.
-		return nil, nil
-	}
-
-	frag := mp4.NewFragment()
-	frag.AddChild(moof)
-	frag.AddChild(&mp4.MdatBox{Data: mdatData})
-
-	sw := bits.NewFixedSliceWriter(int(frag.Size()))
-	err = frag.EncodeSW(sw)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode decompressed fragment: %w", err)
-	}
-
-	return sw.Bytes(), nil
-}
-
 func unpackWrite(initData string, w io.Writer) error {
 	initBytes, err := base64.StdEncoding.DecodeString(initData)
 	if err != nil {
@@ -745,62 +700,6 @@ func unpackWrite(initData string, w io.Writer) error {
 	}
 	_, err = w.Write(initBytes)
 	return err
-}
-
-func locmafInitData(track internal.Track) (string, *mp4.MoovBox, error) {
-	init, err := parseLocmafInit(&track)
-	if err != nil {
-		return "", nil, err
-	}
-	initDataBytes, err := encodeInitSegment(init)
-	if err != nil {
-		return "", nil, err
-	}
-	return base64.StdEncoding.EncodeToString(initDataBytes), init.Moov, nil
-}
-
-func parseLocmafInit(track *internal.Track) (*mp4.InitSegment, error) {
-	if track == nil {
-		return nil, fmt.Errorf("track is nil")
-	}
-	initDataBytes, err := base64.StdEncoding.DecodeString(track.InitData)
-	if err != nil {
-		return nil, fmt.Errorf("failed to base64 decode init data: %w", err)
-	}
-	headerID, n, err := quicvarint.Parse(initDataBytes)
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmaf init header")
-	}
-	pos := n
-
-	locPayloadLength, n, err := quicvarint.Parse(initDataBytes[pos:])
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmaf init payload length")
-	}
-	pos += n
-	if headerID != uint64(internal.MoovHeader) {
-		return nil, fmt.Errorf("unsupported locmaf init header %d", headerID)
-	}
-	if locPayloadLength > uint64(len(initDataBytes)-pos) {
-		return nil, fmt.Errorf("locmaf init payload exceeds object length")
-	}
-
-	init, err := internal.DecompressInit(initDataBytes[pos:pos+int(locPayloadLength)], *track)
-	if err != nil {
-		return nil, err
-	}
-	if init == nil || init.Moov == nil {
-		return nil, fmt.Errorf("missing moov in locmaf init data")
-	}
-	return init, nil
-}
-
-func encodeInitSegment(init *mp4.InitSegment) ([]byte, error) {
-	sw := bits.NewFixedSliceWriter(int(init.Size()))
-	if err := init.EncodeSW(sw); err != nil {
-		return nil, err
-	}
-	return sw.Bytes(), nil
 }
 
 func parseCMAFInit(initData string) (*mp4.InitSegment, error) {

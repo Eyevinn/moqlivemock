@@ -22,17 +22,18 @@ func TestBitrateExposesPackagingDifferences(t *testing.T) {
 	asset, err := LoadAssetWithProtection("../assets/test10s", 2, 1, nil, cencEccp)
 	require.NoError(t, err)
 
-	clearCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0, "cmaf")
+	clearCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0)
 	require.NoError(t, err)
-	encCat, err := asset.GenCMAFCatalogEntry("cmsf/eccp-cenc", ProtectionECCP, 0, "cmaf")
+	encCat, err := asset.GenCMAFCatalogEntry("cmsf/eccp-cenc", ProtectionECCP, 0)
 	require.NoError(t, err)
 	locCat, err := asset.GenLOCCatalogEntry(0)
 	require.NoError(t, err)
 
 	// Index each catalog by base track name (encrypted tracks have an "_eccp"
-	// suffix that we strip for the comparison).
-	clearByName := indexTracks(clearCat.Tracks, "")
-	encByName := indexTracks(encCat.Tracks, "_eccp")
+	// suffix that we strip for the comparison). The unified CMSF catalog also
+	// carries LOCMAF variants; restrict the CMAF comparison to cmaf tracks.
+	clearByName := indexTracks(cmafOnly(clearCat.Tracks), "")
+	encByName := indexTracks(cmafOnly(encCat.Tracks), "_eccp")
 	locByName := indexTracks(locCat.Tracks, "")
 
 	require.NotEmpty(t, clearByName)
@@ -109,13 +110,24 @@ func TestLocmafBitrateIsLowerThanCmaf(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 
-	cmafCat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0, "cmaf")
-	require.NoError(t, err)
-	locmafCat, err := asset.GenCMAFCatalogEntry("locmaf/clear", ProtectionNone, 0, "locmaf")
+	// The unified catalog carries both packagings; CMAF tracks keep their
+	// name, LOCMAF variants are <name>_locmaf.
+	cat, err := asset.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 0)
 	require.NoError(t, err)
 
-	cmafByName := indexTracks(cmafCat.Tracks, "")
-	locmafByName := indexTracks(locmafCat.Tracks, "")
+	var cmafTracks, locmafTracks []Track
+	for _, tr := range cat.Tracks {
+		switch tr.Packaging {
+		case "cmaf":
+			if tr.Role == "video" || tr.Role == "audio" {
+				cmafTracks = append(cmafTracks, tr)
+			}
+		case "locmaf":
+			locmafTracks = append(locmafTracks, tr)
+		}
+	}
+	cmafByName := indexTracks(cmafTracks, "")
+	locmafByName := indexTracks(locmafTracks, LocmafTrackSuffix)
 	require.NotEmpty(t, cmafByName)
 	require.NotEmpty(t, locmafByName)
 
@@ -140,6 +152,17 @@ func TestLocmafBitrateIsLowerThanCmaf(t *testing.T) {
 			"%s: LOCMAF bitrate %d should exceed raw sample bitrate %d",
 			name, *locmafTrack.Bitrate, ct.SampleBitrate)
 	}
+}
+
+// cmafOnly returns the CMAF-packaged tracks from a unified CMSF catalog.
+func cmafOnly(tracks []Track) []Track {
+	var out []Track
+	for _, tr := range tracks {
+		if tr.Packaging == "cmaf" {
+			out = append(out, tr)
+		}
+	}
+	return out
 }
 
 func indexTracks(tracks []Track, suffix string) map[string]Track {

@@ -11,99 +11,12 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 )
 
-// TestLocmafV01V02CrossVersionEquivalence is the key correctness
-// test: encoding the same source moof through both v0.1 and v0.2
-// codecs and decoding each side must produce moofs that agree on
-// every semantic field (samples, BMDT, CENC). Byte-level differences
-// in saio/saiz ordering and tfhd-default packing are intentional and
-// not checked.
-func TestLocmafV01V02CrossVersionEquivalence(t *testing.T) {
-	for _, ct := range loadAllContentTracks(t) {
-		ct := ct
-		t.Run(ct.Name, func(t *testing.T) {
-			runCrossVersionTrack(t, ct)
-		})
-	}
-}
-
-func runCrossVersionTrack(t *testing.T, ct *ContentTrack) {
-	t.Helper()
-	moov := ct.SpecData.GetInit().Moov
-
-	v01Comp := &MoofDeltaCompressor{}
-	v01Dec := &MoofDeltaDecompressor{}
-	v02EncState := locmafv02.NewState()
-	v02DecState := locmafv02.NewState()
-
-	// Run 4 chunks worth (one full + three deltas) so both BMDT
-	// derivation and list-length stability paths are exercised.
-	batch := uint64(ct.SampleBatch)
-	if batch == 0 {
-		batch = 1
-	}
-	for chunkNr := uint32(0); chunkNr < 4; chunkNr++ {
-		start := uint64(chunkNr) * batch
-		end := start + batch
-		if end > uint64(len(ct.Samples)) {
-			return // not enough samples
-		}
-
-		// Capture the source moof by running v0.1's chunk path.
-		// Both codecs see the same f.Moof input (createFragment is
-		// deterministic), so this gives us the reference shape.
-		srcFrag, err := ct.createFragment(chunkNr, start, end)
-		require.NoError(t, err)
-
-		// v0.1: compress → decompress.
-		v01Header, v01Payload, err := v01Comp.CompressMoof(srcFrag.Moof, moov)
-		require.NoError(t, err)
-		v01Obj := createSizedLocmafProperty(v01Header, v01Payload)
-		v01Obj = append(v01Obj, srcFrag.Mdat.Data...)
-		v01Moof, _, err := v01Dec.DecompressMoof(v01Obj, chunkNr, moov)
-		require.NoError(t, err)
-		require.NotNil(t, v01Moof, "v0.1 decompress chunk %d", chunkNr)
-
-		// v0.2: compress → decompress.
-		// Re-build a fresh fragment because compression can mutate
-		// box state (parsed senc on traf etc.).
-		srcFrag2, err := ct.createFragment(chunkNr, start, end)
-		require.NoError(t, err)
-		v02HeadBytes, _, err := locmafv02.Compress(srcFrag2.Moof, v02EncState, moov)
-		require.NoError(t, err)
-		v02Obj := append(append([]byte(nil), v02HeadBytes...), srcFrag2.Mdat.Data...)
-		v02Moof, _, err := locmafv02.Decompress(v02Obj, v02DecState, moov)
-		require.NoError(t, err)
-		require.NotNil(t, v02Moof, "v0.2 decompress chunk %d", chunkNr)
-
-		// Functional equivalence.
-		require.Equal(t,
-			v01Moof.Traf.Tfdt.BaseMediaDecodeTime(),
-			v02Moof.Traf.Tfdt.BaseMediaDecodeTime(),
-			"BMDT mismatch at chunk %d", chunkNr)
-		require.Equal(t,
-			len(v01Moof.Traf.Trun.Samples),
-			len(v02Moof.Traf.Trun.Samples),
-			"sample count mismatch at chunk %d", chunkNr)
-		for i := range v01Moof.Traf.Trun.Samples {
-			a := v01Moof.Traf.Trun.Samples[i]
-			b := v02Moof.Traf.Trun.Samples[i]
-			require.Equal(t, a.Dur, b.Dur, "chunk %d sample %d duration", chunkNr, i)
-			require.Equal(t, a.Size, b.Size, "chunk %d sample %d size", chunkNr, i)
-			require.Equal(t, a.Flags, b.Flags,
-				"chunk %d sample %d flags (v0.1=0x%08x v0.2=0x%08x)",
-				chunkNr, i, a.Flags, b.Flags)
-			require.Equal(t, a.CompositionTimeOffset, b.CompositionTimeOffset,
-				"chunk %d sample %d cts offset", chunkNr, i)
-		}
-	}
-}
-
 // TestLocmafV02IntegrationSmoke is the strongest cross-cutting test:
-// it walks the real test10s assets through both v0.1 and v0.2
-// pipelines (compress + decompress) for the first MoQ group's worth
-// of chunks and asserts the reconstructed sample data still matches
-// the source samples byte-for-byte (modulo encryption side-effects,
-// none in this test path because we pick clear tracks).
+// it walks the real test10s assets through the v0.2 pipeline
+// (compress + decompress) for the first MoQ group's worth of chunks
+// and asserts the reconstructed sample data still matches the source
+// samples byte-for-byte (modulo encryption side-effects, none in this
+// test path because we pick clear tracks).
 func TestLocmafV02IntegrationSmoke(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
@@ -349,25 +262,4 @@ func getTrackSinf(moov *mp4.MoovBox, trackID uint32) *mp4.SinfBox {
 		}
 	}
 	return nil
-}
-
-// loadAllContentTracks returns one ContentTrack per (clear) track in
-// the test10s asset. Used by cross-version equivalence so the
-// equivalence claim covers every clear codec we ship.
-func loadAllContentTracks(t *testing.T) []*ContentTrack {
-	t.Helper()
-	asset, err := LoadAsset("../assets/test10s", 1, 1)
-	require.NoError(t, err)
-	var tracks []*ContentTrack
-	for gi := range asset.Groups {
-		for ti := range asset.Groups[gi].Tracks {
-			ct := &asset.Groups[gi].Tracks[ti]
-			if ct.Protection != ProtectionNone {
-				continue
-			}
-			tracks = append(tracks, ct)
-		}
-	}
-	require.NotEmpty(t, tracks)
-	return tracks
 }
