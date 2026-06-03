@@ -25,16 +25,12 @@ go mod vendor               # Vendor dependencies
 - `cmd/mlmpub/` - Publisher application serving media tracks (video, audio, subtitles)
 - `cmd/mlmsub/` - Subscriber application receiving media
 - `cmd/mlmtest/` - Interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner)
-- `cmd/locmaf/` - LOCMAF reference-asset generator and `roundtrip` validator
 - `internal/` - Shared internal packages:
   - `asset.go` - Asset loading and track management
   - `catalog.go` - MSF/CMSF catalog generation (CMAF, LOC, LOCMAF packaging)
   - `subtitle.go` - Dynamic subtitle generation (WVTT/STPP)
   - `moqgroup.go` - MoQ group/object handling
-  - `locmaf.go` - LOCMAF full-moof encode/decode and the `moov`→`initData` codec
-  - `locmaf_delta.go` - `MoofDeltaCompressor` / `MoofDeltaDecompressor` keeping
-    the per-track previous-moof state used for delta moofs
-- `docs/LOCMAF.md` - LOCMAF v0.1 packaging design, wire format, and version policy
+  - `locmafv02/` - LOCMAF v0.2 `moof` encode/decode (the only LOCMAF version)
 - `docs/locmaf_v0_2.md` - LOCMAF v0.2 implementation notes (normative spec is the
   IETF draft draft-einarsson-moq-locmaf)
 
@@ -48,43 +44,38 @@ Version negotiation uses ALPN (`moqt-16` for draft-16, `moq-00` for draft-14) an
 
 ### Multi-Namespace Architecture
 
-mlmpub announces one or more namespaces. CMSF and LOCMAF namespaces each have
-their own catalog filtered by protection type; LOC uses an MSF catalog; moq-mi
-is catalogless.
+mlmpub announces one or more namespaces. The CMSF namespaces carry a unified
+catalog (draft-ietf-moq-msf-01) filtered by protection type; LOC uses an MSF
+catalog; moq-mi is catalogless.
 
-CMSF (CMAF chunks):
+CMSF (unified CMAF + LOCMAF catalog):
 - `cmsf/clear` — always present, clear (unencrypted) tracks
 - `cmsf/drm-{scheme}` — when `-drmpath` is set, commercial DRM tracks (`_drm` suffix)
 - `cmsf/eccp-{scheme}` — when `-kid`/`-iv` are set, ClearKey/ECCP tracks (`_eccp` suffix)
 
-LOCMAF (Low Overhead CMAF — LOC-style key-value encoding of `moof`/`moov`):
-- `locmaf/clear` — always present, clear tracks
-- `locmaf/drm-{scheme}` — when `-drmpath` is set
-- `locmaf/eccp-{scheme}` — when `-kid`/`-iv` are set
-- Tracks carry `packaging: "locmaf"` and a `locmafVersion` string
-  (currently `"0.1"`, tracked by the `internal.LocmafVersion` constant)
+Each rendition appears twice in a CMSF catalog: a CMAF track `<name>`
+(`packaging: "cmaf"`) and a LOCMAF track `<name>_locmaf`
+(`packaging: "locmaf"`, `locmafVersion: "0.2"`), as alternates in the same
+altGroup. Because LOCMAF v0.2 init data is the raw CMAF init segment, both
+variants reference one shared entry in the catalog `initDataList` via `initRef`
+(draft-ietf-moq-msf-01). The serve path (`pub.PublishTrack`) picks the encoding
+per track and strips the `_locmaf` suffix to resolve the underlying content
+track.
+
+Follow-up (not implemented): draft-ietf-moq-msf-01 §5.5/§12 define an OPTIONAL
+`MSF_COMPRESSION` property to compress the catalog object payload. Catalogs are
+emitted uncompressed today, which is fully conformant; the shared-init dedup
+already removes most of the redundancy compression targets.
 
 ### LOCMAF specification versioning
 
-The LOCMAF wire format is versioned independently of moqlivemock
-releases. Two codecs ship side-by-side, one per namespace:
-
-- **v0.1** (`locmafVersion: "0.1"`, `internal.LocmafVersion`) — frozen.
-  Its normative spec is the in-repo `docs/LOCMAF.md`, tagged
-  `locmaf-v0.1` (commit `d5c5e04`) so it is citable as
-  `docs/LOCMAF.md@locmaf-v0.1`.
-- **v0.2** (`locmafVersion: "0.2"`, `locmafv02.Version`) — the normative
-  spec is the IETF Internet-Draft
-  [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/).
-  `docs/locmaf_v0_2.md` is no longer a spec; it records only moqlivemock's
-  per-field implementation status.
-
-The wire-format version (`"0.2"`) and the IETF draft revision (`-00`,
-`-01`, …) advance independently — cite the version-independent draft URL,
-not a pinned revision. From v0.2 onward the specification lives upstream
-in the IETF draft, so there is nothing in this repo to tag for new
-versions; only the v0.1 `locmaf-v` tag scheme remains (the `locmaf-v`
-prefix keeps it separate from release tags `vX.Y.Z`).
+Only LOCMAF **v0.2** is supported (`locmafVersion: "0.2"`, `locmafv02.Version`);
+the legacy v0.1 wire format and its tooling have been removed. The normative
+spec is the IETF Internet-Draft
+[draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/);
+`docs/locmaf_v0_2.md` records only moqlivemock's per-field implementation
+status. The wire-format version (`"0.2"`) and the IETF draft revision advance
+independently — cite the version-independent draft URL, not a pinned revision.
 
 LOC (raw codec frames, one per object) and moq-mi (catalogless):
 - `msf/clear` — LOC packaging (AVC + AAC/Opus, HEVC for `hev1.*`)
@@ -99,8 +90,9 @@ Key types in `internal/asset.go`:
 - `ContentTrack.Protection` — identifies how a track is encrypted
 - `Asset.Drm` / `Asset.Eccp` — independent DRM configs
 
-`GenCMAFCatalogEntry(namespace, protectionType, timestamp)` generates a CMSF or
-LOCMAF catalog filtered to the specified protection type.
+`GenCMAFCatalogEntry(namespace, protectionType, timestamp)` generates a unified
+CMSF catalog (CMAF + LOCMAF variants, shared init data) filtered to the
+specified protection type.
 
 ### Handler Pattern
 
@@ -195,5 +187,5 @@ IETF draft specifications are stored in `references/` for offline reference:
 
 - `draft-ietf-moq-transport-14.txt` - MoQ Transport protocol (draft-14)
 - `draft-ietf-moq-transport-16.txt` - MoQ Transport protocol (draft-16), the primary wire protocol used by this project
-- `draft-ietf-moq-msf-00.txt` - MoQ Streaming Format (MSF), defines how media is mapped to MoQ tracks/groups/objects
+- `draft-ietf-moq-msf-01.txt` - MoQ Streaming Format (MSF), defines how media is mapped to MoQ tracks/groups/objects (catalog with initDataList/initRef)
 - `draft-ietf-moq-cmsf-00.txt` - CMAF MoQ Streaming Format (CMSF), defines CMAF-based media packaging for MoQ
