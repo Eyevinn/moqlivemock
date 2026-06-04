@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-06-04
+
+MSF/CMSF catalogs migrated to draft-01, with CMAF and LOCMAF unified into a
+single catalog (LOCMAF v0.2 only).
+
+### Changed
+
+- Migrated MSF/CMSF catalogs to [draft-ietf-moq-msf-01][msf-01]: initialization
+  data is moved off the track into a shared catalog-level `initDataList`
+  referenced by `initRef`, the catalog `version` is now a JSON string, and
+  delta catalog updates use the `deltaUpdate` operation-array form
+- Catalog `version` now signals `"draft-01"` per draft-ietf-moq-msf-01 §5.1.1,
+  which recommends the `"draft-XX"` convention for IETF Internet-Draft releases
+- The `cmsf/*` namespaces now carry a single unified catalog that lists each
+  rendition in both CMAF and LOCMAF packaging as alternates in the same
+  `altGroup`. Because LOCMAF v0.2 init data is the raw CMAF init segment, both
+  variants share one `initDataList` entry via `initRef`
+
+### Removed
+
+- LOCMAF v0.1 removed entirely: the codec library, the `cmd/locmaf` reference
+  tooling, and the v0.1 publish/subscribe paths. The packaging string
+  `"locmaf"` now unambiguously means v0.2
+- The separate `locmaf/*` namespaces are retired, folded into the unified
+  `cmsf/*` catalogs
+
 ## [0.10.0] - 2026-06-02
 
 LOCMAF v0.2 wire codec aligned with the IETF draft, running side-by-side
@@ -341,7 +367,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.0...HEAD
+[0.11.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...v0.8.0
@@ -356,6 +383,7 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [msf-00]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/00/
+[msf-01]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/01/
 [loc]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
 [moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
