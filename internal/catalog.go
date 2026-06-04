@@ -12,7 +12,8 @@ import (
 type Catalog struct {
 	// Version specifies the version of MSF referenced by this catalog.
 	// Required field at the root level. Draft-01 makes this a JSON string
-	// (value "1"), whereas draft-00 used a number.
+	// and, per Section 5.1.1, recommends the "draft-XX" convention when
+	// running against IETF Internet-Draft releases (here "draft-01").
 	Version string `json:"version"`
 
 	// GeneratedAt is the wallclock time at which this catalog was generated,
@@ -182,8 +183,10 @@ type Track struct {
 	// Optional field at the track level.
 	SpatialID *int `json:"spatialId,omitempty"`
 
-	// Codec defines the codec used to encode the track.
-	// Optional field at the track level.
+	// Codec defines the codec used to encode the track
+	// (draft-ietf-moq-msf-01 Section 5.2.18). Conditionally required: it
+	// MUST be specified for tracks which have an inherent codec (e.g. audio
+	// and video tracks); not required for raw data tracks or event streams.
 	Codec string `json:"codec,omitempty"`
 
 	// Framerate defines the video framerate of the track, expressed as frames per second.
@@ -194,8 +197,9 @@ type Track struct {
 	// Optional field at the track level (MSF Section 5.1.27).
 	Timescale *int `json:"timescale,omitempty"`
 
-	// Bitrate defines the bitrate of track, expressed in bits per second.
-	// Optional field at the track level.
+	// Bitrate defines the maximum bitrate of the track, expressed in bits
+	// per second (draft-ietf-moq-msf-01 Section 5.2.22, JSON key "bitrate").
+	// Conditionally required: it MUST be specified for audio and video tracks.
 	Bitrate *int `json:"bitrate,omitempty"`
 
 	// Width expresses the encoded width of the video frames in pixels.
@@ -206,12 +210,14 @@ type Track struct {
 	// Optional field at the track level.
 	Height *int `json:"height,omitempty"`
 
-	// SampleRate is the number of audio frame samples per second.
-	// Optional field at the track level, should only accompany audio codecs.
+	// SampleRate is the number of audio frame samples per second
+	// (draft-ietf-moq-msf-01 Section 5.2.28). Conditionally required: it
+	// MUST accompany tracks for which audio codecs are specified.
 	SampleRate *int `json:"samplerate,omitempty"`
 
-	// ChannelConfig specifies the audio channel configuration.
-	// Optional field at the track level, should only accompany audio codecs.
+	// ChannelConfig specifies the audio channel configuration
+	// (draft-ietf-moq-msf-01 Section 5.2.29). Conditionally required: it
+	// MUST accompany tracks for which audio codecs are specified.
 	ChannelConfig string `json:"channelConfig,omitempty"`
 
 	// DisplayWidth expresses the intended display width of the track content in pixels.

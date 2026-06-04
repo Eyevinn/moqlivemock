@@ -18,7 +18,7 @@ func TestGenLOCCatalogEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 
-	assert.Equal(t, "1", cat.Version)
+	assert.Equal(t, "draft-01", cat.Version)
 	require.NotNil(t, cat.GeneratedAt)
 	assert.Equal(t, genAt, *cat.GeneratedAt)
 	require.NotEmpty(t, cat.Tracks)
