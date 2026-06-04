@@ -703,7 +703,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 	}
 
 	cat := &Catalog{
-		Version:      "1",
+		Version:      "draft-01",
 		GeneratedAt:  &generatedAtMS,
 		Tracks:       tracks,
 		InitDataList: initDataList,
@@ -722,7 +722,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 }
 
 // GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
-// Conforms to draft-ietf-moq-msf-00 with packaging="loc" per draft-ietf-moq-loc-02.
+// Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-02.
 //
 // Only AVC/HEVC video and AAC/Opus audio tracks with ProtectionNone are included.
 // No initData is set (LOC sends video config in-band with keyframes).
@@ -822,7 +822,7 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	}
 
 	cat := &Catalog{
-		Version:     "1",
+		Version:     "draft-01",
 		GeneratedAt: &generatedAtMS,
 		Tracks:      tracks,
 	}

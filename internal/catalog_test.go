@@ -36,7 +36,7 @@ func TestCatalogGetTrackByName(t *testing.T) {
 
 func TestCatalogString(t *testing.T) {
 	cat := &Catalog{
-		Version: "1",
+		Version: "draft-01",
 		Tracks: []Track{
 			{Name: "video", InitRef: "init-video"},
 			{Name: "audio", InitRef: "init-audio"},
@@ -65,7 +65,7 @@ func TestCatalogString(t *testing.T) {
 }
 
 func TestCatalogStringEmpty(t *testing.T) {
-	cat := &Catalog{Version: "1"}
+	cat := &Catalog{Version: "draft-01"}
 	s := cat.String()
-	assert.True(t, strings.Contains(s, `"version": "1"`))
+	assert.True(t, strings.Contains(s, `"version": "draft-01"`))
 }
