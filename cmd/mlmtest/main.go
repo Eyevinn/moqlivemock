@@ -176,7 +176,7 @@ func runSession(ctx context.Context, conn moqtransport.Connection, draft int) (*
 			}
 		}),
 	}
-	if err := s.Run(conn); err != nil {
+	if err := s.RunContext(ctx, conn); err != nil {
 		return nil, fmt.Errorf("session setup: %w", err)
 	}
 	return s, nil
@@ -275,10 +275,10 @@ func runPublisherSession(
 		}),
 		SubscribeHandler: moqtransport.SubscribeHandlerFunc(
 			func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-			_ = w.Accept()
-		}),
+				_ = w.Accept()
+			}),
 	}
-	if err := s.Run(conn); err != nil {
+	if err := s.RunContext(ctx, conn); err != nil {
 		return nil, fmt.Errorf("publisher session setup: %w", err)
 	}
 	if err := s.Announce(ctx, namespace); err != nil {
