@@ -34,9 +34,10 @@ type Handler struct {
 	AudioName    string
 	SubsName     string
 	UseFetch     bool
-	AcceptAny    bool   // Accept any announced namespace
-	Discover     bool   // Discovery mode: list namespaces and exit
-	CatalogTrack string // Catalog track name (default "catalog")
+	AcceptAny    bool     // Accept any announced namespace
+	Discover     bool     // Discovery mode: list namespaces and exit
+	CatalogTrack string   // Catalog track name (default "catalog")
+	Protocols    []string // Application protocols offered to the peer (ALPN / WT subprotocol)
 
 	catalog    *internal.Catalog
 	mux        *CmafMux
@@ -71,6 +72,7 @@ func (h *Handler) runDiscover(ctx context.Context, conn moqtransport.Connection)
 		Handler:             h.getHandler(),
 		SubscribeHandler:    h.getSubscribeHandler(),
 		InitialMaxRequestID: initialMaxRequestID,
+		Protocols:           h.Protocols,
 		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
 	err := session.Run(conn)
@@ -130,6 +132,7 @@ func (h *Handler) startSession(conn moqtransport.Connection) (*moqtransport.Sess
 		Handler:             h.getHandler(),
 		SubscribeHandler:    h.getSubscribeHandler(),
 		InitialMaxRequestID: initialMaxRequestID,
+		Protocols:           h.Protocols,
 		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
 	}
 	if err := session.Run(conn); err != nil {

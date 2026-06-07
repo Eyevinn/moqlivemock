@@ -223,6 +223,9 @@ func runClient(ctx context.Context, opts *options) error {
 	default:
 		alpn = "moq-00"
 	}
+	// Record what we offer so the session refuses to silently downgrade to
+	// draft-14 over WebTransport if the peer omits the WT-Protocol header.
+	h.Protocols = []string{alpn}
 
 	return runClientWithDial(ctx, opts.addr, useWebTransport, alpn, h, outs)
 }
