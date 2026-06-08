@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `mlmtest` interop client no longer hangs when a relay completes the QUIC/ALPN
+  handshake but never finishes the MoQ SETUP exchange (observed against
+  moq-rs-draft-16). Each test case's deadline now bounds setup via
+  `Session.RunContext`, so a stuck peer fails the test cleanly instead of
+  blocking indefinitely ([moq-interop-runner#70][interop-70])
+
+### Changed
+
+- `mlmsub` no longer silently downgrades to draft-14 over WebTransport: when the
+  peer omits the `WT-Protocol` response header and only draft-16+ subprotocols
+  were offered, the session refuses to fall back to in-band draft-14 negotiation
+  (via `Session.Protocols`) rather than mis-negotiating ([moxygen#173][moxygen-173])
+- Bumped `github.com/Eyevinn/moqtransport` to v0.8.2, which provides
+  `Session.RunContext` and `Session.Protocols` and pulls `golang.org/x/net`
+  v0.55.0 transitively
+
 ## [0.11.0] - 2026-06-04
 
 MSF/CMSF catalogs migrated to draft-01, with CMAF and LOCMAF unified into a
@@ -391,4 +409,6 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [interop-runner]: https://github.com/englishm/moq-interop-runner
+[interop-70]: https://github.com/englishm/moq-interop-runner/issues/70
+[moxygen-173]: https://github.com/facebookexperimental/moxygen/issues/173
 [wp]: https://github.com/Eyevinn/warp-player
