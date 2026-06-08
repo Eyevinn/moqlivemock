@@ -33,7 +33,8 @@ type Handler struct {
 	VideoName    string
 	AudioName    string
 	SubsName     string
-	UseFetch     bool
+	UseFetch     bool     // Deprecated: equivalent to CatalogMode == "fetch"
+	CatalogMode  string   // "joining" (default), "subscribe", or "fetch"
 	AcceptAny    bool     // Accept any announced namespace
 	Discover     bool     // Discovery mode: list namespaces and exit
 	CatalogTrack string   // Catalog track name (default "catalog")
@@ -152,13 +153,25 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		return
 	}
 
+	mode := h.CatalogMode
 	if h.UseFetch {
-		err = h.fetchCatalog(ctx, session, h.Namespace)
-	} else {
+		mode = "fetch"
+	}
+	if mode == "" {
+		mode = "joining"
+	}
+	switch mode {
+	case "joining":
+		err = h.joiningCatalog(ctx, session, h.Namespace)
+	case "subscribe":
 		err = h.subscribeToCatalog(ctx, session, h.Namespace)
+	case "fetch":
+		err = h.fetchCatalog(ctx, session, h.Namespace)
+	default:
+		err = fmt.Errorf("unknown catalog mode %q (want joining, subscribe, or fetch)", mode)
 	}
 	if err != nil {
-		slog.Error("failed to subscribe to catalog", "error", err)
+		slog.Error("failed to retrieve catalog", "error", err, "mode", mode)
 		err = conn.CloseWithError(0, "internal error")
 		if err != nil {
 			slog.Error("failed to close connection", "error", err)
@@ -374,6 +387,113 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 		return
 	}
 	<-ctx.Done()
+}
+
+// applyCatalog parses a catalog object payload, stores it as the current
+// catalog, logs it, and writes it to the "catalog" output if configured.
+func (h *Handler) applyCatalog(payload []byte, label string) error {
+	var cat internal.Catalog
+	if err := json.Unmarshal(payload, &cat); err != nil {
+		return err
+	}
+	h.catalog = &cat
+	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", label, h.catalog.String())
+	}
+	if w := h.Outs["catalog"]; w != nil {
+		indented, err := json.MarshalIndent(h.catalog, "", "  ")
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(append(indented, '\n')); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// afterLocation reports whether object o lies strictly after loc in
+// (group, object) order.
+func afterLocation(o *moqtransport.Object, loc moqtransport.Location) bool {
+	if o.GroupID != loc.Group {
+		return o.GroupID > loc.Group
+	}
+	return o.ObjectID > loc.Object
+}
+
+// joiningCatalog retrieves the catalog the spec-recommended way (MSF draft-01
+// §5): a SUBSCRIBE with Filter Type Largest Object plus a relative Joining FETCH
+// (offset 0). The FETCH delivers the latest complete catalog (object 0 of the
+// current group) plus any deltas up to the live edge; the SUBSCRIBE then carries
+// subsequent updates. Objects at or before the subscription's largest location
+// are already covered by the FETCH and are skipped on the subscription, so this
+// also transparently dedupes a publisher that still replays object 0 on the
+// subscription.
+func (h *Handler) joiningCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
+	rs, err := s.Subscribe(ctx, namespace, h.CatalogTrack)
+	if err != nil {
+		return err
+	}
+	largest, hasLargest := rs.LargestLocation()
+	if !hasLargest {
+		rs.Close()
+		return fmt.Errorf("catalog subscription reported no content; cannot perform joining fetch")
+	}
+
+	// Relative joining FETCH, offset 0: namespace and track are derived by the
+	// publisher from the subscription, so they must be empty here.
+	rt, err := s.Fetch(ctx, nil, "", moqtransport.WithJoiningFetchRelative(rs.RequestID(), 0))
+	if err != nil {
+		rs.Close()
+		return err
+	}
+	// Read the complete catalog from the joining fetch. Object 0 of the group is
+	// the full catalog. mlmpub publishes a single static catalog object (no
+	// deltas), so one read suffices. We deliberately do not drain to EOF:
+	// moqtransport's RemoteTrack.ReadObject has no fetch-complete signal and
+	// would block once the buffer empties. Draining deltas is future work that
+	// needs a fetch-done signal in moqtransport.
+	o, rerr := rt.ReadObject(ctx)
+	if rerr != nil {
+		rt.Close()
+		rs.Close()
+		return fmt.Errorf("joining fetch: reading catalog: %w", rerr)
+	}
+	if aerr := h.applyCatalog(o.Payload, "catalog (joining fetch)"); aerr != nil {
+		rt.Close()
+		rs.Close()
+		return aerr
+	}
+	slog.Info("fetched catalog via joining fetch",
+		"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
+	rt.Close()
+
+	// Continue reading catalog updates on the subscription, skipping anything
+	// already covered by the FETCH (location <= largest).
+	go func() {
+		defer rs.Close()
+		for {
+			o, rerr := rs.ReadObject(ctx)
+			if rerr != nil {
+				if rerr != io.EOF {
+					slog.Debug("catalog subscription ended", "error", rerr)
+				}
+				return
+			}
+			if !afterLocation(o, largest) {
+				slog.Debug("skipping catalog object already covered by fetch",
+					"groupID", o.GroupID, "objectID", o.ObjectID)
+				continue
+			}
+			if aerr := h.applyCatalog(o.Payload, "catalog update"); aerr != nil {
+				slog.Error("failed to apply catalog update", "error", aerr)
+				continue
+			}
+			slog.Info("received catalog update",
+				"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
+		}
+	}()
+	return nil
 }
 
 func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {

@@ -52,6 +52,7 @@ type options struct {
 	namespace    string
 	loglevel     string
 	fetchCatalog bool
+	catalogMode  string
 	acceptAny    bool
 	discover     bool
 	catalogTrack string
@@ -81,7 +82,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
 	fs.StringVar(&opts.namespace, "namespace", "cmsf/clear", "MoQ namespace to use")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
-	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Use FETCH instead of SUBSCRIBE for catalog")
+	fs.StringVar(&opts.catalogMode, "catalog-mode", "joining",
+		"Catalog retrieval: 'joining' (default), 'subscribe' (legacy), or 'fetch' (legacy standalone)")
+	fs.BoolVar(&opts.fetchCatalog, "fetchcatalog", false, "Deprecated: alias for -catalog-mode fetch")
 	fs.BoolVar(&opts.acceptAny, "accept-any", false, "Accept any announced namespace")
 	fs.BoolVar(&opts.discover, "discover", false, "Discovery mode: list announced namespaces and exit")
 	fs.StringVar(&opts.catalogTrack, "catalog-track", "catalog", "Catalog track name (e.g. 'catalog' or 'catalog.json')")
@@ -185,6 +188,7 @@ func runClient(ctx context.Context, opts *options) error {
 		AudioName:    opts.audioname,
 		SubsName:     opts.subsname,
 		UseFetch:     opts.fetchCatalog,
+		CatalogMode:  opts.catalogMode,
 		AcceptAny:    opts.acceptAny,
 		Discover:     opts.discover,
 		CatalogTrack: opts.catalogTrack,
