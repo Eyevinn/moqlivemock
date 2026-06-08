@@ -3,6 +3,7 @@ package internal_test
 import (
 	"bytes"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -137,6 +138,74 @@ func TestCatalogExchange(t *testing.T) {
 
 		catalogBuf.WaitForLen(1)
 
+		assert.Contains(t, catalogBuf.String(), "video_", "catalog should contain video tracks")
+		assert.Contains(t, catalogBuf.String(), "audio_", "catalog should contain audio tracks")
+
+		shutdown(sConn, cConn)
+	})
+}
+
+// TestJoiningCatalog exercises the default catalog-retrieval path: a SUBSCRIBE
+// (Largest Object) plus a relative joining FETCH (offset 0). It also verifies
+// the catalog is delivered exactly once — the joining FETCH provides the
+// baseline and the subscription's replayed object 0 (<= largest) is deduped.
+func TestJoiningCatalog(t *testing.T) {
+	asset, catalog := loadTestAsset(t)
+
+	synctest.Test(t, func(t *testing.T) {
+		sConn, cConn := memConnPair()
+
+		ph := newPubHandler(asset, catalog)
+		go ph.Handle(t.Context(), sConn)
+
+		catalogBuf := newSyncBuffer()
+		sh := &sub.Handler{
+			Namespace:   []string{testNamespace},
+			Outs:        map[string]io.Writer{"catalog": catalogBuf},
+			Logfh:       io.Discard,
+			VideoName:   "NONE",
+			AudioName:   "NONE",
+			CatalogMode: "joining",
+		}
+		go func() { _ = sh.RunWithConn(t.Context(), cConn) }()
+
+		catalogBuf.WaitForLen(1)
+		// Let the background subscription-update goroutine run so it processes
+		// (and skips) the publisher's replayed object 0 before we assert.
+		synctest.Wait()
+
+		out := catalogBuf.String()
+		assert.Contains(t, out, "video_", "catalog should contain video tracks")
+		assert.Contains(t, out, "audio_", "catalog should contain audio tracks")
+		assert.Equal(t, 1, strings.Count(out, `"tracks"`),
+			"catalog should be delivered exactly once (fetch baseline; subscription duplicate deduped)")
+
+		shutdown(sConn, cConn)
+	})
+}
+
+// TestSubscribeCatalogLegacy keeps coverage of the legacy subscribe-only path.
+func TestSubscribeCatalogLegacy(t *testing.T) {
+	asset, catalog := loadTestAsset(t)
+
+	synctest.Test(t, func(t *testing.T) {
+		sConn, cConn := memConnPair()
+
+		ph := newPubHandler(asset, catalog)
+		go ph.Handle(t.Context(), sConn)
+
+		catalogBuf := newSyncBuffer()
+		sh := &sub.Handler{
+			Namespace:   []string{testNamespace},
+			Outs:        map[string]io.Writer{"catalog": catalogBuf},
+			Logfh:       io.Discard,
+			VideoName:   "NONE",
+			AudioName:   "NONE",
+			CatalogMode: "subscribe",
+		}
+		go func() { _ = sh.RunWithConn(t.Context(), cConn) }()
+
+		catalogBuf.WaitForLen(1)
 		assert.Contains(t, catalogBuf.String(), "video_", "catalog should contain video tracks")
 		assert.Contains(t, catalogBuf.String(), "audio_", "catalog should contain audio tracks")
 

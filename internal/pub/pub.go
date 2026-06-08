@@ -112,6 +112,27 @@ func (h *Handler) findNamespace(ns []string) *NamespaceEntry {
 	return nil
 }
 
+// locationLess reports whether a precedes b in (group, object) order.
+func locationLess(a, b moqtransport.Location) bool {
+	if a.Group != b.Group {
+		return a.Group < b.Group
+	}
+	return a.Object < b.Object
+}
+
+// locationInFetchRange reports whether loc falls within a FETCH's requested
+// [start, end) range. An EndObject of 0 means "to the end of EndGroup" per the
+// FETCH semantics (draft-ietf-moq-transport §9.16.3).
+func locationInFetchRange(loc, start, end moqtransport.Location) bool {
+	if locationLess(loc, start) {
+		return false
+	}
+	if end.Object == 0 {
+		return loc.Group <= end.Group
+	}
+	return locationLess(loc, end)
+}
+
 func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 	return moqtransport.FetchHandlerFunc(
 		func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
@@ -149,22 +170,33 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 				slog.Error("failed to get fetch stream", "error", err)
 				return
 			}
-			catalogJSON, err := json.Marshal(nsEntry.Catalog)
-			if err != nil {
-				slog.Error("failed to marshal catalog", "error", err)
-				return
+			// The catalog is a single object at {group:0, object:0}. Honor the
+			// requested range (resolved by the transport for joining fetches):
+			// serve the object only when [StartLocation, EndLocation) covers
+			// {0,0}; any other group or object yields an empty response. This is
+			// what a relative joining FETCH (offset 0) against the catalog's
+			// largest location {0,0} asks for.
+			catalogLoc := moqtransport.Location{Group: 0, Object: 0}
+			if locationInFetchRange(catalogLoc, m.StartLocation, m.EndLocation) {
+				catalogJSON, err := json.Marshal(nsEntry.Catalog)
+				if err != nil {
+					slog.Error("failed to marshal catalog", "error", err)
+					return
+				}
+				if _, err = fs.WriteObject(0, 0, 0, 0, catalogJSON); err != nil {
+					slog.Error("failed to write catalog via fetch", "error", err)
+					return
+				}
+				slog.Info("served catalog via FETCH", "namespace", m.Namespace,
+					"fetchType", m.FetchType, "start", m.StartLocation, "end", m.EndLocation)
+			} else {
+				slog.Info("FETCH range excludes catalog object {0,0}; empty response",
+					"namespace", m.Namespace, "start", m.StartLocation, "end", m.EndLocation)
 			}
-			_, err = fs.WriteObject(0, 0, 0, 0, catalogJSON)
-			if err != nil {
-				slog.Error("failed to write catalog via fetch", "error", err)
-				return
-			}
-			err = fs.Close()
-			if err != nil {
+			if err = fs.Close(); err != nil {
 				slog.Error("failed to close fetch stream", "error", err)
 				return
 			}
-			slog.Info("served catalog via FETCH", "namespace", m.Namespace)
 		})
 }
 
@@ -217,7 +249,14 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 				return
 			}
 			if m.Track == "catalog" {
-				err := w.Accept()
+				// Advertise the catalog's largest location so subscribers can
+				// resolve a relative Joining FETCH (offset 0) against this
+				// subscription per MSF draft-01 §5. The catalog is a single full
+				// object at {group:0, object:0}. We still write object 0 on the
+				// subscription below for backward compatibility with
+				// subscribe-only clients; joining clients dedupe it against the
+				// FETCH (objects <= largest are skipped on the subscription).
+				err := w.Accept(moqtransport.WithLargestLocation(&moqtransport.Location{Group: 0, Object: 0}))
 				if err != nil {
 					slog.Error("failed to accept subscription", "error", err)
 					return
