@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-06-08
+
+Interop robustness: the test client can no longer hang during MoQ SETUP, and the
+WebTransport client no longer silently downgrades to draft-14.
+
 ### Fixed
 
 - `mlmtest` interop client no longer hangs when a relay completes the QUIC/ALPN
@@ -385,7 +390,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.1...HEAD
+[0.11.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...v0.9.0
