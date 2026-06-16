@@ -7,8 +7,8 @@ require (
 	github.com/Eyevinn/moqtransport v0.8.2
 	github.com/Eyevinn/mp4ff v0.52.0
 	github.com/mengelbart/qlog v0.1.0
-	github.com/quic-go/quic-go v0.59.1
-	github.com/quic-go/webtransport-go v0.10.0
+	github.com/quic-go/quic-go v0.60.0
+	github.com/quic-go/webtransport-go v0.11.0
 	github.com/stretchr/testify v1.11.1
 )
 
@@ -26,4 +26,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/quic-go/webtransport-go => github.com/Eyevinn/webtransport-go v0.0.0-20260428203517-12aa0d7199e5
+replace github.com/quic-go/webtransport-go => github.com/Eyevinn/webtransport-go v0.0.0-20260616094103-94b8f28c0917

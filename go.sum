@@ -4,8 +4,8 @@ github.com/Eyevinn/moqtransport v0.8.2 h1:L1AlJuWmZZBFna/k4CiLsJnyTheLlaIYNixXr9
 github.com/Eyevinn/moqtransport v0.8.2/go.mod h1:5ewYH8aUA0sCYVLb34zaIfqSaPWZOxu5lTUsiWO3kfk=
 github.com/Eyevinn/mp4ff v0.52.0 h1:QJUi2PtROeZGkcumbX7f4/91Jz6dlhjeKzpwSdCoYG8=
 github.com/Eyevinn/mp4ff v0.52.0/go.mod h1:LKZAf3K+OtWYdzlvte8uafD/e3g2aK2WcsgVohvjccU=
-github.com/Eyevinn/webtransport-go v0.0.0-20260428203517-12aa0d7199e5 h1:vzaoTakGI3gADG+mrYqjBdZGJc899JJQFQrsU+1WCfY=
-github.com/Eyevinn/webtransport-go v0.0.0-20260428203517-12aa0d7199e5/go.mod h1:ocpwcCqYQbWRGNaCYlToTUVgjsbh0yEjLAyXl8yAIdA=
+github.com/Eyevinn/webtransport-go v0.0.0-20260616094103-94b8f28c0917 h1:l4NI/aiwXLOzDsFaaSEP2HU3b6ZvB9ai3Yd8pkZjueg=
+github.com/Eyevinn/webtransport-go v0.0.0-20260616094103-94b8f28c0917/go.mod h1:SHgEzUFVyj+9WUSuGB1P6Zd351Pww2leWV3SwlTovkA=
 github.com/beevik/etree v1.5.0 h1:iaQZFSDS+3kYZiGoc9uKeOkUY3nYMXOKLl6KIJxiJWs=
 github.com/beevik/etree v1.5.0/go.mod h1:gPNJNaBGVZ9AwsidazFZyygnd+0pAU38N4D+WemwKNs=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
@@ -22,10 +22,12 @@ github.com/mengelbart/qlog v0.1.0 h1:8cDMuCMcKtzkPXUU5FF7OBwqKiy+De0GKvIvNawifoA
 github.com/mengelbart/qlog v0.1.0/go.mod h1:nIlGcUugkfDu41B8LKdAwjHQ1NxAF54D9hS2EDOlVyk=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/quic-go/go-ossfuzz-seeds v0.1.0 h1:APacT+iIaNF6fd8AGEiN3bT/Jtkd2jz4v4TzM7MFjy0=
+github.com/quic-go/go-ossfuzz-seeds v0.1.0/go.mod h1:3IOHRbJIc+L6YKMwfDtJAM9Vj9k0YY4muhuyUYk5tbk=
 github.com/quic-go/qpack v0.6.0 h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8=
 github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
-github.com/quic-go/quic-go v0.59.1 h1:0Gmua0HW1Tv7ANR7hUYwRyD0MG5OJfgvYSZasGZzBic=
-github.com/quic-go/quic-go v0.59.1/go.mod h1:upnsH4Ju1YkqpLXC305eW3yDZ4NfnNbmQRCMWS58IKU=
+github.com/quic-go/quic-go v0.60.0 h1:xcQioE8OM66UQLeUMHltK1CCcOu3JbVB4JAQdDQSB+0=
+github.com/quic-go/quic-go v0.60.0/go.mod h1:wpKpjmPpftl30sL6pFh7REVpjbcCVy4zt2vDyK1TuJk=
 github.com/rogpeppe/go-internal v1.10.0 h1:TMyTOH3F/DB16zRVcYyreMH6GnZZrwQVAoYjRBZyWFQ=
 github.com/rogpeppe/go-internal v1.10.0/go.mod h1:UQnix2H7Ngw/k4C5ijL5+65zddjncjaFoBhdsK/akog=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
