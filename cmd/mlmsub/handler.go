@@ -66,16 +66,10 @@ func dialQUIC(ctx context.Context, addr string, alpn string) (moqtransport.Conne
 	return quicmoq.NewClient(conn), nil
 }
 
-// settingWebTransportMaxSessions is HTTP/3 SETTINGS_WEBTRANSPORT_MAX_SESSIONS
-// (draft-ietf-webtrans-http3). Advertising it on the client side is technically
-// a server-only setting per the spec, but several deployed relays built on
-// web-transport-quinn (Cloudflare's WT endpoint, moq-rs / cdn.moq.dev, …) call
-// the same supports_webtransport() check on the client's SETTINGS frame and
-// close the connection with H3_NO_ERROR when it is missing. Sending it makes
-// the WT handshake succeed against those relays at no cost on conformant ones.
-const settingWebTransportMaxSessions = 0xc671706a
-
 func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
+	// webtransport-go (Eyevinn fork on v0.11.0) sends and accepts the legacy
+	// WEBTRANSPORT_MAX_SESSIONS codepoint itself, so deployed web-transport-quinn
+	// relays (moq-rs / cdn.moq.dev, Cloudflare) interoperate without extra setup.
 	dialer := webtransport.Dialer{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: true,
@@ -85,9 +79,6 @@ func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtranspo
 			EnableStreamResetPartialDelivery: true,
 		},
 		ApplicationProtocols: []string{alpn},
-		AdditionalSettings: map[uint64]uint64{
-			settingWebTransportMaxSessions: 1,
-		},
 	}
 	_, session, err := dialer.Dial(ctx, ensureURLPort(addr, "443"), nil)
 	if err != nil {
