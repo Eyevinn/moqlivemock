@@ -1,0 +1,130 @@
+#let vidfrag = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Smpl. / Chunk]], [#strong[\#LDM / Group]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [1], [24], [21.60], [0.60], [35.76],
+  [5], [4], [4.83], [0.75], [6.41],
+  [25], [0], [1.63], [0.61], [2.69],
+)
+
+#let audiofrag = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Smpl. / Chunk]], [#strong[\#LDM / Group]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [1], [45], [40.50], [0.91], [44.48],
+  [2], [22], [20.01], [1.66], [12.02],
+  [46], [0], [2.32], [0.92], [2.52],
+)
+
+#let init = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF Init Bytes]], [#strong[LOCMAF Init Bytes]], [#strong[CR]],
+  table.hline(),
+  [none], [662], [75], [8.83],
+  [cbcs], [759], [130], [5.84],
+  [cenc], [742], [110], [6.75],
+)
+
+#let objectgroupsize = table(
+  columns: (auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Obj. per Group]], [#strong[\#LDM / Group]], [#strong[LOCMAF OH]],
+  table.hline(),
+  [1], [0], [8.22],
+  [46], [45], [0.91],
+  [460], [459], [0.76],
+)
+
+#let bitrate = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Asset]], [#strong[Mdat (kbps)]], [#strong[CMAF / Mdat]], [#strong[LOCMAF / Mdat]],
+  table.hline(),
+  [video400avc], [373.20], [5.79%], [0.16%],
+  [video600avc], [559.51], [3.86%], [0.11%],
+  [video900avc], [844.50], [2.56%], [0.07%],
+  [audio128aac], [128.00], [31.64%], [0.71%],
+)
+
+#let locheader = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Asset]], [#strong[\#LOC Obj.]], [#strong[Mdat (kbps)]], [#strong[LOC OH]], [#strong[LOC / Mdat]],
+  table.hline(),
+  [video400avc], [250], [373.20], [2.61], [0.70%],
+  [audio128aac], [460], [128.00], [4.88], [3.81%],
+)
+
+#let drm = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [none], [21.60], [0.60], [35.76],
+  [cbcs], [34.00], [1.50], [22.61],
+  [cenc], [37.20], [5.56], [6.70],
+)
+
+#let drmaudio = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [none], [40.50], [0.91], [44.48],
+  [cbcs], [60.38], [0.91], [66.30],
+  [cenc], [66.38], [7.66], [8.66],
+)
+
+#let deltafieldsnone = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [audio128aac], [45], [N/A], [0],
+)
+
+#let deltafieldscenc = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [video400avc], [24], [initializationVector], [240],
+  [video400avc], [24], [bytesOfClearData], [226],
+  [video400avc], [24], [bytesOfProtectedData], [226],
+  [audio128aac], [45], [initializationVector], [450],
+)
+
+#let deltafieldscbcs = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [video400avc], [24], [bytesOfClearData], [25],
+  [video400avc], [24], [bytesOfProtectedData], [239],
+  [audio128aac], [45], [N/A], [0],
+)

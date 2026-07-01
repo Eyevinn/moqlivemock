@@ -37,8 +37,9 @@ const (
 	laURL      = "http://localhost:8081/clearkey"
 )
 
-const objectsPerGroupHeader = "Objects per group"
-const locmafDeltaMoofsPerGroupHeader = "#LOCMAF Delta Moofs per group"
+const objectsPerGroupHeader = "#Obj. per Group"
+const locmafDeltaMoofsPerGroupHeader = "#LDM / Group"
+const samplesPerChunkHeader = "#Smpl. / Chunk"
 
 type experimentResult struct {
 	TestName                 string
@@ -180,6 +181,14 @@ func runExperiments(inputPath, assetDir, drmScheme string) error {
 		return err
 	}
 	results = append(results, drmResults...)
+	audioDRMResults, err := runDRMExperiment(assetDir, audioTrack, drmSchemes, 1)
+	if err != nil {
+		return err
+	}
+	for i := range audioDRMResults {
+		audioDRMResults[i].TestName = "drm-audio"
+	}
+	results = append(results, audioDRMResults...)
 
 	printResults(results)
 	fieldUsageResults, err := runDeltaHeaderFieldUsageExperiment(assetDir, inputTrack, audioTrack,
@@ -328,7 +337,8 @@ func runObjectGroupSizeExperiment(track *internal.ContentTrack, samplesPerFragme
 	return results, nil
 }
 
-func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTrack, samplesPerFragment int) ([]experimentResult, error) {
+func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTrack,
+	samplesPerFragment int) ([]experimentResult, error) {
 	tracks := tracksMatchingInput(asset, inputTrack, internal.ProtectionNone)
 	if len(tracks) == 0 {
 		return nil, fmt.Errorf("no clear %s/%s tracks found for bitrate experiment",
@@ -343,7 +353,8 @@ func runBitrateExperiment(asset *internal.Asset, inputTrack *internal.ContentTra
 
 	results := make([]experimentResult, 0, len(tracks))
 	for i := range tracks {
-		result, err := measureTrack("asset-bitrate", bitrateCaseName(&tracks[i]), &tracks[i], samplesPerFragment, samplesPerGroup(&tracks[i]))
+		result, err := measureTrack("asset-bitrate", bitrateCaseName(&tracks[i]), &tracks[i],
+			samplesPerFragment, samplesPerGroup(&tracks[i]))
 		if err != nil {
 			return nil, fmt.Errorf("measure bitrate track %s: %w", tracks[i].Name, err)
 		}
@@ -433,7 +444,8 @@ func locHeaderSize(objectID uint64, payloadLen int) int {
 		quicvarint.Len(uint64(payloadLen))
 }
 
-func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSchemes []string, samplesPerFragment int) ([]experimentResult, error) {
+func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack,
+	drmSchemes []string, samplesPerFragment int) ([]experimentResult, error) {
 	drm, err := internal.ParseCENCflags(drmSchemes[0], defaultKID, defaultKey, defaultIV, laURL)
 	if err != nil {
 		return nil, fmt.Errorf("configure DRM experiment: %w", err)
@@ -452,7 +464,8 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 		return nil, fmt.Errorf("protected DRM experiment track %q not found", inputTrack.Name+"_drm")
 	}
 
-	clearResult, err := measureTrackWithProtection("drm", "none", clearTrack, samplesPerFragment, samplesPerGroup(clearTrack), "none")
+	clearResult, err := measureTrackWithProtection("drm", "none", clearTrack,
+		samplesPerFragment, samplesPerGroup(clearTrack), "none")
 	if err != nil {
 		return nil, fmt.Errorf("measure clear DRM baseline: %w", err)
 	}
@@ -471,7 +484,8 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 		if protectedTrack == nil {
 			return nil, fmt.Errorf("protected %s DRM experiment track %q not found", drmScheme, inputTrack.Name+"_drm")
 		}
-		protectedResult, err := measureTrackWithProtection("drm", drmScheme, protectedTrack, samplesPerFragment, samplesPerGroup(protectedTrack), drmScheme)
+		protectedResult, err := measureTrackWithProtection("drm", drmScheme, protectedTrack,
+			samplesPerFragment, samplesPerGroup(protectedTrack), drmScheme)
 		if err != nil {
 			return nil, fmt.Errorf("measure %s protected DRM track: %w", drmScheme, err)
 		}
@@ -480,7 +494,8 @@ func runDRMExperiment(assetDir string, inputTrack *internal.ContentTrack, drmSch
 	return results, nil
 }
 
-func measureTrack(testName, caseName string, track *internal.ContentTrack, samplesPerFragment, objectsPerGroup int) (experimentResult, error) {
+func measureTrack(testName, caseName string, track *internal.ContentTrack,
+	samplesPerFragment, objectsPerGroup int) (experimentResult, error) {
 	return measureTrackWithProtection(testName, caseName, track, samplesPerFragment, objectsPerGroup,
 		protectionName(track.Protection))
 }
@@ -822,11 +837,11 @@ func locmafMoofFieldName(fieldID uint64) string {
 	case 13:
 		return "bytesOfClearData"
 	case 14:
-		return "perSampleIVSize"
+		return "sampleCount"
 	case 15:
 		return "bytesOfProtectedData"
 	case 16:
-		return "sampleCount"
+		return "perSampleIVSize"
 	case 17:
 		return "deletedFields"
 	default:
@@ -873,7 +888,8 @@ func measuredSeconds(track *internal.ContentTrack, samples int) float64 {
 	return float64(samples) * float64(track.SampleDur) / float64(track.TimeScale)
 }
 
-func tracksMatchingInput(asset *internal.Asset, inputTrack *internal.ContentTrack, protection internal.ProtectionType) []internal.ContentTrack {
+func tracksMatchingInput(asset *internal.Asset, inputTrack *internal.ContentTrack,
+	protection internal.ProtectionType) []internal.ContentTrack {
 	var tracks []internal.ContentTrack
 	for _, group := range asset.Groups {
 		for _, track := range group.Tracks {
@@ -981,7 +997,7 @@ func printDeltaHeaderFieldUsageTable(w io.Writer, results []deltaHeaderFieldUsag
 		fmt.Fprintln(w, "asset\tlocmaf_delta_moofs_per_group\tfield_id\tfield\tappearances")
 		for _, result := range group.results {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
-				result.AssetName, formatAverage(deltaHeaderMoofsPerGroup(result)),
+				displayAssetName(result.AssetName), formatAverage(deltaHeaderMoofsPerGroup(result)),
 				result.FieldID, result.FieldName, result.Appearances)
 		}
 	}
@@ -992,7 +1008,8 @@ func printTSVResults(w io.Writer, results []experimentResult) {
 	fmt.Fprintf(w, "# Non-init overhead byte totals are measured over %s.\n", measurementWindowDescription())
 	fmt.Fprintln(w, "# Bitrate columns divide those totals by each row's measured media duration.")
 	fmt.Fprintln(w, "# locmaf_overhead_kbps includes the LOCMAF header-id and payload-length varints.")
-	fmt.Fprintln(w, "# locmaf_overhead_kbps uses the delta-compressor stream, including full LOCMAF moof properties emitted after resets.")
+	fmt.Fprintln(w, "# locmaf_overhead_kbps uses the delta-compressor stream,")
+	fmt.Fprintln(w, "# including full LOCMAF moof properties emitted after resets.")
 	fmt.Fprintln(w, "# loc_header_kbps counts MoQ subgroup object framing plus the LOC Timestamp extension header.")
 	fmt.Fprintln(w)
 
@@ -1041,7 +1058,9 @@ func writeMarkdownResults(path string, results []experimentResult, fieldUsageRes
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "`locmaf_overhead_kbps` includes the LOCMAF header-id and payload-length varints.")
 	fmt.Fprintln(f)
-	fmt.Fprintln(f, "`locmaf_overhead_kbps` uses the complete delta-compressor stream. It includes full LOCMAF moof properties emitted immediately after resets.")
+	fmt.Fprintln(f, "`locmaf_overhead_kbps` uses the complete delta-compressor stream.")
+	fmt.Fprintln(f)
+	fmt.Fprintln(f, "It includes full LOCMAF moof properties emitted immediately after resets.")
 	fmt.Fprintln(f)
 	fmt.Fprintln(f, "`loc_header_kbps` counts MoQ subgroup object framing plus the LOC Timestamp extension header.")
 	fmt.Fprintln(f)
@@ -1096,46 +1115,18 @@ func printMarkdownDeltaHeaderFieldUsageTable(w io.Writer, results []deltaHeaderF
 		}
 		fmt.Fprintf(w, "## Delta Header Fields - %s\n", group.title)
 		fmt.Fprintln(w)
-		fmt.Fprintln(w, "| Asset | #LOCMAF Delta Moofs<br>per group | Field ID | Field | #appearances |")
+		fmt.Fprintf(w, "| Asset | %s | Field ID | Field | Count |\n", locmafDeltaMoofsPerGroupHeader)
 		fmt.Fprintln(w, "|---|---:|---:|---|---:|")
 		for _, result := range group.results {
 			fmt.Fprintf(w, "| %s | %s | %s | %s | %d |\n",
-				result.AssetName, formatAverage(deltaHeaderMoofsPerGroup(result)),
+				displayAssetName(result.AssetName), formatAverage(deltaHeaderMoofsPerGroup(result)),
 				result.FieldID, result.FieldName, result.Appearances)
 		}
 	}
 }
 
-func writeTypstResults(path string, results []experimentResult) error {
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	fmt.Fprintln(f, "// Generated LOCMAF experiment tables.")
-	currentTest := ""
-	firstTable := true
-	for _, result := range results {
-		if result.TestName != currentTest {
-			if !firstTable {
-				fmt.Fprintln(f, ")")
-				fmt.Fprintln(f)
-			}
-			firstTable = false
-			currentTest = result.TestName
-			fmt.Fprintf(f, "= %s\n\n", typstText(markdownTitle(currentTest)))
-			printTypstTableStart(f, columnsForExperiment(currentTest))
-		}
-		printTypstRow(f, columnsForExperiment(currentTest), result)
-	}
-	if !firstTable {
-		fmt.Fprintln(f, ")")
-	}
-	return f.Close()
-}
-
-func writeTypstTableVariables(path string, results []experimentResult, fieldUsageResults []deltaHeaderFieldUsage, rawValues bool) error {
+func writeTypstTableVariables(path string, results []experimentResult,
+	fieldUsageResults []deltaHeaderFieldUsage, rawValues bool) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -1177,6 +1168,7 @@ func groupResultsByExperiment(results []experimentResult) []experimentResultGrou
 
 func printTypstResultVariableTable(w io.Writer, columns []resultColumn, results []experimentResult, rawValues bool) {
 	fmt.Fprintf(w, "table(\n  columns: (%s),\n  align: right,\n  stroke: none,\n", typstAutoColumns(len(columns)))
+	fmt.Fprintln(w, "  table.vline(x: 1),")
 	printTypstResultHeader(w, columns)
 	fmt.Fprintln(w, "  table.hline(),")
 	for _, result := range results {
@@ -1191,12 +1183,12 @@ func printDeltaHeaderFieldUsageTypstTable(w io.Writer, results []deltaHeaderFiel
 		headerTypstCell("Asset"),
 		headerTypstCell(locmafDeltaMoofsPerGroupHeader),
 		headerTypstCell("Field"),
-		headerTypstCell("#appearances"),
+		headerTypstCell("Count"),
 	}, true)
 	fmt.Fprintln(w, "  table.hline(),")
 	for _, result := range results {
 		printTypstCellValues(w, []typstCell{
-			assetNameTypstCell(result.AssetName),
+			assetNameTypstCell(displayAssetName(result.AssetName)),
 			textTypstCell(formatAverage(deltaHeaderMoofsPerGroup(result))),
 			textTypstCell(result.FieldName),
 			textTypstCell(fmt.Sprintf("%d", result.Appearances)),
@@ -1229,41 +1221,6 @@ func printTypstResultRow(w io.Writer, columns []resultColumn, result experimentR
 	printTypstCellValues(w, values, true)
 }
 
-func printTypstTableStart(w io.Writer, columns []resultColumn) {
-	fmt.Fprintf(w, "table(\n  columns: (%s),\n  align: right,\n  stroke: none,\n", typstAutoColumns(len(columns)))
-	printTypstHeaderCells(w, typstHeaders(columns), true)
-	fmt.Fprintln(w, "  table.hline(),")
-}
-
-func printTypstRow(w io.Writer, columns []resultColumn, result experimentResult) {
-	values := make([]typstCell, 0, len(columns))
-	for _, column := range columns {
-		value := column.Value(result)
-		if column.TSVHeader == "asset" {
-			values = append(values, assetNameTypstCell(value))
-			continue
-		}
-		values = append(values, textTypstCell(value))
-	}
-	printTypstCellValues(w, values, true)
-}
-
-func printTypstCells(w io.Writer, values []string, trailingComma bool) {
-	cells := make([]typstCell, 0, len(values))
-	for _, value := range values {
-		cells = append(cells, textTypstCell(value))
-	}
-	printTypstCellValues(w, cells, trailingComma)
-}
-
-func printTypstHeaderCells(w io.Writer, values []string, trailingComma bool) {
-	cells := make([]typstCell, 0, len(values))
-	for _, value := range values {
-		cells = append(cells, headerTypstCell(value))
-	}
-	printTypstCellValues(w, cells, trailingComma)
-}
-
 func printTypstCellValues(w io.Writer, values []typstCell, trailingComma bool) {
 	cells := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1283,14 +1240,6 @@ func printTypstCellValues(w io.Writer, values []typstCell, trailingComma bool) {
 	fmt.Fprintf(w, "  %s%s\n", strings.Join(cells, ", "), suffix)
 }
 
-func typstHeaders(columns []resultColumn) []string {
-	headers := make([]string, 0, len(columns))
-	for _, column := range columns {
-		headers = append(headers, column.Header)
-	}
-	return headers
-}
-
 func typstAutoColumns(count int) string {
 	columns := make([]string, count)
 	for i := range columns {
@@ -1308,19 +1257,6 @@ func typstText(value string) string {
 }
 
 func textTypstCell(value string) typstCell {
-	value = typstAbbreviation(value)
-	if value == objectsPerGroupHeader {
-		return typstCell{
-			value: typstText("Objects") + ` #linebreak() ` + typstText("per group"),
-			raw:   true,
-		}
-	}
-	if value == locmafDeltaMoofsPerGroupHeader {
-		return typstCell{
-			value: typstText("#LOCMAF Delta Moofs") + ` #linebreak() ` + typstText("per group"),
-			raw:   true,
-		}
-	}
 	return typstCell{value: value}
 }
 
@@ -1331,14 +1267,13 @@ func headerTypstCell(value string) typstCell {
 }
 
 func assetNameTypstCell(value string) typstCell {
-	value = typstAbbreviation(value)
 	return typstCell{
 		value: strings.ReplaceAll(typstText(value), "_", `\_ \ `),
 		raw:   true,
 	}
 }
 
-func typstAbbreviation(value string) string {
+func displayAssetName(value string) string {
 	switch value {
 	case "video_400kbps_avc", "video_400kpbs_avc":
 		return "video400avc"
@@ -1348,31 +1283,8 @@ func typstAbbreviation(value string) string {
 		return "video900avc"
 	case "audio_monotonic_128kbps_aac":
 		return "audio128aac"
-	case "#LOCMAF Delta Moof / group", "#LOCMAF Delta Moofs per group":
-		return "#LDM / group"
-	case "#appearances":
-		return "Count"
-	case "Compression ratio":
-		return "CR"
-	case "Objects":
-		return "Obj."
-	case "objects":
-		return "obj."
-	case "Objects per group":
-		return "Obj. / group"
-	case "#samples / fragment", "#samples per fragment":
-		return "#smpl. / frag"
-	case "CMAF overhead/mdat size (%)":
-		return "CMAF / mdat"
-	case "LOCCMAF overhead/mdat size (%)", "LOCMAF overhead/mdat size (%)":
-		return "LOCMAF / mdat"
-	case "LOC overhead / mdat size (%)", "LOC header/mdat (%)":
-		return "LOC / mdat"
 	default:
-		value = strings.ReplaceAll(value, "Objects", "Obj.")
-		value = strings.ReplaceAll(value, "objects", "obj.")
-		value = strings.ReplaceAll(value, "Overhead", "OH")
-		return strings.ReplaceAll(value, "overhead", "OH")
+		return value
 	}
 }
 
@@ -1392,6 +1304,8 @@ func typstVariableName(testName string) string {
 		return "locheader"
 	case "drm":
 		return "drm"
+	case "drm-audio":
+		return "drmaudio"
 	default:
 		return strings.NewReplacer("-", "", "_", "").Replace(testName)
 	}
@@ -1413,6 +1327,8 @@ func columnsForExperiment(testName string) []resultColumn {
 		return locHeaderColumns()
 	case "drm":
 		return drmColumns()
+	case "drm-audio":
+		return drmColumns()
 	default:
 		return defaultColumns()
 	}
@@ -1421,9 +1337,11 @@ func columnsForExperiment(testName string) []resultColumn {
 func initHeaderColumns() []resultColumn {
 	return []resultColumn{
 		stringColumn("Protection", "protection", func(r experimentResult) string { return r.Protection }),
-		intColumn("CMAF Init bytes", "normal_init_bytes", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		intColumn("LOCMAF Init bytes", "compressed_init_bytes", func(r experimentResult) int { return r.LOCMAFOverheadBytes }),
-		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
+		intColumn("CMAF Init Bytes", "normal_init_bytes", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		intColumn("LOCMAF Init Bytes", "compressed_init_bytes", func(r experimentResult) int {
+			return r.LOCMAFOverheadBytes
+		}),
+		ratioColumn("CR", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.LOCMAFOverheadBytes)
 		}),
 	}
@@ -1431,11 +1349,11 @@ func initHeaderColumns() []resultColumn {
 
 func fragmentSizeColumns() []resultColumn {
 	return []resultColumn{
-		intColumn("#samples per fragment", "samples_per_fragment", func(r experimentResult) int { return r.SamplesPerFragment }),
+		intColumn(samplesPerChunkHeader, "samples_per_fragment", samplesPerFragment),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
-		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
+		bitrateColumn("CMAF OH", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF OH", "locmaf_overhead_kbps", deltaLOCMAFOverheadBytes),
+		ratioColumn("CR", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.DeltaLOCMAFOverheadBytes)
 		}),
 	}
@@ -1445,18 +1363,18 @@ func objectGroupSizeColumns() []resultColumn {
 	return []resultColumn{
 		intColumn(objectsPerGroupHeader, "objects_per_group", func(r experimentResult) int { return r.ObjectsPerGroup }),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
+		bitrateColumn("LOCMAF OH", "locmaf_overhead_kbps", deltaLOCMAFOverheadBytes),
 	}
 }
 
 func assetBitrateColumns() []resultColumn {
 	return []resultColumn{
-		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
+		stringColumn("Asset", "asset", func(r experimentResult) string { return displayAssetName(r.AssetName) }),
 		bitrateColumn("Mdat (kbps)", "mdat_kbps", func(r experimentResult) int { return r.MdatBytes }),
-		percentageColumn("CMAF overhead/mdat size (%)", "cmaf_overhead_mdat_percent", func(r experimentResult) float64 {
+		percentageColumn("CMAF / Mdat", "cmaf_overhead_mdat_percent", func(r experimentResult) float64 {
 			return bitrateByteRatio(r.CMAFOverheadBytes, r.MdatBytes, r)
 		}),
-		percentageColumn("LOCMAF overhead/mdat size (%)", "locmaf_overhead_mdat_percent", func(r experimentResult) float64 {
+		percentageColumn("LOCMAF / Mdat", "locmaf_overhead_mdat_percent", func(r experimentResult) float64 {
 			return bitrateByteRatio(r.DeltaLOCMAFOverheadBytes, r.MdatBytes, r)
 		}),
 	}
@@ -1464,11 +1382,11 @@ func assetBitrateColumns() []resultColumn {
 
 func locHeaderColumns() []resultColumn {
 	return []resultColumn{
-		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
-		intColumn("#LOC objects", "loc_objects", func(r experimentResult) int { return r.Fragments }),
+		stringColumn("Asset", "asset", func(r experimentResult) string { return displayAssetName(r.AssetName) }),
+		intColumn("#LOC Obj.", "loc_objects", func(r experimentResult) int { return r.Fragments }),
 		bitrateColumn("Mdat (kbps)", "mdat_kbps", func(r experimentResult) int { return r.MdatBytes }),
-		bitrateColumn("LOC overhead", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
-		percentageColumn("LOC / mdat", "loc_header_mdat_percent", func(r experimentResult) float64 {
+		bitrateColumn("LOC OH", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
+		percentageColumn("LOC / Mdat", "loc_header_mdat_percent", func(r experimentResult) float64 {
 			return ratio(r.LOCOverheadBytes, r.MdatBytes)
 		}),
 	}
@@ -1477,9 +1395,9 @@ func locHeaderColumns() []resultColumn {
 func drmColumns() []resultColumn {
 	return []resultColumn{
 		stringColumn("Protection", "protection", func(r experimentResult) string { return r.Protection }),
-		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
-		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
+		bitrateColumn("CMAF OH", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF OH", "locmaf_overhead_kbps", deltaLOCMAFOverheadBytes),
+		ratioColumn("CR", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.DeltaLOCMAFOverheadBytes)
 		}),
 	}
@@ -1488,9 +1406,9 @@ func drmColumns() []resultColumn {
 func defaultColumns() []resultColumn {
 	return []resultColumn{
 		stringColumn("Case", "case", func(r experimentResult) string { return r.CaseName }),
-		stringColumn("Asset", "asset", func(r experimentResult) string { return r.AssetName }),
+		stringColumn("Asset", "asset", func(r experimentResult) string { return displayAssetName(r.AssetName) }),
 		stringColumn("Protection", "protection", func(r experimentResult) string { return r.Protection }),
-		intColumn("#samples per fragment", "samples_per_fragment", func(r experimentResult) int { return r.SamplesPerFragment }),
+		intColumn(samplesPerChunkHeader, "samples_per_fragment", samplesPerFragment),
 		intColumn(objectsPerGroupHeader, "objects_per_group", func(r experimentResult) int { return r.ObjectsPerGroup }),
 		intColumn("#fragments", "fragments", func(r experimentResult) int { return r.Fragments }),
 		intColumn("#samples", "samples", func(r experimentResult) int { return r.Samples }),
@@ -1498,15 +1416,15 @@ func defaultColumns() []resultColumn {
 		bitrateColumn("LOC header (kbps)", "loc_header_kbps", func(r experimentResult) int { return r.LOCOverheadBytes }),
 		intColumn("#LOCMAF Full Moofs", "locmaf_full_moofs", func(r experimentResult) int { return r.DeltaFullHeaders }),
 		averageColumn(locmafDeltaMoofsPerGroupHeader, "locmaf_delta_moofs_per_group", deltaMoofsPerGroup),
-		bitrateColumn("CMAF overhead", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
-		bitrateColumn("LOCMAF overhead", "locmaf_overhead_kbps", func(r experimentResult) int { return r.DeltaLOCMAFOverheadBytes }),
-		ratioColumn("CMAF overhead/mdat ratio", "cmaf_overhead_mdat_ratio", func(r experimentResult) float64 {
+		bitrateColumn("CMAF OH", "cmaf_overhead_kbps", func(r experimentResult) int { return r.CMAFOverheadBytes }),
+		bitrateColumn("LOCMAF OH", "locmaf_overhead_kbps", deltaLOCMAFOverheadBytes),
+		ratioColumn("CMAF OH/mdat ratio", "cmaf_overhead_mdat_ratio", func(r experimentResult) float64 {
 			return ratio(r.CMAFOverheadBytes, r.MdatBytes)
 		}),
-		ratioColumn("LOCMAF overhead/mdat ratio", "locmaf_overhead_mdat_ratio", func(r experimentResult) float64 {
+		ratioColumn("LOCMAF OH/mdat ratio", "locmaf_overhead_mdat_ratio", func(r experimentResult) float64 {
 			return ratio(r.DeltaLOCMAFOverheadBytes, r.MdatBytes)
 		}),
-		ratioColumn("Compression ratio", "compression_ratio", func(r experimentResult) float64 {
+		ratioColumn("CR", "compression_ratio", func(r experimentResult) float64 {
 			return compressionRatio(r.CMAFOverheadBytes, r.DeltaLOCMAFOverheadBytes)
 		}),
 	}
@@ -1514,6 +1432,14 @@ func defaultColumns() []resultColumn {
 
 func stringColumn(header, tsvHeader string, value func(experimentResult) string) resultColumn {
 	return resultColumn{Header: header, TSVHeader: tsvHeader, Value: value, RawValue: value}
+}
+
+func samplesPerFragment(result experimentResult) int {
+	return result.SamplesPerFragment
+}
+
+func deltaLOCMAFOverheadBytes(result experimentResult) int {
+	return result.DeltaLOCMAFOverheadBytes
 }
 
 func intColumn(header, tsvHeader string, value func(experimentResult) int) resultColumn {
@@ -1620,22 +1546,6 @@ func rawBitrateKbps(bytes int, result experimentResult) string {
 	return rawFloat(bitrateKbps(bytes, result))
 }
 
-func exactDecimal(numerator, denominator int) string {
-	whole := numerator / denominator
-	remainder := numerator % denominator
-	if remainder == 0 {
-		return fmt.Sprintf("%d", whole)
-	}
-
-	digits := make([]byte, 0, 8)
-	for remainder != 0 {
-		remainder *= 10
-		digits = append(digits, byte('0'+remainder/denominator))
-		remainder %= denominator
-	}
-	return fmt.Sprintf("%d.%s", whole, string(digits))
-}
-
 func markdownTitle(testName string) string {
 	switch testName {
 	case "init-header":
@@ -1652,6 +1562,8 @@ func markdownTitle(testName string) string {
 		return "Object Group Size"
 	case "drm":
 		return "DRM"
+	case "drm-audio":
+		return "DRM Audio"
 	default:
 		return testName
 	}

@@ -1,0 +1,130 @@
+#let vidfrag = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Smpl. / Chunk]], [#strong[\#LDM / Group]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [1], [24], [21.6], [0.604], [35.76158940397351],
+  [5], [4], [4.832], [0.7536], [6.411889596602973],
+  [25], [0], [1.632], [0.6072000000000001], [2.6877470355731226],
+)
+
+#let audiofrag = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Smpl. / Chunk]], [#strong[\#LDM / Group]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [1], [45], [40.5], [0.9105978260869566], [44.4762757385855],
+  [2], [22], [20.005434782608695], [1.6646739130434784], [12.017629774730656],
+  [46], [0], [2.315217391304348], [0.9187500000000001], [2.5199645075421473],
+)
+
+#let init = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF Init Bytes]], [#strong[LOCMAF Init Bytes]], [#strong[CR]],
+  table.hline(),
+  [none], [662], [75], [8.826666666666666],
+  [cbcs], [759], [130], [5.838461538461538],
+  [cenc], [742], [110], [6.745454545454545],
+)
+
+#let objectgroupsize = table(
+  columns: (auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[\#Obj. per Group]], [#strong[\#LDM / Group]], [#strong[LOCMAF OH]],
+  table.hline(),
+  [1], [0], [8.223097826086958],
+  [46], [45], [0.9105978260869566],
+  [460], [459], [0.763858695652174],
+)
+
+#let bitrate = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Asset]], [#strong[Mdat (kbps)]], [#strong[CMAF / Mdat]], [#strong[LOCMAF / Mdat]],
+  table.hline(),
+  [video400avc], [373.2008], [5.787768943689295%], [0.16184316861057102%],
+  [video600avc], [559.5056], [3.8605511723207067%], [0.10795244944822717%],
+  [video900avc], [844.5048], [2.55771192774748%], [0.07152120390553138%],
+  [audio128aac], [128.0013586956522], [31.640289144349264%], [0.7113970002865968%],
+)
+
+#let locheader = table(
+  columns: (auto, auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Asset]], [#strong[\#LOC Obj.]], [#strong[Mdat (kbps)]], [#strong[LOC OH]], [#strong[LOC / Mdat]],
+  table.hline(),
+  [video400avc], [250], [373.2008], [2.6111999999999997], [0.6996769567482171%],
+  [audio128aac], [460], [128.0013586956522], [4.875], [3.80855332293093%],
+)
+
+#let drm = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [none], [21.6], [0.604], [35.76158940397351],
+  [cbcs], [34], [1.504], [22.606382978723403],
+  [cenc], [37.2], [5.556], [6.695464362850972],
+)
+
+#let drmaudio = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  table.vline(x: 1),
+  [#strong[Protection]], [#strong[CMAF OH]], [#strong[LOCMAF OH]], [#strong[CR]],
+  table.hline(),
+  [none], [40.5], [0.9105978260869566], [44.4762757385855],
+  [cbcs], [60.37500000000001], [0.9105978260869566], [66.30259623992838],
+  [cenc], [66.375], [7.660597826086957], [8.664467383207407],
+)
+
+#let deltafieldsnone = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [audio128aac], [45], [N/A], [0],
+)
+
+#let deltafieldscenc = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [video400avc], [24], [initializationVector], [240],
+  [video400avc], [24], [bytesOfClearData], [226],
+  [video400avc], [24], [bytesOfProtectedData], [226],
+  [audio128aac], [45], [initializationVector], [450],
+)
+
+#let deltafieldscbcs = table(
+  columns: (auto, auto, auto, auto),
+  align: right,
+  stroke: none,
+  [#strong[Asset]], [#strong[\#LDM / Group]], [#strong[Field]], [#strong[Count]],
+  table.hline(),
+  [video400avc], [24], [sampleFlags], [10],
+  [video400avc], [24], [bytesOfClearData], [25],
+  [video400avc], [24], [bytesOfProtectedData], [239],
+  [audio128aac], [45], [N/A], [0],
+)
