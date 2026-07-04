@@ -142,9 +142,16 @@ implementations can be tested against a reference asset.
 ## Session setup
 
 After session establishment, the server announces all configured namespaces.
-For CMSF and LOC namespaces the client subscribes to the catalog track first,
-then to the media tracks listed in that catalog. For moq-mi there is no
+For CMSF and LOC namespaces the client retrieves the catalog track first, then
+subscribes to the media tracks listed in that catalog. For moq-mi there is no
 catalog, so the client subscribes directly to the fixed track names.
+
+By default the catalog is retrieved with a SUBSCRIBE (Filter Type = Largest
+Object) plus a relative joining FETCH at offset 0, per
+[draft-ietf-moq-msf-01][msf-01] §5, so the client gets the latest catalog group
+aligned to the live edge in a single round-trip. The `mlmsub -catalog-mode` flag
+selects the strategy: `joining` (default), `subscribe` (legacy plain SUBSCRIBE),
+or `fetch` (legacy standalone FETCH).
 
 The bundled `mlmsub` client connects to a single namespace (default: `cmsf/clear`,
 configurable via `-namespace`). It subscribes to the first video and audio track
