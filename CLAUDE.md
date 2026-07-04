@@ -30,9 +30,10 @@ go mod vendor               # Vendor dependencies
   - `catalog.go` - MSF/CMSF catalog generation (CMAF, LOC, LOCMAF packaging)
   - `subtitle.go` - Dynamic subtitle generation (WVTT/STPP)
   - `moqgroup.go` - MoQ group/object handling
-  - `locmafv02/` - LOCMAF v0.2 `moof` encode/decode (the only LOCMAF version)
-- `docs/locmaf_v0_2.md` - LOCMAF v0.2 implementation notes (normative spec is the
-  IETF draft draft-einarsson-moq-locmaf)
+- LOCMAF encode/decode comes from `github.com/Eyevinn/locmaf` (the reusable
+  codec module; one packaging version at a time, reported by `locmaf.Version`).
+  See `docs/LOCMAF.md`; the normative spec is the IETF draft
+  draft-einarsson-moq-locmaf
 
 ### MoQ Transport Dependency
 
@@ -55,8 +56,8 @@ CMSF (unified CMAF + LOCMAF catalog):
 
 Each rendition appears twice in a CMSF catalog: a CMAF track `<name>`
 (`packaging: "cmaf"`) and a LOCMAF track `<name>_locmaf`
-(`packaging: "locmaf"`, `locmafVersion: "0.2"`), as alternates in the same
-altGroup. Because LOCMAF v0.2 init data is the raw CMAF init segment, both
+(`packaging: "locmaf"`, `locmafVersion` from `locmaf.Version`, currently "0.3"), as alternates in the same
+altGroup. Because LOCMAF init data is the raw CMAF init segment, both
 variants reference one shared entry in the catalog `initDataList` via `initRef`
 (draft-ietf-moq-msf-01). The serve path (`pub.PublishTrack`) picks the encoding
 per track and strips the `_locmaf` suffix to resolve the underlying content
@@ -69,13 +70,14 @@ already removes most of the redundancy compression targets.
 
 ### LOCMAF specification versioning
 
-Only LOCMAF **v0.2** is supported (`locmafVersion: "0.2"`, `locmafv02.Version`);
-the legacy v0.1 wire format and its tooling have been removed. The normative
-spec is the IETF Internet-Draft
+One LOCMAF packaging version is supported at a time — the one implemented by
+the `github.com/Eyevinn/locmaf` module and reported by `locmaf.Version`
+(currently `"0.3"`); v0.2 remains reachable at the `locmaf-v0.2` tag. The
+normative spec is the IETF Internet-Draft
 [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/);
-`docs/locmaf_v0_2.md` records only moqlivemock's per-field implementation
-status. The wire-format version (`"0.2"`) and the IETF draft revision advance
-independently — cite the version-independent draft URL, not a pinned revision.
+see `docs/LOCMAF.md` for how moqlivemock uses the codec. The packaging version
+and the IETF draft revision advance independently — cite the
+version-independent draft URL, not a pinned revision.
 
 LOC (raw codec frames, one per object) and moq-mi (catalogless):
 - `msf/clear` — LOC packaging (AVC + AAC/Opus, HEVC for `hev1.*`)

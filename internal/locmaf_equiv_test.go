@@ -4,20 +4,18 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/Eyevinn/mp4ff/bits"
+	"github.com/Eyevinn/locmaf"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/require"
-
-	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 )
 
-// TestLocmafV02IntegrationSmoke is the strongest cross-cutting test:
-// it walks the real test10s assets through the v0.2 pipeline
-// (compress + decompress) for the first MoQ group's worth of chunks
-// and asserts the reconstructed sample data still matches the source
-// samples byte-for-byte (modulo encryption side-effects, none in this
-// test path because we pick clear tracks).
-func TestLocmafV02IntegrationSmoke(t *testing.T) {
+// TestLocmafIntegrationSmoke is the strongest cross-cutting test: it
+// walks the real test10s assets through the LOCMAF pipeline (canonical
+// encode + decode + canonical reconstruction) for the first chunks of
+// clear tracks and asserts the decoded effective values match the
+// source samples, and that the canonical chunk parses as CMAF with the
+// mdat payload intact.
+func TestLocmafIntegrationSmoke(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
 	wanted := map[string]bool{
@@ -42,29 +40,28 @@ func TestLocmafV02IntegrationSmoke(t *testing.T) {
 
 func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 	t.Helper()
-	state := locmafv02.NewState()
 	batch := uint64(ct.SampleBatch)
 	if batch == 0 {
 		batch = 1
 	}
 
-	// Drive GenLocmafV02Chunk to confirm the public publisher API
-	// works end-to-end (the result is also exercised below via
-	// Compress directly, so we don't need to keep the bytes here).
+	// Drive GenLocmafChunk to confirm the public publisher API works
+	// end-to-end.
+	state := locmaf.NewState()
 	for chunkNr := uint32(0); chunkNr < 3; chunkNr++ {
 		start := uint64(chunkNr) * batch
 		end := start + batch
 		if end > uint64(len(ct.Samples)) {
 			return
 		}
-		_, err := ct.GenLocmafV02Chunk(chunkNr, start, end, state)
+		_, err := ct.GenLocmafChunk(chunkNr, start, end, state)
 		require.NoError(t, err)
 	}
 
 	// Independent rebuild: encode all 3 chunks, decode all 3 chunks,
-	// and verify lengths/flags line up with the source.
-	encState := locmafv02.NewState()
-	decState := locmafv02.NewState()
+	// and verify the effective values line up with the source.
+	encState := locmaf.NewState()
+	decState := locmaf.NewState()
 	for chunkNr := uint32(0); chunkNr < 3; chunkNr++ {
 		start := uint64(chunkNr) * batch
 		end := start + batch
@@ -74,39 +71,34 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		srcFrag, err := ct.createFragment(chunkNr, start, end)
 		require.NoError(t, err)
 
-		headBytes, _, err := locmafv02.Compress(srcFrag.Moof, encState, moovOf(ct))
+		obj, err := locmaf.EncodeCanonical(nil, srcFrag.Moof, srcFrag.Mdat.Data, encState, moovOf(ct))
 		require.NoError(t, err)
-		obj := append(append([]byte(nil), headBytes...), srcFrag.Mdat.Data...)
 
-		decMoof, _, err := locmafv02.Decompress(obj, decState, moovOf(ct))
+		eff, raw, err := locmaf.Decode(obj, decState, moovOf(ct))
 		require.NoError(t, err)
-		require.NotNil(t, decMoof, "track %s chunk %d", ct.Name, chunkNr)
-		require.Len(t, decMoof.Traf.Trun.Samples, len(srcFrag.Moof.Traf.Trun.Samples),
+		require.Nil(t, raw)
+		srcSamples := srcFrag.Moof.Traf.Trun.Samples
+		require.Equal(t, len(srcSamples), eff.SampleCount,
 			"track %s chunk %d sample count", ct.Name, chunkNr)
-		for i, src := range srcFrag.Moof.Traf.Trun.Samples {
-			got := decMoof.Traf.Trun.Samples[i]
-			require.Equal(t, src.Size, got.Size,
+		for i, src := range srcSamples {
+			require.Equal(t, src.Size, eff.Sizes[i],
 				"track %s chunk %d sample %d size", ct.Name, chunkNr, i)
-			require.Equal(t, src.Dur, got.Dur,
+			require.Equal(t, src.Dur, eff.Durations[i],
 				"track %s chunk %d sample %d dur", ct.Name, chunkNr, i)
-			require.Equal(t, src.Flags, got.Flags,
+			require.Equal(t, src.Flags, eff.Flags[i],
 				"track %s chunk %d sample %d flags", ct.Name, chunkNr, i)
 		}
 
-		// The mdat payload survives untouched: re-encode the
-		// decoded moof + mdat and assert mdat round-tripped.
-		frag := mp4.NewFragment()
-		frag.AddChild(decMoof)
-		frag.AddChild(&mp4.MdatBox{Data: srcFrag.Mdat.Data})
-		sw := bits.NewFixedSliceWriter(int(frag.Size()))
-		require.NoError(t, frag.EncodeSW(sw))
-		// Sanity: the encoded bytes must start with a styp- or
-		// moof-shaped box header (mp4 box length + 'moof').
-		require.Greater(t, len(sw.Bytes()), 8)
-		require.True(t, bytes.Contains(sw.Bytes(), []byte("moof")),
-			"reconstructed fragment lacks moof box")
-		require.True(t, bytes.Contains(sw.Bytes(), []byte("mdat")),
-			"reconstructed fragment lacks mdat box")
+		// The canonical reconstruction is a parseable CMAF chunk and
+		// carries the mdat payload untouched.
+		chunk, err := locmaf.ReconstructCanonical(moovOf(ct), eff)
+		require.NoError(t, err)
+		box, err := mp4.DecodeBox(0, bytes.NewReader(chunk))
+		require.NoError(t, err)
+		_, ok := box.(*mp4.MoofBox)
+		require.True(t, ok, "canonical chunk starts with a moof")
+		require.True(t, bytes.HasSuffix(chunk, srcFrag.Mdat.Data),
+			"mdat payload survives untouched")
 	}
 }
 
@@ -114,14 +106,12 @@ func moovOf(ct *ContentTrack) *mp4.MoovBox {
 	return ct.SpecData.GetInit().Moov
 }
 
-// TestLocmafV02EncryptedSencRoundTrip exercises the DRM/CENC path of
-// the v0.2 codec, which the clear-track tests above never touch. For
-// both cbcs and cenc it encrypts real fragments, runs them through the
-// v0.2 Compress/Decompress codec, and asserts the reconstructed senc
-// box matches the source: per-sample IV size, the IV bytes, and the
-// subsample (clear/protected byte) layout. This is the
-// "document the DRM box round-trip" milestone from docs/locmaf_v0_2.md.
-func TestLocmafV02EncryptedSencRoundTrip(t *testing.T) {
+// TestLocmafEncryptedSencRoundTrip exercises the DRM/CENC path, which
+// the clear-track tests above never touch. For both cbcs and cenc it
+// encrypts real fragments, runs them through the codec, and asserts the
+// decoded effective CENC values match the source senc box: per-sample
+// IV size, the IV bytes, and the subsample (clear/protected) layout.
+func TestLocmafEncryptedSencRoundTrip(t *testing.T) {
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
@@ -137,8 +127,8 @@ func TestLocmafV02EncryptedSencRoundTrip(t *testing.T) {
 			ct := firstProtectedVideoTrack(t, asset)
 			moov := moovOf(ct)
 
-			encState := locmafv02.NewState()
-			decState := locmafv02.NewState()
+			encState := locmaf.NewState()
+			decState := locmaf.NewState()
 			batch := uint64(ct.SampleBatch)
 			if batch == 0 {
 				batch = 1
@@ -153,45 +143,80 @@ func TestLocmafV02EncryptedSencRoundTrip(t *testing.T) {
 				}
 
 				// Build the encrypted source fragment exactly like
-				// GenLocmafV02Chunk does internally (createFragment +
+				// GenLocmafChunk does internally (createFragment +
 				// encryptFragment).
 				srcFrag, err := ct.createFragment(chunkNr, start, end)
 				require.NoError(t, err)
-				sw := bits.NewFixedSliceWriter(int(srcFrag.Size()))
-				require.NoError(t, srcFrag.EncodeSW(sw))
-				encFrag, err := ct.encryptFragment(sw.Bytes())
+				encFrag, err := encryptViaTrack(ct, srcFrag)
 				require.NoError(t, err)
 
 				srcSenc := parsedSenc(t, encFrag.Moof, moov)
 				require.NotNil(t, srcSenc, "source chunk %d must carry a senc box", chunkNr)
 				sawProtected = true
 
-				// Capture source senc values before Compress, which may
+				// Capture source senc values before encoding, which may
 				// mutate parsed box state on the traf.
 				srcIVSize := srcSenc.PerSampleIVSize()
-				srcIVs := append([]mp4.InitializationVector(nil), srcSenc.IVs...)
+				var srcIVs []byte
+				for _, iv := range srcSenc.IVs {
+					srcIVs = append(srcIVs, iv...)
+				}
 				srcSubs := append([][]mp4.SubSamplePattern(nil), srcSenc.SubSamples...)
 
-				headBytes, _, err := locmafv02.Compress(encFrag.Moof, encState, moov)
+				obj, err := locmaf.EncodeCanonical(nil, encFrag.Moof, encFrag.Mdat.Data, encState, moov)
 				require.NoError(t, err)
-				obj := append(append([]byte(nil), headBytes...), encFrag.Mdat.Data...)
 
-				decMoof, _, err := locmafv02.Decompress(obj, decState, moov)
+				eff, raw, err := locmaf.Decode(obj, decState, moov)
 				require.NoError(t, err)
-				require.NotNil(t, decMoof, "chunk %d decompressed to nil", chunkNr)
+				require.Nil(t, raw)
 
+				require.Equal(t, srcIVSize, eff.PerSampleIVSize,
+					"chunk %d per-sample IV size", chunkNr)
+				require.Equal(t, srcIVs, eff.IVs, "chunk %d IVs", chunkNr)
+				if len(srcSubs) > 0 {
+					require.True(t, eff.HasSubsamples, "chunk %d subsample map", chunkNr)
+					subIdx := 0
+					for i, subs := range srcSubs {
+						require.Equal(t, len(subs), int(eff.SubsampleCounts[i]),
+							"chunk %d sample %d subsample count", chunkNr, i)
+						for _, ss := range subs {
+							require.Equal(t, ss.BytesOfClearData, eff.ClearBytes[subIdx],
+								"chunk %d subsample %d clear bytes", chunkNr, subIdx)
+							require.Equal(t, ss.BytesOfProtectedData, eff.ProtectedBytes[subIdx],
+								"chunk %d subsample %d protected bytes", chunkNr, subIdx)
+							subIdx++
+						}
+					}
+				}
+
+				// The canonical reconstruction must carry the senc
+				// metadata in parseable form.
+				chunk, err := locmaf.ReconstructCanonical(moov, eff)
+				require.NoError(t, err)
+				box, err := mp4.DecodeBox(0, bytes.NewReader(chunk))
+				require.NoError(t, err)
+				decMoof, ok := box.(*mp4.MoofBox)
+				require.True(t, ok)
 				decSenc := parsedSenc(t, decMoof, moov)
 				require.NotNil(t, decSenc, "reconstructed chunk %d lost its senc box", chunkNr)
-
 				require.Equal(t, srcIVSize, decSenc.PerSampleIVSize(),
-					"chunk %d per-sample IV size", chunkNr)
-				require.Equal(t, srcIVs, decSenc.IVs, "chunk %d IVs", chunkNr)
-				require.Equal(t, srcSubs, decSenc.SubSamples,
-					"chunk %d subsample layout", chunkNr)
+					"chunk %d reconstructed per-sample IV size", chunkNr)
 			}
 			require.True(t, sawProtected, "no encrypted chunks were exercised")
 		})
 	}
+}
+
+// encryptViaTrack serialises the fragment and encrypts it the way
+// GenLocmafChunk does.
+func encryptViaTrack(ct *ContentTrack, frag *mp4.Fragment) (*mp4.Fragment, error) {
+	size := frag.Size()
+	buf := make([]byte, 0, size)
+	w := bytes.NewBuffer(buf)
+	if err := frag.Encode(w); err != nil {
+		return nil, err
+	}
+	return ct.encryptFragment(w.Bytes())
 }
 
 // firstProtectedVideoTrack returns the first encrypted video track in
@@ -238,8 +263,8 @@ func parsedSenc(t *testing.T, moof *mp4.MoofBox, moov *mp4.MoovBox) *mp4.SencBox
 	return nil
 }
 
-// getTrackSinf returns the sinf for trackID without panicking on a moov
-// whose stsd has no children.
+// getTrackSinf finds the sinf box of the given track without panicking
+// on a moov with no stsd children.
 func getTrackSinf(moov *mp4.MoovBox, trackID uint32) *mp4.SinfBox {
 	if moov == nil {
 		return nil

@@ -10,14 +10,13 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Eyevinn/locmaf"
 	"github.com/Eyevinn/moqlivemock/internal"
-	"github.com/Eyevinn/moqlivemock/internal/locmafv02"
 	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/mengelbart/qlog"
 	"github.com/mengelbart/qlog/moqt"
-	"github.com/quic-go/quic-go/quicvarint"
 )
 
 const (
@@ -198,9 +197,9 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
 			// in the catalog — no translation needed downstream, but we
 			// still need to extract the moov for CENC tracks so the
 			// decrypt pipeline can pick up the tenc defaults / KID.
-			if track.LocmafVersion != "" && track.LocmafVersion != locmafv02.Version {
+			if track.LocmafVersion != "" && track.LocmafVersion != locmaf.Version {
 				slog.Error("unsupported locmaf version", "version", track.LocmafVersion,
-					"supported", []string{locmafv02.Version})
+					"supported", []string{locmaf.Version})
 				return
 			}
 			if len(track.ContentProtectionRefIDs) > 0 {
@@ -662,7 +661,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		}
 	}
 	go func() {
-		v02State := locmafv02.NewState()
+		locmafState := locmaf.NewState()
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
@@ -674,7 +673,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
 			if o.ObjectID == 0 {
-				v02State = locmafv02.NewState()
+				locmafState = locmaf.NewState()
 				attrs := []any{
 					"track", trackname,
 					"groupID", o.GroupID,
@@ -700,8 +699,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 			}
 
 			if track.Packaging == "locmaf" {
-				// "locmaf" is LOCMAF v0.2.
-				o.Payload, err = decompressLocmafV02Object(o.Payload, moov, v02State)
+				o.Payload, err = decompressLocmafObject(o.Payload, moov, locmafState)
 				if err != nil {
 					slog.Error("failed to decompress locmaf object",
 						"track", trackname,
@@ -762,58 +760,20 @@ func (h *Handler) initLOCWriter(mediaType string, w interface{ Write([]byte) err
 	h.locWriters[mediaType] = w
 }
 
-// decompressLocmafV02Object decodes a LOCMAF v0.2 object (full or
-// delta) plus its trailing raw mdat payload back to a fragmented
-// CMAF chunk: moof + mdat box. The chunk bytes are appended to the
-// caller's existing CMAF init segment downstream.
-func decompressLocmafV02Object(payload []byte, moov *mp4.MoovBox,
-	state *locmafv02.State) ([]byte, error) {
-	if len(payload) == 0 {
-		return nil, fmt.Errorf("empty locmafv02 object")
-	}
-	// Need to know where the property block ends so the trailing
-	// bytes can be folded into an mdat box. Mirror the parsing
-	// locmafv02.Decompress does, then carve the mdat tail out.
-	headerID, n, err := quicvarint.Parse(payload)
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmafv02 header_id")
-	}
-	pos := n
-	propsLen, n, err := quicvarint.Parse(payload[pos:])
-	if err != nil {
-		return nil, fmt.Errorf("invalid locmafv02 properties_length")
-	}
-	pos += n
-	// Compare in uint64 space: int(propsLen) can wrap negative on a
-	// corrupt/adversarial object and slip past a signed bounds check.
-	if propsLen > uint64(len(payload)-pos) {
-		return nil, fmt.Errorf("locmafv02 properties exceed object length")
-	}
-	_ = headerID
-	headEnd := pos + int(propsLen)
-	mdatPayload := payload[headEnd:]
-
-	// Pass the full payload (head + mdat) so Decompress can derive
-	// the last sample's size from the mdat length (§15.1).
-	moof, _, err := locmafv02.Decompress(payload, state, moov)
+// decompressLocmafObject expands one LOCMAF Object back to a CMAF
+// chunk via the canonical reconstruction (genBoxes + moof + mdat); a
+// rawBoxes Object passes through verbatim. The chunk bytes are appended
+// to the caller's existing CMAF init segment downstream.
+func decompressLocmafObject(payload []byte, moov *mp4.MoovBox,
+	state *locmaf.State) ([]byte, error) {
+	eff, raw, err := locmaf.Decode(payload, state, moov)
 	if err != nil {
 		return nil, err
 	}
-	if moof == nil {
-		// Unknown header — log already emitted in Decompress; tell
-		// the caller to drop the object.
-		return nil, nil
+	if raw != nil {
+		return append([]byte(nil), raw...), nil
 	}
-
-	frag := mp4.NewFragment()
-	frag.AddChild(moof)
-	frag.AddChild(&mp4.MdatBox{Data: append([]byte(nil), mdatPayload...)})
-
-	sw := bits.NewFixedSliceWriter(int(frag.Size()))
-	if err := frag.EncodeSW(sw); err != nil {
-		return nil, fmt.Errorf("failed to encode v0.2 fragment: %w", err)
-	}
-	return sw.Bytes(), nil
+	return locmaf.ReconstructCanonical(moov, eff)
 }
 
 func unpackWrite(initData string, w io.Writer) error {

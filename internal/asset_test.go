@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Eyevinn/locmaf"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/assert"
@@ -248,18 +249,18 @@ func TestLoadAsset(t *testing.T) {
 	// Each rendition is published in both CMAF and LOCMAF packaging, so the
 	// unified catalog has twice as many media tracks as before (12 -> 24).
 	require.Equal(t, 24, len(cat.Tracks))
-	cmaf, locmaf := 0, 0
+	cmafCount, locmafCount := 0, 0
 	for _, track := range cat.Tracks {
 		require.Equal(t, "cmsf/clear", track.Namespace)
 		switch track.Packaging {
 		case "cmaf":
-			cmaf++
+			cmafCount++
 		case "locmaf":
-			locmaf++
-			require.Equal(t, "0.2", track.LocmafVersion)
+			locmafCount++
+			require.Equal(t, locmaf.Version, track.LocmafVersion)
 		}
 	}
-	require.Equal(t, cmaf, locmaf, "equal number of cmaf and locmaf variants")
+	require.Equal(t, cmafCount, locmafCount, "equal number of cmaf and locmaf variants")
 }
 
 func TestCreateProtectedTracksDoesNotMutateOriginalTrackInit(t *testing.T) {
