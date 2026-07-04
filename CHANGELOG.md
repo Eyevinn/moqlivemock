@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Catalog retrieval now uses a relative joining FETCH, aligned to the live edge.
+
+### Added
+
+- `mlmsub -catalog-mode` flag selecting how the catalog is retrieved:
+  `joining` (default), `subscribe` (legacy), or `fetch` (legacy standalone). The
+  default fetches the MSF/CMSF catalog via SUBSCRIBE plus a relative joining
+  FETCH (offset 0) per [draft-ietf-moq-msf-01][msf-01] §5, so the client gets the
+  latest catalog group in a single round-trip.
+- Publisher-side joining FETCH resolution: the catalog object is served from a
+  FETCH when the requested range covers `{0,0}`.
+
+### Changed
+
+- Bumped `github.com/Eyevinn/moqtransport` to v0.9.0, which adds the
+  publisher-side joining FETCH support this feature depends on.
+- Bumped `github.com/quic-go/webtransport-go` to the Eyevinn v0.11.0 fork and
+  `github.com/quic-go/quic-go` to v0.60.0; the fork sends/accepts the legacy
+  `WEBTRANSPORT_MAX_SESSIONS` codepoint and emits the full WebTransport SETTINGS
+  bundle itself, so the manual workarounds in `mlmpub`/`mlmsub` are removed.
+
 ## [0.11.1] - 2026-06-08
 
 Interop robustness: the test client can no longer hang during MoQ SETUP, and the
