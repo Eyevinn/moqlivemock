@@ -27,6 +27,25 @@ Catalog retrieval now uses a relative joining FETCH, aligned to the live edge.
   `github.com/quic-go/quic-go` to v0.60.0; the fork sends/accepts the legacy
   `WEBTRANSPORT_MAX_SESSIONS` codepoint and emits the full WebTransport SETTINGS
   bundle itself, so the manual workarounds in `mlmpub`/`mlmsub` are removed.
+- **LOCMAF** packaging advanced to **v0.3** and moved out of this repository:
+  encode/decode now comes from the reusable
+  [`github.com/Eyevinn/locmaf`](https://github.com/Eyevinn/locmaf) module
+  (v0.1.0) — element types with `genBox`/`rawBoxes`, MOQT vi64 varints, full
+  32-bit sample flags, derived-only delta BMDT, and canonical
+  `senc`/`saiz`/`saio` reconstruction. The catalog advertises `locmafVersion`
+  from `locmaf.Version`; `mlmpub` uses `locmaf.EncodeCanonical` and `mlmsub`
+  uses `locmaf.Decode` + `locmaf.ReconstructCanonical`.
+- Bumped `github.com/Eyevinn/mp4ff` to the master pin (CMAF-conformant CENC
+  `senc` alignment).
+
+### Removed
+
+- The in-tree `internal/locmafv02` codec and the `cmd/locmaf` test-asset /
+  round-trip tool. Both now live in the
+  [`github.com/Eyevinn/locmaf`](https://github.com/Eyevinn/locmaf) module; LOCMAF
+  v0.2 remains reachable at the `locmaf-v0.2` tag. Moving the codec out
+  significantly lowers this repository's own test coverage, since the codec's
+  extensive unit and golden-vector tests now live with it.
 
 ## [0.11.1] - 2026-06-08
 

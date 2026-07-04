@@ -95,49 +95,32 @@ video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
 
 ### LOCMAF (`locmaf/clear`, `locmaf/drm-{scheme}`, `locmaf/eccp-{scheme}`)
 
-LOCMAF (Low Overhead CMAF) is a LOC-inspired variant of CMAF in which only
-the non-derivable `moof`/`moov` fields are sent, encoded as MoQT key-value
-pairs over QUIC varints. The packaging value in the catalog is `locmaf`, and
-the catalog `initData` field is the LOCMAF-encoded `moov`. Object payloads
-each start with either:
-
-- a **LOCMAF full moof** — carries every required moof field; always used
-  for the first object of a group, and
-- a **LOCMAF delta moof** — carries only the fields that changed since the
-  previous moof; used for all subsequent objects in a group.
-
-Subscribers reconstruct a valid CMAF init segment and CMAF media fragments
-by decoding the LOCMAF fields and merging them into empty CMAF templates.
-Because all fields needed for playback (including encryption metadata) are
+LOCMAF (Low Overhead CMAF) is a compact CMAF packaging in which only the
+non-derivable `moof` fields are sent on the wire; the receiver reconstructs
+standard CMAF media fragments so the normal CMAF playback path is reused
+unchanged. The packaging value in the catalog is `locmaf`, and the LOCMAF
+track shares its init data (the raw CMAF init segment) with the matching
+`cmaf` track through one common `initDataList` entry (`initRef`). Because all
+fields needed for playback — including per-sample encryption metadata — are
 carried, LOCMAF supports both commercial DRM (CPIX) and ClearKey/ECCP, with
 the same namespace layout as CMSF: `locmaf/clear`, `locmaf/drm-{scheme}`,
 and `locmaf/eccp-{scheme}`.
 
-LOCMAF deltas store signed differences and the composition time offset is
-itself signed, so signed values use zigzag-encoded varints (`0 → 0`,
-`-1 → 1`, `1 → 2`, `-2 → 3`, …) on top of the QUIC varint wire format.
+The codec is **not** implemented in this repository. Encode/decode comes from
+the reusable Go module
+[github.com/Eyevinn/locmaf](https://github.com/Eyevinn/locmaf), and the catalog
+advertises `locmafVersion` from `locmaf.Version` (currently **0.3**). `mlmpub`
+encodes each chunk with `locmaf.EncodeCanonical`; `mlmsub` expands received
+Objects back to CMAF with `locmaf.Decode` + `locmaf.ReconstructCanonical` and
+rejects tracks whose `locmafVersion` it does not implement. One packaging
+version is supported at a time — v0.2 remains reachable at the `locmaf-v0.2`
+tag.
 
-Every track with `packaging == "locmaf"` advertises a `locmafVersion`
-string in the CMSF catalog (`"0.1"` or `"0.2"`). Receivers should compare
-against their highest supported version and fall back to a non-LOCMAF
-packaging when the encoder is ahead.
-
-The normative LOCMAF **v0.2** wire format is specified by the IETF draft
+The normative wire format is specified by the IETF draft
 [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/);
-see [`docs/locmaf_v0_2.md`](docs/locmaf_v0_2.md) for moqlivemock's
-implementation status.
-
-See [`docs/LOCMAF.md`](docs/LOCMAF.md) for the **v0.1** design rationale —
-how LOCMAF maps to LL-HLS Parts / DASH Chunked CMAF, where its compression
-wins come from in the sample-level low-latency regime, the
-`locmafVersion` signalling convention, and how the wire format is
-positioned to add future object types like `prft` without breaking
-older readers.
-
-See [Generating LOCMAF test assets](#generating-locmaf-test-assets) below
-for a small standalone tool that emits a CMAF init segment, the matching
-LOCMAF init segment, and a few LOCMAF objects so other LOCMAF
-implementations can be tested against a reference asset.
+see [`docs/LOCMAF.md`](docs/LOCMAF.md) for how moqlivemock uses the module. The
+reference test-asset generator (golden-vector corpus) and the round-trip
+fidelity/overhead tool live in the `locmaf` module's CLI, alongside the codec.
 
 ## Session setup
 
@@ -386,49 +369,13 @@ go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
 go run . -namespace locmaf/clear -videoname _avc -audioname _aac -muxout - | ffplay -
 ```
 
-### Generating LOCMAF test assets
+### LOCMAF test assets and round-trip tooling
 
-To help other LOCMAF implementations validate against a reference, the
-`cmd/locmaf` tool emits a fixed set of files for a single fragmented MP4
-input: a plain CMAF init segment, the matching LOCMAF-encoded init, one
-LOCMAF full moof object (header + payload), and one LOCMAF delta moof
-object (header + payload). The asset is cbcs-encrypted so the encrypted
-LOCMAF fields are exercised.
-
-```sh
-cd cmd/locmaf
-go run . testgen
-```
-
-Use `-input` to point at a different fragmented MP4 and `-out` to choose
-the output directory.
-
-### Round-tripping fMP4 through LOCMAF
-
-The `roundtrip` subcommand encodes a fragmented MP4 through the LOCMAF
-encoder, decodes it back, verifies fidelity (mdat byte-equal plus matching
-sample size / duration / flags / composition-time offset / decode time per
-ISO 14496-12 §8.8.8.2 effective-flag semantics), and prints wire-overhead
-statistics.
-
-```sh
-cd cmd/locmaf
-go run . roundtrip                                          # default video_400kbps_avc.mp4
-go run . roundtrip -input ../../assets/test10s/video_900kbps_hevc.mp4
-go run . roundtrip -verbose                                  # per-fragment table
-```
-
-Sample output:
-
-```
-Init segment (ftyp+moov vs LOCMAF init object):
-  cmaf   =    828 B
-  locmaf =     75 B  (9.1% of cmaf)
-
-Moofs (250 fragments: 1 full + 249 delta):
-  cmaf   total =   26040 B  (avg 104.2 B/moof)
-  locmaf total =     592 B  (avg   2.4 B/moof, 2.3% of cmaf)
-```
+The reference test-asset generator (golden-vector corpus) and the round-trip
+fidelity/overhead tool moved out of this repository together with the codec.
+They now live in the `locmaf` CLI in the
+[github.com/Eyevinn/locmaf](https://github.com/Eyevinn/locmaf) module; see that
+repository for usage.
 
 ## QUIC / WebTransport Configuration
 
