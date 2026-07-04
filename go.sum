@@ -1,7 +1,7 @@
 github.com/Dash-Industry-Forum/livesim2 v1.9.0 h1:7NTv3f+9gszh9mX7p6ltaTJmLlR400S+R4pjWrzpLKQ=
 github.com/Dash-Industry-Forum/livesim2 v1.9.0/go.mod h1:AtqFe2WBX6TSoHlpHw7Hh/IWttqDRnoN+VnysQyssiA=
-github.com/Eyevinn/moqtransport v0.8.2 h1:L1AlJuWmZZBFna/k4CiLsJnyTheLlaIYNixXr9V+fcs=
-github.com/Eyevinn/moqtransport v0.8.2/go.mod h1:5ewYH8aUA0sCYVLb34zaIfqSaPWZOxu5lTUsiWO3kfk=
+github.com/Eyevinn/moqtransport v0.9.0 h1:LOPeLozXu6NJ9cUZ42uOlUbDnYhTi7l9HofDZ9kMxJM=
+github.com/Eyevinn/moqtransport v0.9.0/go.mod h1:jrJLq5ZgFJfUBd6YGUq4B31DF57AbL+oyONIvrS24Xc=
 github.com/Eyevinn/mp4ff v0.52.0 h1:QJUi2PtROeZGkcumbX7f4/91Jz6dlhjeKzpwSdCoYG8=
 github.com/Eyevinn/mp4ff v0.52.0/go.mod h1:LKZAf3K+OtWYdzlvte8uafD/e3g2aK2WcsgVohvjccU=
 github.com/Eyevinn/webtransport-go v0.0.0-20260616094103-94b8f28c0917 h1:l4NI/aiwXLOzDsFaaSEP2HU3b6ZvB9ai3Yd8pkZjueg=
