@@ -13,7 +13,7 @@ require (
 )
 
 require (
-	github.com/Eyevinn/locmaf v0.1.0
+	github.com/Eyevinn/locmaf v0.1.1
 	github.com/beevik/etree v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect

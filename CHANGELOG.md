@@ -30,7 +30,8 @@ Catalog retrieval now uses a relative joining FETCH, aligned to the live edge.
 - **LOCMAF** packaging advanced to **v0.3** and moved out of this repository:
   encode/decode now comes from the reusable
   [`github.com/Eyevinn/locmaf`](https://github.com/Eyevinn/locmaf) module
-  (v0.1.0) — element types with `genBox`/`rawBoxes`, MOQT vi64 varints, full
+  (v0.1.1, tracking the published `draft-einarsson-moq-locmaf-01`) — element
+  types with `genBox`/`rawBoxes`, MOQT vi64 varints, full
   32-bit sample flags, derived-only delta BMDT, and canonical
   `senc`/`saiz`/`saio` reconstruction. The catalog advertises `locmafVersion`
   from `locmaf.Version`; `mlmpub` uses `locmaf.EncodeCanonical` and `mlmsub`
