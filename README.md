@@ -38,9 +38,9 @@ All streams are aligned to UTC wall-clock time at two levels:
    displacement is applied without accumulated drift over time.
 
 In addition to CMSF, mlmpub also announces an [LOC][LOC] (Low Overhead
-Container) namespace, a [moq-mi][moq-mi] (MoQ Media Interop) namespace, and
-one or more LOCMAF (Low Overhead CMAF) namespaces. See the
-[Namespaces](#namespaces) section below for details.
+Container) namespace and a [moq-mi][moq-mi] (MoQ Media Interop) namespace. Each
+CMSF catalog additionally offers a LOCMAF (Low Overhead CMAF) variant of every
+track. See the [Namespaces](#namespaces) section below for details.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer,
 supporting both draft-14 and draft-16 of MOQT. Draft-16 uses ALPN-based version
@@ -61,9 +61,11 @@ convention.
 | `cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
 | `msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
 | `moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
-| `locmaf/clear` | LOCMAF | Always | *(none)* | Unencrypted tracks |
-| `locmaf/drm-{scheme}` | LOCMAF | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
-| `locmaf/eccp-{scheme}` | LOCMAF | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
+
+There is **no separate `locmaf/*` namespace**. The `cmsf/*` catalogs are
+unified: each rendition is listed twice — as a CMAF track (`packaging: "cmaf"`)
+and as a LOCMAF track `<name>_locmaf` (`packaging: "locmaf"`) sharing one
+init-data entry. See [LOCMAF](#locmaf-within-the-cmsf-namespaces) below.
 
 Both DRM and ECCP can be active simultaneously — they use independent encryption keys
 and produce separate sets of protected tracks.
@@ -93,51 +95,35 @@ the codec bitstream as defined by moqmi (AVCC length-prefixed NALUs for
 video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
 — this namespace is intended for interop testing, not direct ffplay playback.
 
-### LOCMAF (`locmaf/clear`, `locmaf/drm-{scheme}`, `locmaf/eccp-{scheme}`)
+### LOCMAF (within the `cmsf/*` namespaces)
 
-LOCMAF (Low Overhead CMAF) is a LOC-inspired variant of CMAF in which only
-the non-derivable `moof`/`moov` fields are sent, encoded as MoQT key-value
-pairs over QUIC varints. The packaging value in the catalog is `locmaf`, and
-the catalog `initData` field is the LOCMAF-encoded `moov`. Object payloads
-each start with either:
+LOCMAF (Low Overhead CMAF) is a compact CMAF packaging in which only the
+non-derivable `moof` fields are sent on the wire; the receiver reconstructs
+standard CMAF media fragments so the normal CMAF playback path is reused
+unchanged. LOCMAF is **not** a separate namespace: within each `cmsf/*` catalog
+every rendition is offered both as a CMAF track `<name>` (`packaging: "cmaf"`)
+and as a LOCMAF track `<name>_locmaf` (`packaging: "locmaf"`), listed as
+alternates in the same `altGroup`. The two variants share one init-data entry
+(the raw CMAF init segment) referenced by `initRef`. Because all fields needed
+for playback — including per-sample encryption metadata — are carried, the
+LOCMAF variant is offered for the encrypted `cmsf/drm-{scheme}` and
+`cmsf/eccp-{scheme}` catalogs too (`<name>_drm_locmaf` / `<name>_eccp_locmaf`).
 
-- a **LOCMAF full moof** — carries every required moof field; always used
-  for the first object of a group, and
-- a **LOCMAF delta moof** — carries only the fields that changed since the
-  previous moof; used for all subsequent objects in a group.
+The codec is **not** implemented in this repository. Encode/decode comes from
+the reusable Go module
+[github.com/Eyevinn/locmaf](https://github.com/Eyevinn/locmaf), and the catalog
+advertises `locmafVersion` from `locmaf.Version` (currently **0.3**). `mlmpub`
+encodes each chunk with `locmaf.EncodeCanonical`; `mlmsub` expands received
+Objects back to CMAF with `locmaf.Decode` + `locmaf.ReconstructCanonical` and
+rejects tracks whose `locmafVersion` it does not implement. One packaging
+version is supported at a time — v0.2 remains reachable at the `locmaf-v0.2`
+tag.
 
-Subscribers reconstruct a valid CMAF init segment and CMAF media fragments
-by decoding the LOCMAF fields and merging them into empty CMAF templates.
-Because all fields needed for playback (including encryption metadata) are
-carried, LOCMAF supports both commercial DRM (CPIX) and ClearKey/ECCP, with
-the same namespace layout as CMSF: `locmaf/clear`, `locmaf/drm-{scheme}`,
-and `locmaf/eccp-{scheme}`.
-
-LOCMAF deltas store signed differences and the composition time offset is
-itself signed, so signed values use zigzag-encoded varints (`0 → 0`,
-`-1 → 1`, `1 → 2`, `-2 → 3`, …) on top of the QUIC varint wire format.
-
-Every track with `packaging == "locmaf"` advertises a `locmafVersion`
-string in the CMSF catalog (`"0.1"` or `"0.2"`). Receivers should compare
-against their highest supported version and fall back to a non-LOCMAF
-packaging when the encoder is ahead.
-
-The normative LOCMAF **v0.2** wire format is specified by the IETF draft
+The normative wire format is specified by the IETF draft
 [draft-einarsson-moq-locmaf](https://datatracker.ietf.org/doc/draft-einarsson-moq-locmaf/);
-see [`docs/locmaf_v0_2.md`](docs/locmaf_v0_2.md) for moqlivemock's
-implementation status.
-
-See [`docs/LOCMAF.md`](docs/LOCMAF.md) for the **v0.1** design rationale —
-how LOCMAF maps to LL-HLS Parts / DASH Chunked CMAF, where its compression
-wins come from in the sample-level low-latency regime, the
-`locmafVersion` signalling convention, and how the wire format is
-positioned to add future object types like `prft` without breaking
-older readers.
-
-See [Generating LOCMAF test assets](#generating-locmaf-test-assets) below
-for a small standalone tool that emits a CMAF init segment, the matching
-LOCMAF init segment, and a few LOCMAF objects so other LOCMAF
-implementations can be tested against a reference asset.
+see [`docs/LOCMAF.md`](docs/LOCMAF.md) for how moqlivemock uses the module. The
+reference test-asset generator (golden-vector corpus) and the round-trip
+fidelity/overhead tool live in the `locmaf` module's CLI, alongside the codec.
 
 ## Session setup
 
@@ -334,7 +320,7 @@ go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccdde
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces namespaces `cmsf/eccp-cbcs` and `locmaf/eccp-cbcs` with tracks like `video_400kbps_avc_eccp`.
+This announces the `cmsf/eccp-cbcs` namespace with tracks like `video_400kbps_avc_eccp` (each also offered as a `_locmaf` variant).
 
 #### Commercial DRM (CPIX)
 
@@ -345,7 +331,7 @@ Supported systems: Widevine, PlayReady, FairPlay.
 go run . -drmpath ../../assets/testdrm/drm_config_test.json
 ```
 
-This announces namespaces `cmsf/drm-{scheme}` and `locmaf/drm-{scheme}` with tracks like `video_400kbps_avc_drm`.
+This announces the `cmsf/drm-{scheme}` namespace with tracks like `video_400kbps_avc_drm` (each also offered as a `_locmaf` variant).
 
 #### Both simultaneously
 
@@ -357,7 +343,7 @@ go run . -drmpath ../../assets/drm/drm_config.json \
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces three namespaces per DRM-capable packaging. For CMSF these are: `cmsf/clear`, `cmsf/drm-cbcs`, and `cmsf/eccp-cbcs`; for LOCMAF: `locmaf/clear`, `locmaf/drm-cbcs`, and `locmaf/eccp-cbcs`.
+This announces three CMSF namespaces: `cmsf/clear`, `cmsf/drm-cbcs`, and `cmsf/eccp-cbcs`. Each catalog carries both the CMAF and the LOCMAF (`_locmaf`) track variants.
 
 #### Subscriber examples
 
@@ -382,53 +368,17 @@ ffplay audio.aac
 # moq-mi packaging — raw moqmi payloads written through unchanged
 go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
 
-# LOCMAF packaging
-go run . -namespace locmaf/clear -videoname _avc -audioname _aac -muxout - | ffplay -
+# LOCMAF variant (inside cmsf/clear) — select the _locmaf tracks
+go run . -namespace cmsf/clear -videoname _avc_locmaf -audioname _aac_locmaf -muxout - | ffplay -
 ```
 
-### Generating LOCMAF test assets
+### LOCMAF test assets and round-trip tooling
 
-To help other LOCMAF implementations validate against a reference, the
-`cmd/locmaf` tool emits a fixed set of files for a single fragmented MP4
-input: a plain CMAF init segment, the matching LOCMAF-encoded init, one
-LOCMAF full moof object (header + payload), and one LOCMAF delta moof
-object (header + payload). The asset is cbcs-encrypted so the encrypted
-LOCMAF fields are exercised.
-
-```sh
-cd cmd/locmaf
-go run . testgen
-```
-
-Use `-input` to point at a different fragmented MP4 and `-out` to choose
-the output directory.
-
-### Round-tripping fMP4 through LOCMAF
-
-The `roundtrip` subcommand encodes a fragmented MP4 through the LOCMAF
-encoder, decodes it back, verifies fidelity (mdat byte-equal plus matching
-sample size / duration / flags / composition-time offset / decode time per
-ISO 14496-12 §8.8.8.2 effective-flag semantics), and prints wire-overhead
-statistics.
-
-```sh
-cd cmd/locmaf
-go run . roundtrip                                          # default video_400kbps_avc.mp4
-go run . roundtrip -input ../../assets/test10s/video_900kbps_hevc.mp4
-go run . roundtrip -verbose                                  # per-fragment table
-```
-
-Sample output:
-
-```
-Init segment (ftyp+moov vs LOCMAF init object):
-  cmaf   =    828 B
-  locmaf =     75 B  (9.1% of cmaf)
-
-Moofs (250 fragments: 1 full + 249 delta):
-  cmaf   total =   26040 B  (avg 104.2 B/moof)
-  locmaf total =     592 B  (avg   2.4 B/moof, 2.3% of cmaf)
-```
+The reference test-asset generator (golden-vector corpus) and the round-trip
+fidelity/overhead tool moved out of this repository together with the codec.
+They now live in the `locmaf` CLI in the
+[github.com/Eyevinn/locmaf](https://github.com/Eyevinn/locmaf) module; see that
+repository for usage.
 
 ## QUIC / WebTransport Configuration
 

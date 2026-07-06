@@ -146,7 +146,7 @@ func TestLoadAssetWithBatch(t *testing.T) {
 				var expectedBitrate int
 				switch track.Packaging {
 				case "locmaf":
-					expectedBitrate, err = calcLocmafV02Bitrate(contentTrack)
+					expectedBitrate, err = calcLocmafBitrate(contentTrack)
 				default:
 					expectedBitrate, err = calcCmafBitrate(contentTrack)
 				}
