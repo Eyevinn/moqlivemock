@@ -3,7 +3,6 @@
 ![Test](https://github.com/Eyevinn/moqlivemock/workflows/Go/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/Eyevinn/moqlivemock/badge.svg?branch=main)](https://coveralls.io/github/Eyevinn/moqlivemock?branch=main)
 [![GoDoc](https://godoc.org/github.com/Eyevinn/moqlivemock?status.svg)](http://godoc.org/github.com/Eyevinn/moqlivemock)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Eyevinn/moqlivemock)](https://goreportcard.com/report/github.com/Eyevinn/moqlivemock)
 [![license](https://img.shields.io/github/license/Eyevinn/moqlivemock.svg)](https://github.com/Eyevinn/moqlivemock/blob/master/LICENSE)
 
 moqlivemock is a simple media test service for [MOQ Transport][moqt]
