@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Eyevinn/mp4ff/aac"
+	"github.com/Eyevinn/mp4ff/av1"
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/hevc"
@@ -345,11 +346,13 @@ func (d *HEVCData) Clone() (CodecSpecificData, error) {
 // =======================
 
 type AV1Data struct {
-	inInit  *mp4.InitSegment
-	outInit *mp4.InitSegment
-	codec   string
-	width   uint32
-	height  uint32
+	inInit         *mp4.InitSegment
+	outInit        *mp4.InitSegment
+	codec          string
+	width          uint32
+	height         uint32
+	configOBUs     []byte
+	locNeedsConfig bool
 }
 
 // initAV1Data initializes AV1Data from an init segment and samples.
@@ -358,7 +361,7 @@ type AV1Data struct {
 // unchanged, and the decoder configuration (the sequence header OBU) lives in
 // the av1C box. The coded picture size is read from the sequence header since
 // it is not derivable from the av1C fixed fields alone.
-func initAV1Data(init *mp4.InitSegment, _ []mp4.FullSample) (*AV1Data, error) {
+func initAV1Data(init *mp4.InitSegment, samples []mp4.FullSample) (*AV1Data, error) {
 	ad := &AV1Data{inInit: init}
 
 	trak := init.Moov.Trak
@@ -375,6 +378,13 @@ func initAV1Data(init *mp4.InitSegment, _ []mp4.FullSample) (*AV1Data, error) {
 	ad.width = sh.Width()
 	ad.height = sh.Height()
 	ad.codec = sh.CodecString("av01")
+	ad.configOBUs = append([]byte(nil), av1C.ConfigOBUs...)
+
+	// Decide whether LOC needs the sequence header prepended in-band. LOC has
+	// no init segment, so every keyframe must be self-contained. SVT-AV1/ffmpeg
+	// repeat the sequence header OBU in each key frame's temporal unit, in which
+	// case no prepend is needed; muxers that keep it only in av1C need one.
+	ad.locNeedsConfig = !keyframeHasAV1SeqHeader(samples)
 
 	// Create a CMAF-compliant init segment (av01) from the av1C config box.
 	ad.outInit = mp4.CreateEmptyInit()
@@ -388,6 +398,21 @@ func initAV1Data(init *mp4.InitSegment, _ []mp4.FullSample) (*AV1Data, error) {
 	return ad, nil
 }
 
+// keyframeHasAV1SeqHeader reports whether the first sync sample begins with an
+// AV1 sequence-header OBU (i.e. the coded keyframes already carry the decoder
+// config in-band). Returns false if there is no sync sample or it cannot be
+// parsed, so the caller conservatively prepends the config for LOC.
+func keyframeHasAV1SeqHeader(samples []mp4.FullSample) bool {
+	for i := range samples {
+		if !samples[i].IsSync() {
+			continue
+		}
+		hdr, err := av1.ParseOBUHeader(samples[i].Data)
+		return err == nil && hdr.Type == av1.OBUSequenceHeader
+	}
+	return false
+}
+
 // GenCMAFInitData returns the CMAF init segment.
 func (d *AV1Data) GenCMAFInitData() ([]byte, error) {
 	sw := bits.NewFixedSliceWriter(int(d.outInit.Size()))
@@ -395,6 +420,18 @@ func (d *AV1Data) GenCMAFInitData() ([]byte, error) {
 		return nil, err
 	}
 	return sw.Bytes(), nil
+}
+
+// GenLOCVideoConfig returns the AV1 sequence-header OBU(s) to prepend to each
+// keyframe temporal unit in LOC payloads, or nil when the coded samples already
+// embed the sequence header (as SVT-AV1/ffmpeg emit). AV1 OBUs are self-
+// delimiting (obu_has_size_field=1), so the config bytes can be concatenated
+// directly in front of the frame OBUs — no length prefixing (unlike AVC/HEVC).
+func (d *AV1Data) GenLOCVideoConfig() []byte {
+	if !d.locNeedsConfig {
+		return nil
+	}
+	return d.configOBUs
 }
 
 // Codec returns the CMAF codec string.
