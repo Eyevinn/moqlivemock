@@ -341,6 +341,84 @@ func (d *HEVCData) Clone() (CodecSpecificData, error) {
 
 //
 // =======================
+// AV1
+// =======================
+
+type AV1Data struct {
+	inInit  *mp4.InitSegment
+	outInit *mp4.InitSegment
+	codec   string
+	width   uint32
+	height  uint32
+}
+
+// initAV1Data initializes AV1Data from an init segment and samples.
+// Unlike AVC/HEVC there are no out-of-band parameter-set NALUs to strip from
+// the samples: AV1 access units are OBU temporal units that are passed through
+// unchanged, and the decoder configuration (the sequence header OBU) lives in
+// the av1C box. The coded picture size is read from the sequence header since
+// it is not derivable from the av1C fixed fields alone.
+func initAV1Data(init *mp4.InitSegment, _ []mp4.FullSample) (*AV1Data, error) {
+	ad := &AV1Data{inInit: init}
+
+	trak := init.Moov.Trak
+	av01 := trak.Mdia.Minf.Stbl.Stsd.Av01
+	if av01 == nil || av01.Av1C == nil {
+		return nil, fmt.Errorf("no av1C box found")
+	}
+	av1C := av01.Av1C
+
+	sh, err := av1C.SequenceHeader()
+	if err != nil {
+		return nil, fmt.Errorf("could not parse AV1 sequence header: %w", err)
+	}
+	ad.width = sh.Width()
+	ad.height = sh.Height()
+	ad.codec = sh.CodecString("av01")
+
+	// Create a CMAF-compliant init segment (av01) from the av1C config box.
+	ad.outInit = mp4.CreateEmptyInit()
+	timeScale := trak.Mdia.Mdhd.Timescale
+	ad.outInit.AddEmptyTrack(timeScale, "video", "und")
+	if err := ad.outInit.Moov.Trak.SetAV1Descriptor("av01", av1C,
+		uint16(ad.width), uint16(ad.height)); err != nil {
+		return nil, fmt.Errorf("could not set AV1 descriptor: %w", err)
+	}
+
+	return ad, nil
+}
+
+// GenCMAFInitData returns the CMAF init segment.
+func (d *AV1Data) GenCMAFInitData() ([]byte, error) {
+	sw := bits.NewFixedSliceWriter(int(d.outInit.Size()))
+	if err := d.outInit.EncodeSW(sw); err != nil {
+		return nil, err
+	}
+	return sw.Bytes(), nil
+}
+
+// Codec returns the CMAF codec string.
+func (d *AV1Data) Codec() string {
+	return d.codec
+}
+
+// GetInit returns the output init segment.
+func (d *AV1Data) GetInit() *mp4.InitSegment {
+	return d.outInit
+}
+
+func (d *AV1Data) Clone() (CodecSpecificData, error) {
+	clonedInit, err := cloneInitSegment(d.outInit)
+	if err != nil {
+		return nil, err
+	}
+	clone := *d
+	clone.outInit = clonedInit
+	return &clone, nil
+}
+
+//
+// =======================
 // AAC
 // =======================
 

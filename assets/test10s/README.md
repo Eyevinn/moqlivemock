@@ -59,12 +59,25 @@ All video tracks share these properties:
 
 Same properties as AVC tracks but with HEVC codec.
 
+### Video Tracks (AV1)
+
+- `video_400kbps_av1.mp4`: Low bitrate AV1 video track (400 kbps)
+- `video_600kbps_av1.mp4`: Medium bitrate AV1 video track (600 kbps)
+- `video_900kbps_av1.mp4`: High bitrate AV1 video track (900 kbps)
+
+Same properties as AVC tracks but with AV1 codec (`av01` sample entry).
+Encoded with SVT-AV1 in low-delay CBR mode so the stream is I/P only
+(no frame reordering), matching the AVC/HEVC structure. Because CBR includes
+per-frame container overhead, the average file bitrate runs slightly above the
+target.
+
 ## Technical Details
 
 All files are fragmented MP4 files with each frame in an individual fragment, making them
 suitable for streaming applications that need to access individual frames. The video files
 include overlays showing:
 
+- Codec
 - Current bitrate
 - Resolution
 - Timestamp

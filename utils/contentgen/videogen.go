@@ -29,7 +29,7 @@ func getFFmpegPath() string {
 
 func main() {
 	// Parse command line flags
-	codecList := flag.String("codecs", "h264", "Comma-separated list of video codecs to generate (h264,h265)")
+	codecList := flag.String("codecs", "h264", "Comma-separated list of video codecs to generate (h264,h265,av1)")
 	fragmentDuration := flag.Int("fragment-duration", 0, "Fragment duration in milliseconds (0 = one sample/fragment)")
 	flag.Parse()
 
@@ -74,6 +74,16 @@ func main() {
 			"-pix_fmt", "yuv420p",
 			"-tag:v", "hvc1"},
 		},
+		{"av1", []string{
+			"-c:v", "libsvtav1",
+			"-preset", "6",
+			// Low-delay (pred-struct=1) gives I/P frames only (no reordering,
+			// no composition offsets), matching the AVC/HEVC structure. SVT-AV1
+			// requires CBR (rc=2) for low-delay; scd=0 disables scene-cut so the
+			// keyframe cadence stays fixed at one IDR per second.
+			"-svtav1-params", fmt.Sprintf("keyint=%d:scd=0:pred-struct=1:rc=2", frameRate),
+			"-pix_fmt", "yuv420p"},
+		},
 	}
 
 	// Generate video files based on codec selection
@@ -101,13 +111,20 @@ func ensureRequiredFiles() {
 }
 
 func generateVideo(codec string, options []string, bitrateKbps, fragmentDurationMs int) {
-	// Map internal codec names to output file codec suffixes
+	// Map internal codec names to output file codec suffixes and the
+	// human-readable label burned into the first text line of the video.
 	codecSuffix := codec
+	codecLabel := strings.ToUpper(codec)
 	switch codec {
 	case "h264":
 		codecSuffix = "avc"
+		codecLabel = "AVC"
 	case "h265":
 		codecSuffix = "hevc"
+		codecLabel = "HEVC"
+	case "av1":
+		codecSuffix = "av1"
+		codecLabel = "AV1"
 	}
 	outputFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_%s.mp4", bitrateKbps, codecSuffix))
 	logFile := filepath.Join(logDir, fmt.Sprintf("video_%dkbps_%s.log", bitrateKbps, codecSuffix))
@@ -144,12 +161,13 @@ func generateVideo(codec string, options []string, bitrateKbps, fragmentDuration
 	videoFilter := fmt.Sprintf(
 		"[1:v]%s,format=rgba,rotate='%s':c=none:ow=rotw(iw):oh=roth(ih)[logo];"+
 			"[0:v][logo]overlay=x=20:y=main_h-overlay_h-20:shortest=1[bg];"+
-			"[bg]drawtext=fontfile=%s:text='Bitrate\\: %d kbps':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=20,"+
-			"drawtext=fontfile=%s:text='Resolution\\: %d x %d':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=70,"+
-			"drawtext=fontfile=%s:text='Time\\: %%{pts\\:hms}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=120,"+
-			"drawtext=fontfile=%s:text='Frame\\: %%{frame_num}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=170",
+			"[bg]drawtext=fontfile=%s:text='Codec\\: %s':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=20,"+
+			"drawtext=fontfile=%s:text='Bitrate\\: %d kbps':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=70,"+
+			"drawtext=fontfile=%s:text='Resolution\\: %d x %d':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=120,"+
+			"drawtext=fontfile=%s:text='Time\\: %%{pts\\:hms}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=170,"+
+			"drawtext=fontfile=%s:text='Frame\\: %%{frame_num}':fontcolor=%s:fontsize=36:box=1:boxcolor=black@0.5:boxborderw=5:x=20:y=220",
 		logoScale, rotationExpr,
-		fontFile, bitrateKbps, textColor, fontFile, videoWidth, videoHeight, textColor, fontFile, textColor, fontFile, textColor,
+		fontFile, codecLabel, textColor, fontFile, bitrateKbps, textColor, fontFile, videoWidth, videoHeight, textColor, fontFile, textColor, fontFile, textColor,
 	)
 
 	// ffmpeg command line args
@@ -223,6 +241,10 @@ func printActualBitrates(codecMap map[string]bool) {
 		}
 		if codecMap["h265"] {
 			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_hevc.mp4", bitrate))
+			printFileBitrate(videoFile, duration)
+		}
+		if codecMap["av1"] {
+			videoFile := filepath.Join(outputDir, fmt.Sprintf("video_%dkbps_av1.mp4", bitrate))
 			printFileBitrate(videoFile, duration)
 		}
 	}

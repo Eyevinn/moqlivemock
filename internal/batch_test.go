@@ -132,8 +132,8 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			require.NotNil(t, catalog)
 
 			// Verify that tracks exist in the catalog. Each rendition is
-			// published in both CMAF and LOCMAF packaging (12 -> 24).
-			require.Equal(t, 24, len(catalog.Tracks))
+			// published in both CMAF and LOCMAF packaging (15 -> 30).
+			require.Equal(t, 30, len(catalog.Tracks))
 
 			// Check that the bitrates in the catalog reflect the batch sizes.
 			// LOCMAF variant tracks are named <name>_locmaf and use the v0.2

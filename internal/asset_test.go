@@ -35,7 +35,7 @@ func TestPrepareTrack(t *testing.T) {
 			sampleDur:     512,
 			nrSamples:     250,
 			gopLength:     25,
-			sampleBitrate: 373200,
+			sampleBitrate: 375758,
 		},
 		{
 			desc:          "audio_128kbps_aac",
@@ -173,7 +173,7 @@ func TestLoadAsset(t *testing.T) {
 	}
 	// Expect 6 audio and 6 video tracks
 	require.Equal(t, 6, trackCounts["audio"], "should have 6 audio tracks")
-	require.Equal(t, 6, trackCounts["video"], "should have 6 video tracks")
+	require.Equal(t, 9, trackCounts["video"], "should have 9 video tracks")
 
 	// Check that track names match the files
 	var expectedNames = map[string]bool{
@@ -189,6 +189,9 @@ func TestLoadAsset(t *testing.T) {
 		"video_400kbps_hevc":           true,
 		"video_600kbps_hevc":           true,
 		"video_900kbps_hevc":           true,
+		"video_400kbps_av1":            true,
+		"video_600kbps_av1":            true,
+		"video_900kbps_av1":            true,
 	}
 	for _, group := range asset.Groups {
 		for _, track := range group.Tracks {
@@ -247,8 +250,8 @@ func TestLoadAsset(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cat)
 	// Each rendition is published in both CMAF and LOCMAF packaging, so the
-	// unified catalog has twice as many media tracks as before (12 -> 24).
-	require.Equal(t, 24, len(cat.Tracks))
+	// unified catalog has twice as many media tracks as before (15 -> 30).
+	require.Equal(t, 30, len(cat.Tracks))
 	cmafCount, locmafCount := 0, 0
 	for _, track := range cat.Tracks {
 		require.Equal(t, "cmsf/clear", track.Namespace)
@@ -354,20 +357,27 @@ func TestGen20sCMAFStreams(t *testing.T) {
 	require.NotNil(t, asset)
 
 	tmpDir := t.TempDir()
+	// Look up tracks by name (not group/index): the video group is sorted by
+	// codec string, so positional indices are not stable across codecs.
 	cases := []struct {
-		name     string
-		groupIdx int
-		trackNr  int
+		name string
 	}{
-		{"video_400kbps_avc", 0, 0},
-		{"video_600kbps_avc", 0, 1},
-		{"video_900kbps_avc", 0, 2},
-		{"audio_128kbps", 1, 0},
+		{"video_400kbps_av1"},
+		{"video_600kbps_av1"},
+		{"video_900kbps_av1"},
+		{"video_400kbps_avc"},
+		{"video_600kbps_avc"},
+		{"video_900kbps_avc"},
+		{"video_400kbps_hevc"},
+		{"video_600kbps_hevc"},
+		{"video_900kbps_hevc"},
+		{"audio_monotonic_128kbps_aac"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tr := asset.Groups[tc.groupIdx].Tracks[tc.trackNr]
+			tr := asset.GetTrackByName(tc.name)
+			require.NotNil(t, tr, "track %s should exist", tc.name)
 			outFile := filepath.Join(tmpDir, tc.name+".mp4")
 			ofh, err := os.Create(outFile)
 			require.NoError(t, err)
@@ -483,38 +493,34 @@ func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo, suffix string)
 	require.NotNil(t, asset)
 
 	tmpDir := t.TempDir()
+	// Look up tracks by name: the video group is sorted by codec string, so
+	// positional indices are not stable across codecs. Cover every video
+	// codec (AV1, AVC, HEVC) plus AAC and Opus audio.
 	cases := []struct {
-		name     string
-		groupIdx int
-		trackNr  int
+		name string
 	}{
-		{"video_400kbps_avc", 0, 0},
-		{"video_400kbps_hevc", 0, 1},
-		{"audio_128kbps", 1, 0},
-		{"audio_monotonic_128kbps_opus", 1, 1},
+		{"video_400kbps_av1"},
+		{"video_400kbps_avc"},
+		{"video_400kbps_hevc"},
+		{"audio_monotonic_128kbps_aac"},
+		{"audio_monotonic_128kbps_opus"},
 	}
 
 	encryptionStatuses := []string{"original", "encrypted"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var files []*mp4.File
-			originalTrack := asset.Groups[tc.groupIdx].Tracks[tc.trackNr]
+			originalTrack := asset.GetTrackByName(tc.name)
+			require.NotNil(t, originalTrack, "track %s should exist", tc.name)
 			for _, encryptionStatus := range encryptionStatuses {
-				var tr ContentTrack
+				var tr *ContentTrack
 				switch encryptionStatus {
 				case "original":
 					tr = originalTrack
 				case "encrypted":
 					protectedName := originalTrack.Name + suffix
-					found := false
-					for _, cand := range drmAsset.Groups[tc.groupIdx].Tracks {
-						if cand.Name == protectedName {
-							tr = cand
-							found = true
-							break
-						}
-					}
-					require.True(t, found, "could not find protected track %s", protectedName)
+					tr = drmAsset.GetTrackByName(protectedName)
+					require.NotNil(t, tr, "could not find protected track %s", protectedName)
 				}
 				outFile := filepath.Join(tmpDir, tc.name+encryptionStatus+".mp4")
 				ofh, err := os.Create(outFile)
