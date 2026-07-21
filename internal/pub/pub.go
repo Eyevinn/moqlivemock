@@ -395,6 +395,10 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 		videoConfig = sd.GenLOCVideoConfig()
 	case *internal.HEVCData:
 		videoConfig = sd.GenLOCVideoConfig()
+	case *internal.AV1Data:
+		// nil when keyframes already carry the sequence header OBU in-band
+		// (SVT-AV1/ffmpeg), otherwise the sequence header OBU to prepend.
+		videoConfig = sd.GenLOCVideoConfig()
 	}
 
 	now := time.Now().UnixMilli()

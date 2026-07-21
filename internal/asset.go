@@ -737,10 +737,12 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 // GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
 // Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-02.
 //
-// Only AVC/HEVC video and AAC/Opus audio tracks with ProtectionNone are included.
-// No initData is set (LOC sends video config in-band with keyframes).
+// Only AVC/HEVC/AV1 video and AAC/Opus audio tracks with ProtectionNone are
+// included. No initData is set (LOC sends video config in-band with keyframes).
 // AVC tracks use "avc3" and HEVC tracks use "hev1" codec prefixes since
-// parameter sets travel in the payload (draft-ietf-moq-loc-02 §2.1.1).
+// parameter sets travel in the payload (draft-ietf-moq-loc-02 §2.1.1). AV1 keeps
+// its "av01" codec string: it has no distinct in-band sample entry and the
+// sequence header OBU rides in the keyframe temporal units.
 func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
@@ -750,12 +752,14 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			if ct.Protection != ProtectionNone {
 				continue
 			}
-			// LOC supports AVC/HEVC video and AAC/Opus audio
+			// LOC supports AVC/HEVC/AV1 video and AAC/Opus audio
 			switch ct.SpecData.(type) {
 			case *AVCData:
 				// OK - AVC video
 			case *HEVCData:
 				// OK - HEVC video
+			case *AV1Data:
+				// OK - AV1 video
 			case *AACData:
 				// OK - AAC audio
 			case *OpusData:
@@ -767,7 +771,9 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			frameRate := float64(ct.TimeScale) / float64(ct.SampleDur)
 
 			// For LOC, use codec strings that signal in-payload parameter sets
-			// (avc3 for AVC, hev1 for HEVC).
+			// (avc3 for AVC, hev1 for HEVC). AV1 keeps its av01 codec string:
+			// there is no distinct in-band sample entry, and the sequence header
+			// OBU travels in the keyframe temporal units themselves.
 			codec := ct.SpecData.Codec()
 			if _, ok := ct.SpecData.(*AVCData); ok {
 				codec = "avc3" + codec[4:] // Replace "avc1" prefix with "avc3"
@@ -804,6 +810,13 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 						track.Height = Ptr(int(sd.height))
 					}
 				case *HEVCData:
+					if sd.width != 0 {
+						track.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						track.Height = Ptr(int(sd.height))
+					}
+				case *AV1Data:
 					if sd.width != 0 {
 						track.Width = Ptr(int(sd.width))
 					}
@@ -939,6 +952,11 @@ func calcLOCBitrate(ct *ContentTrack) int {
 		case *AVCData:
 			psBytes = len(sd.GenLOCVideoConfig())
 		case *HEVCData:
+			psBytes = len(sd.GenLOCVideoConfig())
+		case *AV1Data:
+			// Zero when keyframes already embed the sequence header (the OBU is
+			// then already counted in SampleBitrate); non-zero only when LOC has
+			// to prepend the sequence header to each keyframe.
 			psBytes = len(sd.GenLOCVideoConfig())
 		}
 		if psBytes > 0 {
