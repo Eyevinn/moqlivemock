@@ -166,7 +166,7 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		return nil, fmt.Errorf("could not get sample description: %w", err)
 	}
 	switch sampleDesc.Type() {
-	case "avc1", "avc3", "hvc1", "hev1":
+	case "avc1", "avc3", "hvc1", "hev1", "av01":
 		ct.ContentType = "video"
 		ct.SampleBatch = videoSampleBatch
 	case "mp4a", "Opus", "ac-3", "ec-3":
@@ -256,6 +256,11 @@ func InitContentTrack(r io.Reader, name string, audioSampleBatch, videoSampleBat
 		ct.SpecData, err = initHEVCData(init, ct.Samples)
 		if err != nil {
 			return nil, fmt.Errorf("could not initialize HEVC data: %w", err)
+		}
+	case "av01":
+		ct.SpecData, err = initAV1Data(init, ct.Samples)
+		if err != nil {
+			return nil, fmt.Errorf("could not initialize AV1 data: %w", err)
 		}
 	case "mp4a":
 		ct.SpecData, err = initAACData(init)
@@ -449,9 +454,10 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 	var groups []TrackGroup
 	groupID := uint32(1)
 	// Add video group(s) first
-	// Sort by codec (avc before hvc) then by bitrate ascending.
-	// This ensures AVC tracks appear first, which matters because
-	// HEVC with CENC is not fully supported in Widevine/Chrome.
+	// Sort by codec string (av01 before avc1 before hvc1) then by bitrate
+	// ascending. AVC tracks sort ahead of HEVC, which matters because HEVC
+	// with CENC is not fully supported in Widevine/Chrome; AV1 sorts first
+	// by codec string but carries no such constraint.
 	if videoTracks, ok := tracksByType["video"]; ok {
 		sort.Slice(videoTracks, func(i, j int) bool {
 			ci := videoTracks[i].SpecData.Codec()
@@ -606,6 +612,13 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 						base.Height = Ptr(int(sd.height))
 					}
 				case *HEVCData:
+					if sd.width != 0 {
+						base.Width = Ptr(int(sd.width))
+					}
+					if sd.height != 0 {
+						base.Height = Ptr(int(sd.height))
+					}
+				case *AV1Data:
 					if sd.width != 0 {
 						base.Width = Ptr(int(sd.width))
 					}

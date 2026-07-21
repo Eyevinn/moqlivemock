@@ -6,8 +6,11 @@ sent over MoQ (MediaOverQuic) one frame at a time.
 ## Features
 
 ### Video (Go program)
-- Creates x264 video with only I and P frames (no B-frames)
-- Video shows bitrate, resolution, time, and frame number
+- Encodes AVC (libx264), HEVC (libx265), and AV1 (libsvtav1)
+- All codecs produce only I and P frames (no B-frames / no reordering).
+  AV1 uses SVT-AV1 low-delay CBR mode (VBR is not supported for low delay).
+- Video shows codec, bitrate, resolution, time, and frame number
+  (the codec name is the first overlay line)
 - Video encoded at 400, 600, and 900 kbps
 - IDR frames every second (25 frames)
 - 10-second duration
@@ -27,20 +30,27 @@ sent over MoQ (MediaOverQuic) one frame at a time.
 ## Requirements
 
 - Go (1.16 or later recommended)
-- FFmpeg installed and available in your PATH (with libfdk_aac for AAC encoding)
+- FFmpeg with the `drawtext` filter (libfreetype) plus `libx264`, `libx265`,
+  and `libsvtav1` for video, and libfdk_aac for AAC audio. A build that has
+  all of these (e.g. Homebrew's `ffmpeg-full`) is required for AV1; point the
+  tool at it with `FFMPEG_PATH` if it is not your default `ffmpeg`.
 
 ## Usage
 
 ### Generate Video
 
 ```bash
-go run videogen.go
+# Default is AVC only; pass -codecs to select codecs.
+go run videogen.go -codecs h264,h265,av1
+
+# If your default ffmpeg lacks libsvtav1 or drawtext, point at one that has both:
+FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg go run videogen.go -codecs h264,h265,av1
 ```
 
-Output files in `output/`:
-- `video_400kbps_avc.mp4`: 400 kbps H.264/AVC video track
-- `video_600kbps_avc.mp4`: 600 kbps H.264/AVC video track
-- `video_900kbps_avc.mp4`: 900 kbps H.264/AVC video track
+Output files in `output/` (suffix per codec: `avc`, `hevc`, `av1`):
+- `video_{400,600,900}kbps_avc.mp4`: H.264/AVC video tracks
+- `video_{400,600,900}kbps_hevc.mp4`: HEVC/H.265 video tracks
+- `video_{400,600,900}kbps_av1.mp4`: AV1 video tracks
 
 ### Generate Audio
 
