@@ -54,7 +54,7 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		if end > uint64(len(ct.Samples)) {
 			return
 		}
-		_, err := ct.GenLocmafChunk(chunkNr, start, end, state)
+		_, err := ct.GenLocmafChunk(chunkNr, start, end, state, nil)
 		require.NoError(t, err)
 	}
 
@@ -68,7 +68,7 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		if end > uint64(len(ct.Samples)) {
 			return
 		}
-		srcFrag, err := ct.createFragment(chunkNr, start, end)
+		srcFrag, err := ct.createFragment(chunkNr, start, end, nil)
 		require.NoError(t, err)
 
 		obj, err := locmaf.EncodeCanonical(nil, srcFrag.Moof, srcFrag.Mdat.Data, encState, moovOf(ct))
@@ -145,7 +145,7 @@ func TestLocmafEncryptedSencRoundTrip(t *testing.T) {
 				// Build the encrypted source fragment exactly like
 				// GenLocmafChunk does internally (createFragment +
 				// encryptFragment).
-				srcFrag, err := ct.createFragment(chunkNr, start, end)
+				srcFrag, err := ct.createFragment(chunkNr, start, end, nil)
 				require.NoError(t, err)
 				encFrag, err := encryptViaTrack(ct, srcFrag)
 				require.NoError(t, err)

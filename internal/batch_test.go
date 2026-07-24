@@ -197,14 +197,14 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 					batchSize := track.SampleBatch
 
 					// Generate a chunk with the configured batch size
-					chunk, err := track.GenCMAFChunk(0, 0, uint64(batchSize))
+					chunk, err := track.GenCMAFChunk(0, 0, uint64(batchSize), nil)
 					require.NoError(t, err)
 					require.NotNil(t, chunk)
 
 					// For video tracks with batch > 1, the chunk should be larger than a single sample chunk
 					if track.ContentType == "video" && batchSize > 1 {
 						// Generate a single sample chunk for comparison
-						singleChunk, err := track.GenCMAFChunk(0, 0, 1)
+						singleChunk, err := track.GenCMAFChunk(0, 0, 1, nil)
 						require.NoError(t, err)
 
 						// The multi-sample chunk should be larger than the single sample chunk

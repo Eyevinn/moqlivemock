@@ -401,6 +401,10 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 		videoConfig = sd.GenLOCVideoConfig()
 	}
 
+	// Optional CTA-608 caption injection (no-op unless -cc608 installed an
+	// enabled generator on this AVC/HEVC video track).
+	captioner := newVideoCaptioner(ct)
+
 	now := time.Now().UnixMilli()
 	currGroupNr := internal.CurrMoQGroupNr(ct, uint64(now), internal.MoqGroupDurMS)
 	groupNr := currGroupNr + 1 // Start stream on next group
@@ -415,6 +419,9 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 			return
 		}
 		startNr, endNr := internal.CalcLOCGroupRange(ct, groupNr, internal.MoqGroupDurMS)
+		// A LOC group is one wall-clock second, so groupNr is the caption clock
+		// anchor in whole seconds. sei is nil (no splicing) when captions are off.
+		sei := captioner.schedule(int64(groupNr), startNr, endNr)
 		slog.Info("writing LOC group", "track", ct.Name, "group", groupNr, "objects", endNr-startNr)
 		objectID := uint64(0)
 		for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
@@ -424,6 +431,9 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 			}
 			_, origNr := ct.CalcSample(sampleNr)
 			sample := ct.Samples[origNr]
+			// Splice the frame's CTA-608 SEI before the (optional) videoConfig
+			// prepend, so parameter sets precede the SEI which precedes the VCL.
+			data := captioner.spliceFrame(sample.Data, sei, sampleNr, startNr)
 
 			sampleTime := sampleNr * sampleDur
 			objTimeMS := int64(sampleTime * 1000 / timebase)
@@ -439,11 +449,11 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 
 			var payload []byte
 			if videoConfig != nil && sample.IsSync() {
-				payload = make([]byte, 0, len(videoConfig)+len(sample.Data))
+				payload = make([]byte, 0, len(videoConfig)+len(data))
 				payload = append(payload, videoConfig...)
-				payload = append(payload, sample.Data...)
+				payload = append(payload, data...)
 			} else {
-				payload = sample.Data
+				payload = data
 			}
 
 			// Compute sampleTime * 1_000_000 / timebase without uint64 overflow.

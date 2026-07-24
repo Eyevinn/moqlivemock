@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/cc608"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
 )
 
@@ -62,6 +63,7 @@ type options struct {
 	scheme           string
 	laURL            string
 	drmConfigPath    string
+	cc608            bool
 	version          bool
 }
 
@@ -92,6 +94,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.laURL, "laurl", "", "ClearKey/ECCP license acquisition URL announced in catalog."+
 		" Falls back to http://localhost:{sideport}/clearkey if not set.")
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
+	fs.BoolVar(&opts.cc608, "cc608", false,
+		"inject auto-generated CTA-608 CC1 captions into AVC/HEVC video")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -182,6 +186,14 @@ func runServer(opts *options) error {
 		return err
 	}
 	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
+
+	// Enable in-band CTA-608 caption injection on video tracks when requested.
+	// A nil generator (the default) is a complete no-op; the AVC/HEVC-vs-other
+	// codec gate is applied per track at serve time.
+	if opts.cc608 {
+		asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
+		slog.Info("enabled CTA-608 caption injection (CC1) on AVC/HEVC video tracks")
+	}
 
 	now := time.Now().UnixMilli()
 	var namespaces []pub.NamespaceEntry

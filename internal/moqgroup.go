@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/Eyevinn/locmaf"
+
+	"github.com/Eyevinn/moqlivemock/internal/cc608"
 )
 
 type ObjectWriter func(objectID uint64, data []byte) (n int, err error)
@@ -42,13 +44,18 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 		endNr:      endNr,
 		MoQObjects: make([]MoQObject, 0, endNr-startNr),
 	}
+	// Build the group's CTA-608 caption schedule once (per group, not per
+	// chunk) and share it across every chunk of the group. cc stays nil for a
+	// disabled/absent generator, a non-video track, or a non-AVC/HEVC codec, in
+	// which case createFragment does no splicing at all.
+	cc := track.newGroupCCSplice(groupNr, startNr, endNr)
 	v02State := locmaf.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)
 		switch packaging {
 		case "cmaf":
-			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample)
+			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample, cc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
@@ -57,7 +64,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		case "locmaf":
 			// "locmaf" packaging is LOCMAF (versioned by locmafVersion).
-			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State)
+			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State, cc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
@@ -66,6 +73,27 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 		}
 	}
 	return mq, nil
+}
+
+// newGroupCCSplice builds the CTA-608 caption schedule for one MoQ group of the
+// track, covering samples [startNr,endNr). It returns nil (no splicing) unless
+// the track has an enabled caption generator, is an AVC/HEVC video track, and
+// go-608 can build the group. A MoQ group is one wall-clock second, so groupNr
+// is the caption clock anchor in whole seconds (matching cc608.DefaultContent).
+func (t *ContentTrack) newGroupCCSplice(groupNr, startNr, endNr uint64) *ccSplice {
+	if !t.cc608.Enabled() || t.ContentType != "video" || t.SampleDur == 0 || endNr <= startNr {
+		return nil
+	}
+	codec, ok := cc608.CodecFor(t.SpecData.Codec())
+	if !ok {
+		return nil // AV1 and any non-AVC/HEVC codec: no captions.
+	}
+	fps := float64(t.TimeScale) / float64(t.SampleDur)
+	sei := t.cc608.SEISchedule(int64(groupNr), fps, int(endNr-startNr), codec)
+	if sei == nil {
+		return nil
+	}
+	return &ccSplice{GroupStartNr: startNr, SEI: sei, Codec: codec}
 }
 
 // CalcLOCGroupRange returns the [startNr, endNr) sample range for the
