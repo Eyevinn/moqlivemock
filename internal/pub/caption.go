@@ -28,7 +28,8 @@ type videoCaptioner struct {
 
 // newVideoCaptioner builds a captioner for ct. It is enabled only when ct has an
 // enabled generator, is a video track with valid timing, and uses an AVC or HEVC
-// codec (AV1 and everything else yield a disabled captioner).
+// codec (AV1 is not yet supported, so it and everything else yield a disabled
+// captioner).
 func newVideoCaptioner(ct *internal.ContentTrack) videoCaptioner {
 	gen := ct.CC608Generator()
 	if !gen.Enabled() || ct.ContentType != "video" || ct.SampleDur == 0 || ct.TimeScale == 0 {

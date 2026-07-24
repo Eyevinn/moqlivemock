@@ -86,7 +86,7 @@ func (t *ContentTrack) newGroupCCSplice(groupNr, startNr, endNr uint64) *ccSplic
 	}
 	codec, ok := cc608.CodecFor(t.SpecData.Codec())
 	if !ok {
-		return nil // AV1 and any non-AVC/HEVC codec: no captions.
+		return nil // AV1 (SEI carriage not yet wired) and other codecs: no captions.
 	}
 	fps := float64(t.TimeScale) / float64(t.SampleDur)
 	sei := t.cc608.SEISchedule(int64(groupNr), fps, int(endNr-startNr), codec)

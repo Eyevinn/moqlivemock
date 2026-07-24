@@ -129,7 +129,7 @@ func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
 // video content track of the asset. Audio and subtitle tracks are untouched.
 // Passing a nil or disabled generator leaves captioning off (a complete no-op);
 // the actual AVC/HEVC-vs-other codec gate is applied later at serve time via
-// cc608.CodecFor, so AV1 video tracks simply produce no captions.
+// cc608.CodecFor, so AV1 video tracks do not get captions yet.
 func (a *Asset) SetCC608Generator(gen *cc608.Generator) {
 	for gi := range a.Groups {
 		for ti := range a.Groups[gi].Tracks {
@@ -641,7 +641,7 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				base.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
 				// installed for this track (i.e. -cc608 was set) AND the codec
-				// actually carries the SEI (AVC/HEVC) — never AV1 — so the catalog
+				// actually carries the SEI (AVC/HEVC) — not yet AV1 — so the catalog
 				// never claims captions that are not in the elementary stream.
 				// This mirrors the injection gate in newGroupCCSplice exactly, so
 				// the catalog advertises captions iff they are really injected.
@@ -850,7 +850,7 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 				track.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
 				// installed for this track (i.e. -cc608 was set) AND the codec
-				// actually carries the SEI (AVC/HEVC) — never AV1 — so the catalog
+				// actually carries the SEI (AVC/HEVC) — not yet AV1 — so the catalog
 				// never claims captions that are not in the elementary stream.
 				// Mirrors the injection gate in newGroupCCSplice.
 				if _, ok := cc608.CodecFor(ct.SpecData.Codec()); ok && ct.CC608Generator().Enabled() {
