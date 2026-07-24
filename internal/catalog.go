@@ -248,6 +248,19 @@ type Track struct {
 	// The ID is used as a key in the root-level field ContentProtection.
 	// Optional field at the track level, only used when the track is protected.
 	ContentProtectionRefIDs []string `json:"contentProtectionRefIDs,omitempty"`
+
+	// Accessibility describes accessibility features carried by the track as an
+	// array of {scheme, value} descriptors (draft-ietf-moq-msf-01 Section 5.2.44).
+	// Optional field at the track level; omitted when the track carries no such
+	// features. moqlivemock uses it to advertise in-band CTA-608 captions.
+	Accessibility []Accessibility `json:"accessibility,omitempty"`
+}
+
+// Accessibility is a single accessibility descriptor at the track level
+// (draft-ietf-moq-msf-01 Section 5.2.44): a scheme identifier and its value.
+type Accessibility struct {
+	Scheme string `json:"scheme"`
+	Value  string `json:"value"`
 }
 
 // ContentProtection contains all information needed to create DRM request
