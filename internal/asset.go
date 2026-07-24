@@ -640,11 +640,14 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				base.Role = "video"
 				base.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
-				// installed for this track (i.e. -cc608 was set), so the catalog
+				// installed for this track (i.e. -cc608 was set) AND the codec
+				// actually carries the SEI (AVC/HEVC) — never AV1 — so the catalog
 				// never claims captions that are not in the elementary stream.
+				// This mirrors the injection gate in newGroupCCSplice exactly, so
+				// the catalog advertises captions iff they are really injected.
 				// The value is copied into both the CMAF and LOCMAF variants
 				// below, which is correct: the SEI rides in the shared bitstream.
-				if ct.CC608Generator().Enabled() {
+				if _, ok := cc608.CodecFor(ct.SpecData.Codec()); ok && ct.CC608Generator().Enabled() {
 					base.Accessibility = cta608CC1Eng
 				}
 				switch sd := ct.SpecData.(type) {
@@ -846,9 +849,11 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 				track.Role = "video"
 				track.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
-				// installed for this track (i.e. -cc608 was set), so the catalog
+				// installed for this track (i.e. -cc608 was set) AND the codec
+				// actually carries the SEI (AVC/HEVC) — never AV1 — so the catalog
 				// never claims captions that are not in the elementary stream.
-				if ct.CC608Generator().Enabled() {
+				// Mirrors the injection gate in newGroupCCSplice.
+				if _, ok := cc608.CodecFor(ct.SpecData.Codec()); ok && ct.CC608Generator().Enabled() {
 					track.Accessibility = cta608CC1Eng
 				}
 				switch sd := ct.SpecData.(type) {
