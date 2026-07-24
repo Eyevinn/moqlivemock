@@ -9,15 +9,6 @@ moqlivemock is a Go-based MoQ (Media over QUIC) live streaming mock implementati
 - **mlmpub**: A publisher that serves live media content over MoQ Transport
 - **mlmsub**: A subscriber that receives and processes media streams
 
-## Build Commands
-
-```bash
-go build ./...              # Build all packages
-go test ./...               # Run all tests
-go mod tidy                 # Update dependencies
-go mod vendor               # Vendor dependencies
-```
-
 ## Architecture
 
 ### Key Components
@@ -196,11 +187,3 @@ The `internal/` package contains unit tests. Run with:
 go test ./internal/...
 ```
 
-## References
-
-IETF draft specifications are stored in `references/` for offline reference:
-
-- `draft-ietf-moq-transport-14.txt` - MoQ Transport protocol (draft-14)
-- `draft-ietf-moq-transport-16.txt` - MoQ Transport protocol (draft-16), the primary wire protocol used by this project
-- `draft-ietf-moq-msf-01.txt` - MoQ Streaming Format (MSF), defines how media is mapped to MoQ tracks/groups/objects (catalog with initDataList/initRef)
-- `draft-ietf-moq-cmsf-00.txt` - CMAF MoQ Streaming Format (CMSF), defines CMAF-based media packaging for MoQ
