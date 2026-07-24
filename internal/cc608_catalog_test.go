@@ -45,16 +45,25 @@ func TestCatalogCC608Accessibility_CMSF(t *testing.T) {
 	catOn, err := on.GenCMAFCatalogEntry("cmsf/clear", ProtectionNone, 1234567890000)
 	require.NoError(t, err)
 
-	sawCMAFVideo, sawLOCMAFVideo := false, false
+	sawCMAFVideo, sawLOCMAFVideo, sawAV1Excluded := false, false, false
 	for i := range catOn.Tracks {
 		tr := &catOn.Tracks[i]
 		if tr.Role == "video" {
-			requireCC608Accessibility(t, tr)
-			switch tr.Packaging {
-			case "cmaf":
-				sawCMAFVideo = true
-			case "locmaf":
-				sawLOCMAFVideo = true
+			if _, ok := cc608.CodecFor(tr.Codec); ok {
+				// AVC/HEVC carry the SEI, so they advertise CTA-608.
+				requireCC608Accessibility(t, tr)
+				switch tr.Packaging {
+				case "cmaf":
+					sawCMAFVideo = true
+				case "locmaf":
+					sawLOCMAFVideo = true
+				}
+			} else {
+				// AV1 (no SEI CTA-608 carriage) must not advertise captions it
+				// never carries, even with -cc608 set.
+				assert.Emptyf(t, tr.Accessibility,
+					"non-caption-codec video track %q (%s) must not advertise captions", tr.Name, tr.Codec)
+				sawAV1Excluded = true
 			}
 			continue
 		}
@@ -63,6 +72,7 @@ func TestCatalogCC608Accessibility_CMSF(t *testing.T) {
 	}
 	assert.True(t, sawCMAFVideo, "expected at least one CMAF video track")
 	assert.True(t, sawLOCMAFVideo, "expected at least one LOCMAF video track")
+	assert.True(t, sawAV1Excluded, "expected at least one AV1 video track excluded from captions")
 
 	// Captions off (no generator installed): the descriptor is absent everywhere.
 	off, err := LoadAsset("../assets/test10s", 1, 1)
@@ -90,18 +100,25 @@ func TestCatalogCC608Accessibility_LOC(t *testing.T) {
 	catOn, err := on.GenLOCCatalogEntry(1700000000000)
 	require.NoError(t, err)
 
-	sawVideo := false
+	sawVideo, sawAV1Excluded := false, false
 	for i := range catOn.Tracks {
 		tr := &catOn.Tracks[i]
 		if tr.Role == "video" {
-			requireCC608Accessibility(t, tr)
-			sawVideo = true
+			if _, ok := cc608.CodecFor(tr.Codec); ok {
+				requireCC608Accessibility(t, tr)
+				sawVideo = true
+			} else {
+				assert.Emptyf(t, tr.Accessibility,
+					"non-caption-codec video track %q (%s) must not advertise captions", tr.Name, tr.Codec)
+				sawAV1Excluded = true
+			}
 			continue
 		}
 		assert.Emptyf(t, tr.Accessibility,
 			"non-video track %q must not advertise captions", tr.Name)
 	}
-	assert.True(t, sawVideo, "expected at least one LOC video track")
+	assert.True(t, sawVideo, "expected at least one AVC/HEVC LOC video track")
+	assert.True(t, sawAV1Excluded, "expected at least one AV1 LOC video track excluded from captions")
 
 	// Captions off: absent everywhere.
 	off, err := LoadAsset("../assets/test10s", 1, 1)
