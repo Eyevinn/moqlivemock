@@ -73,6 +73,10 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 	currGopNr := uint64(now) / gopDurMS
 	groupNr := currGopNr + 1
 
+	// Optional CTA-608 caption injection (no-op unless -cc608 installed an
+	// enabled generator; moq-mi video0 is AVC, which the captioner supports).
+	captioner := newVideoCaptioner(ct)
+
 	slog.Info("moqmi: publishing video track",
 		"track", moqmiTrackName, "startGroup", groupNr, "gopLen", gopLen)
 
@@ -88,12 +92,18 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 		}
 		startSample := groupNr * gopLen
 		endSample := startSample + gopLen
+		// A moq-mi video group is one GOP. Anchor the caption clock at the
+		// group's wall-clock start second (samples are epoch-anchored, so
+		// startSample*sampleDur/timebase is that second). sei is nil when off.
+		anchorSec := int64(startSample * sampleDur / timebase)
+		sei := captioner.schedule(anchorSec, startSample, endSample)
 		for objectID, sampleNr := uint64(0), startSample; sampleNr < endSample; objectID, sampleNr = objectID+1, sampleNr+1 {
 			if ctx.Err() != nil {
 				return
 			}
 			_, origNr := ct.CalcSample(sampleNr)
 			sample := ct.Samples[origNr]
+			data := captioner.spliceFrame(sample.Data, sei, sampleNr, startSample)
 			pts := sampleNr * sampleDur
 			ptsMS := int64(pts * 1000 / timebase)
 			waitMS := ptsMS - time.Now().UnixMilli()
@@ -118,7 +128,7 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 			} else {
 				headers = moqmi.VideoHeaders(meta, nil)
 			}
-			if _, err := sg.WriteObjectWithHeaders(objectID, headers, sample.Data); err != nil {
+			if _, err := sg.WriteObjectWithHeaders(objectID, headers, data); err != nil {
 				slog.Error("moqmi: failed to write video object",
 					"group", groupNr, "object", objectID, "error", err)
 				return

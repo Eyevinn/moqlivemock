@@ -103,7 +103,7 @@ func TestDecompressLocmafObjectRoundTrip(t *testing.T) {
 			require.NotNil(t, track)
 
 			state := locmaf.NewState()
-			compressed, err := track.GenLocmafChunk(0, 0, 1, state)
+			compressed, err := track.GenLocmafChunk(0, 0, 1, state, nil)
 			require.NoError(t, err)
 
 			rxState := locmaf.NewState()
@@ -113,7 +113,7 @@ func TestDecompressLocmafObjectRoundTrip(t *testing.T) {
 
 			gotMoof, gotMdat := decodeFragment(t, got)
 
-			expected, err := track.GenCMAFChunk(0, 0, 1)
+			expected, err := track.GenCMAFChunk(0, 0, 1, nil)
 			require.NoError(t, err)
 			expectedMoof, expectedMdat := decodeFragment(t, expected)
 
@@ -187,7 +187,7 @@ func TestDecompressLocmafClearKeyRoundTrip(t *testing.T) {
 					require.NoError(t, err)
 
 					state := locmaf.NewState()
-					compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, state)
+					compressed, err := protectedTrack.GenLocmafChunk(0, 0, 1, state, nil)
 					require.NoError(t, err)
 
 					rxState := locmaf.NewState()
@@ -207,7 +207,7 @@ func TestDecompressLocmafClearKeyRoundTrip(t *testing.T) {
 					got, err = internal.DecryptFragment(got, decryptInfo, key)
 					require.NoError(t, err)
 
-					expected, err := clearTrack.GenCMAFChunk(0, 0, 1)
+					expected, err := clearTrack.GenCMAFChunk(0, 0, 1, nil)
 					require.NoError(t, err)
 					_, expectedMdat := decodeFragment(t, expected)
 					_, decryptedMdat := decodeFragment(t, got)

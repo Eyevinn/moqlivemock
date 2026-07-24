@@ -12,7 +12,10 @@ import (
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 
+	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/locmaf"
+
+	"github.com/Eyevinn/moqlivemock/internal/cc608"
 )
 
 const (
@@ -65,6 +68,11 @@ type ContentTrack struct {
 	// mp4.EncryptFragment chains IVs across fragments (incremented by the number of
 	// encrypted AES blocks) so that callers using the same key avoid IV reuse.
 	currentIV []byte
+	// cc608 is the optional CTA-608 caption generator for a video track. A nil
+	// generator (the default) means captions are off; it is nil-safe, so all
+	// caption logic is a complete no-op unless SetCC608Generator installs an
+	// enabled generator. Only ever set on AVC/HEVC video tracks.
+	cc608 *cc608.Generator
 }
 
 type Asset struct {
@@ -108,6 +116,27 @@ func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
 		}
 	}
 	return nil
+}
+
+// SetCC608Generator installs gen as the CTA-608 caption generator on every
+// video content track of the asset. Audio and subtitle tracks are untouched.
+// Passing a nil or disabled generator leaves captioning off (a complete no-op);
+// the actual AVC/HEVC-vs-other codec gate is applied later at serve time via
+// cc608.CodecFor, so AV1 video tracks simply produce no captions.
+func (a *Asset) SetCC608Generator(gen *cc608.Generator) {
+	for gi := range a.Groups {
+		for ti := range a.Groups[gi].Tracks {
+			if a.Groups[gi].Tracks[ti].ContentType == "video" {
+				a.Groups[gi].Tracks[ti].cc608 = gen
+			}
+		}
+	}
+}
+
+// CC608Generator returns the track's CTA-608 caption generator, or nil when
+// captions are off. The returned *cc608.Generator is nil-safe.
+func (t *ContentTrack) CC608Generator() *cc608.Generator {
+	return t.cc608
 }
 
 // AddSubtitleTracks adds WVTT and STPP subtitle tracks for the given languages.
@@ -874,7 +903,7 @@ func calcCmafBitrate(ct *ContentTrack) (int, error) {
 	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
 		return int(ct.SampleBitrate), nil
 	}
-	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch))
+	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch), nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure CMAF chunk for %s: %w", ct.Name, err)
 	}
@@ -904,11 +933,11 @@ func calcLocmafBitrate(ct *ContentTrack) (int, error) {
 		return int(ct.SampleBitrate), nil
 	}
 	state := locmaf.NewState()
-	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state)
+	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF full chunk for %s: %w", ct.Name, err)
 	}
-	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state)
+	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF delta chunk for %s: %w", ct.Name, err)
 	}
@@ -972,14 +1001,27 @@ func Ptr[T any](v T) *T {
 	return &v
 }
 
+// ccSplice carries one MoQ group's CTA-608 caption schedule so createFragment
+// can splice the right SEI in front of each frame's first VCL NALU. A nil
+// *ccSplice (or one with a nil SEI slice) disables splicing entirely, keeping
+// caption injection a complete no-op. The schedule is computed once per group
+// (in GenMoQGroup) and shared by every chunk of that group; GroupStartNr is the
+// group's first sample number, so the SEI for the frame at sample sampleNr is
+// SEI[sampleNr-GroupStartNr].
+type ccSplice struct {
+	GroupStartNr uint64
+	SEI          [][]byte
+	Codec        carriage.Codec
+}
+
 // GenCMAFChunk returns a raw CMAF chunk consisting of endNr-startNr samples.
 // The number is 0-based relative to the UNIX epoch.
 // Therefore nr is translated into data for the time interval
 // [nr*d.sampleDur, (nr+1)*d.sampleDur].
 // This is calculated based on wrap-around given the loopDuration
-// of the asset.
-func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]byte, error) {
-	f, err := t.createFragment(chunkNr, startNr, endNr)
+// of the asset. cc is the optional per-group caption schedule (nil = no captions).
+func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *ccSplice) ([]byte, error) {
+	f, err := t.createFragment(chunkNr, startNr, endNr, cc)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
@@ -1009,12 +1051,12 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64) ([]by
 // `state` as the in-group reference: an empty state yields a full
 // header, subsequent calls with the same state yield delta headers.
 func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
-	state *locmaf.State) ([]byte, error) {
+	state *locmaf.State, cc *ccSplice) ([]byte, error) {
 	if state == nil {
 		return nil, fmt.Errorf("locmaf state is nil")
 	}
 
-	f, err := t.createFragment(chunkNr, startNr, endNr)
+	f, err := t.createFragment(chunkNr, startNr, endNr, cc)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
@@ -1039,8 +1081,13 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 	return obj, nil
 }
 
-// createFragment creates a fragment from the track with sequence number chunkNr, and samples from startNr to endNr
-func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*mp4.Fragment, error) {
+// createFragment creates a fragment from the track with sequence number chunkNr,
+// and samples from startNr to endNr. When cc carries a per-group CTA-608 schedule
+// the matching SEI NAL is spliced in front of each frame's first VCL NALU before
+// the sample is added — and thus before any encryption in the callers — so the
+// captions ride inside the encrypted payload. A nil cc (or one whose SEI does not
+// cover the frame) leaves the sample data untouched, i.e. a complete no-op.
+func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc *ccSplice) (*mp4.Fragment, error) {
 	f, err := mp4.CreateFragment(chunkNr, trackID)
 	if err != nil {
 		return nil, err
@@ -1048,6 +1095,18 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*m
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
+		// Splice the frame's CTA-608 SEI in when captions are enabled. The
+		// splice allocates a fresh slice, so t.Samples is never mutated.
+		data := orig.Data
+		if cc != nil && cc.SEI != nil {
+			if idx := int(sampleNr - cc.GroupStartNr); idx >= 0 && idx < len(cc.SEI) && len(cc.SEI[idx]) > 0 {
+				spliced, err := cc608.SpliceSEIBeforeVCL(orig.Data, cc.SEI[idx], cc.Codec)
+				if err != nil {
+					return nil, fmt.Errorf("cc608: splice SEI for sample %d: %w", sampleNr, err)
+				}
+				data = spliced
+			}
+		}
 		// Use the source sample's actual duration. For uniform-duration
 		// sources this equals t.SampleDur; for a source with a short
 		// trailing sample (which we no longer ship, but defensively support)
@@ -1058,10 +1117,10 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64) (*m
 			Sample: mp4.Sample{
 				Flags: orig.Flags,
 				Dur:   orig.Dur,
-				Size:  uint32(len(orig.Data)),
+				Size:  uint32(len(data)),
 			},
 			DecodeTime: startTime,
-			Data:       orig.Data,
+			Data:       data,
 		}
 		f.AddFullSample(fs)
 	}
