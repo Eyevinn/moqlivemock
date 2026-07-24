@@ -145,8 +145,9 @@ func DefaultContent(_ int, cueStartMS int64) generate.UnitCue {
 
 // CodecFor maps a representation codec string to the go-608 carriage codec:
 // "avc*" -> CodecAVC, "hev*"/"hvc*" -> CodecHEVC. It returns ok=false for any
-// other codec (AV1, audio, unknown) — captions are only defined for AVC/HEVC.
-// The returned Codec is meaningless when ok is false; always check ok.
+// other codec (AV1, audio, unknown): CTA-608 SEI carriage is wired for AVC/HEVC
+// today, and AV1 is not yet supported. The returned Codec is meaningless when
+// ok is false; always check ok.
 func CodecFor(codecStr string) (carriage.Codec, bool) {
 	switch {
 	case strings.HasPrefix(codecStr, "avc"):
