@@ -46,6 +46,13 @@ const (
 	ProtectionECCP                // ClearKey / ECCP (explicit key over HTTP)
 )
 
+// cta608CC1Eng is the catalog accessibility descriptor advertised on a video
+// track when in-band CTA-608 captions are enabled for it. It signals a single
+// CEA-608 service, CC1, in English, using the SCTE DASH accessibility scheme
+// (draft-ietf-moq-msf-01 Section 5.2.44). It is shared by both the CMAF and
+// LOCMAF variants of a captioned rendition; treat it as read-only.
+var cta608CC1Eng = []Accessibility{{Scheme: "urn:scte:dash:cc:cea-608:2015", Value: "CC1=eng"}}
+
 type ContentTrack struct {
 	Name                    string
 	ContentType             string
@@ -632,6 +639,14 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 			case "video":
 				base.Role = "video"
 				base.Framerate = Ptr(frameRate)
+				// Advertise CTA-608 captions only when an enabled generator is
+				// installed for this track (i.e. -cc608 was set), so the catalog
+				// never claims captions that are not in the elementary stream.
+				// The value is copied into both the CMAF and LOCMAF variants
+				// below, which is correct: the SEI rides in the shared bitstream.
+				if ct.CC608Generator().Enabled() {
+					base.Accessibility = cta608CC1Eng
+				}
 				switch sd := ct.SpecData.(type) {
 				case *AVCData:
 					if sd.width != 0 {
@@ -830,6 +845,12 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 			case "video":
 				track.Role = "video"
 				track.Framerate = Ptr(frameRate)
+				// Advertise CTA-608 captions only when an enabled generator is
+				// installed for this track (i.e. -cc608 was set), so the catalog
+				// never claims captions that are not in the elementary stream.
+				if ct.CC608Generator().Enabled() {
+					track.Accessibility = cta608CC1Eng
+				}
 				switch sd := ct.SpecData.(type) {
 				case *AVCData:
 					if sd.width != 0 {
