@@ -12,6 +12,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
+require github.com/Eyevinn/go-608 v0.6.0
+
 require (
 	github.com/Eyevinn/locmaf v0.1.1
 	github.com/beevik/etree v1.5.0 // indirect
