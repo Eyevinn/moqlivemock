@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cta608"
 	"github.com/Eyevinn/locmaf"
-	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,9 +18,22 @@ import (
 // assert against: row 13 = "12:34:56.000", row 14 = "GRP 45296".
 const groupNrClock = 45296
 
+// captionCodecCases are the three video codecs that carry CTA-608, each with a
+// test10s track. They all end up with the same decoded caption, which is the
+// point: only the envelope (SEI NAL unit vs metadata OBU) differs.
+var captionCodecCases = []struct {
+	name  string
+	codec cc608.Codec
+}{
+	{"video_400kbps_avc", cc608.CodecAVC},
+	{"video_400kbps_hevc", cc608.CodecHEVC},
+	{"video_400kbps_av1", cc608.CodecAV1},
+}
+
 // mdatData decodes a raw CMAF chunk (moof+mdat) and returns the mdat payload,
-// which for a single-sample chunk is that sample's 4-byte-length-prefixed AVCC
-// NAL stream (with the CTA-608 SEI spliced in when captions are on).
+// which for a single-sample chunk is that sample's coded data — a
+// 4-byte-length-prefixed NAL stream for AVC/HEVC, a bare OBU sequence for AV1 —
+// with the CTA-608 envelope spliced in when captions are on.
 func mdatData(t *testing.T, chunk []byte) []byte {
 	t.Helper()
 	r := bytes.NewReader(chunk)
@@ -35,16 +46,14 @@ func mdatData(t *testing.T, chunk []byte) []byte {
 	return mdat.Data
 }
 
-// decodeGroupCaption feeds a whole group's per-object SEI through the cta608
-// decoder in order and returns the number of on-screen flips plus the text of
-// rows 13 and 14 at the last flip.
-func decodeGroupCaption(t *testing.T, objects []MoQObject, codec carriage.Codec) (flips int, row13, row14 string) {
+// decodeGroupCaption feeds a whole group's per-object captions through the
+// cta608 decoder in order and returns the number of on-screen flips plus the
+// text of rows 13 and 14 at the last flip.
+func decodeGroupCaption(t *testing.T, objects []MoQObject, codec cc608.Codec) (flips int, row13, row14 string) {
 	t.Helper()
 	var dec cta608.Decoder
 	for i, obj := range objects {
-		nalus, err := avc.GetNalusFromSample(mdatData(t, obj))
-		require.NoErrorf(t, err, "object %d", i)
-		f1, _, err := carriage.FieldPairs(nalus, codec)
+		f1, _, err := cc608.FieldPairs(mdatData(t, obj), codec)
 		require.NoErrorf(t, err, "object %d FieldPairs", i)
 		if len(f1) == 0 {
 			continue
@@ -76,17 +85,10 @@ func rowText(s cta608.Screen, idx int) string {
 
 // TestGenMoQGroupCC608_CMAF verifies that with an enabled generator installed
 // via SetCC608Generator, a CMAF-packaged video group carries a decodable CTA-608
-// CC1 caption for both AVC and HEVC. It also confirms one flip per group (one
+// CC1 caption for AVC, HEVC and AV1. It also confirms one flip per group (one
 // pop-on cue per wall-clock second).
 func TestGenMoQGroupCC608_CMAF(t *testing.T) {
-	cases := []struct {
-		name  string
-		codec carriage.Codec
-	}{
-		{"video_400kbps_avc", carriage.CodecAVC},
-		{"video_400kbps_hevc", carriage.CodecHEVC},
-	}
-	for _, c := range cases {
+	for _, c := range captionCodecCases {
 		t.Run(c.name, func(t *testing.T) {
 			asset, err := LoadAsset("../assets/test10s", 1, 1)
 			require.NoError(t, err)
@@ -108,8 +110,9 @@ func TestGenMoQGroupCC608_CMAF(t *testing.T) {
 }
 
 // TestGenMoQGroupCC608_NoOp proves that a nil or disabled generator is a
-// complete no-op: the produced bytes are identical to captions-off, and no SEI
-// is present. It also confirms AV1 video is skipped even with captions enabled.
+// complete no-op — the produced bytes are byte-identical to captions-off — and,
+// as the converse, that an enabled generator really does change the bytes of
+// every caption-carrying codec. Audio is left alone either way.
 func TestGenMoQGroupCC608_NoOp(t *testing.T) {
 	load := func(t *testing.T) *Asset {
 		t.Helper()
@@ -135,49 +138,49 @@ func TestGenMoQGroupCC608_NoOp(t *testing.T) {
 		}
 	}
 
-	// Baseline: no generator installed at all.
-	off := genGroup(t, load(t), "video_400kbps_avc")
-
-	// Disabled generator must be byte-identical to captions-off.
-	disabledAsset := load(t)
-	disabledAsset.SetCC608Generator(cc608.New(cc608.Config{Enabled: false}))
-	equalObjects(t, off, genGroup(t, disabledAsset, "video_400kbps_avc"))
-
-	// Enabled generator must change the AVC bytes (SEI added).
-	onAsset := load(t)
-	onAsset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
-	on := genGroup(t, onAsset, "video_400kbps_avc")
-	require.Equal(t, len(off), len(on))
-	differs := false
-	for i := range off {
-		if !bytes.Equal(off[i], on[i]) {
-			differs = true
-			break
+	differs := func(t *testing.T, a, b []MoQObject) bool {
+		t.Helper()
+		require.Equal(t, len(a), len(b))
+		for i := range a {
+			if !bytes.Equal(a[i], b[i]) {
+				return true
+			}
 		}
+		return false
 	}
-	assert.True(t, differs, "enabled generator should add SEI to AVC video")
 
-	// AV1 must be skipped (unsupported codec) even with captions enabled.
-	av1Off := genGroup(t, load(t), "video_400kbps_av1")
-	av1AssetOn := load(t)
-	av1AssetOn.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
-	equalObjects(t, av1Off, genGroup(t, av1AssetOn, "video_400kbps_av1"))
+	for _, c := range captionCodecCases {
+		t.Run(c.name, func(t *testing.T) {
+			// Baseline: no generator installed at all.
+			off := genGroup(t, load(t), c.name)
+
+			// Disabled generator must be byte-identical to captions-off.
+			disabledAsset := load(t)
+			disabledAsset.SetCC608Generator(cc608.New(cc608.Config{Enabled: false}))
+			equalObjects(t, off, genGroup(t, disabledAsset, c.name))
+
+			// Enabled generator must change the bytes (envelope added).
+			onAsset := load(t)
+			onAsset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
+			assert.True(t, differs(t, off, genGroup(t, onAsset, c.name)),
+				"enabled generator should add a caption envelope to %s video", c.codec)
+		})
+	}
+
+	// Audio is never captioned, so an enabled generator leaves it untouched.
+	audioOff := genGroup(t, load(t), "audio_monotonic_128kbps_aac")
+	audioAssetOn := load(t)
+	audioAssetOn.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
+	equalObjects(t, audioOff, genGroup(t, audioAssetOn, "audio_monotonic_128kbps_aac"))
 }
 
-// TestGenMoQGroupCC608_LOCMAF verifies the CTA-608 SEI survives the LOCMAF
+// TestGenMoQGroupCC608_LOCMAF verifies the CTA-608 captions survive the LOCMAF
 // encode/decode round-trip: with captions on, a LOCMAF-packaged video group is
 // decoded back into canonical CMAF chunks (the mdat payload is preserved
 // untouched by LOCMAF), and the recovered elementary stream still carries a
-// decodable CC1 caption for both AVC and HEVC.
+// decodable CC1 caption for AVC, HEVC and AV1.
 func TestGenMoQGroupCC608_LOCMAF(t *testing.T) {
-	cases := []struct {
-		name  string
-		codec carriage.Codec
-	}{
-		{"video_400kbps_avc", carriage.CodecAVC},
-		{"video_400kbps_hevc", carriage.CodecHEVC},
-	}
-	for _, c := range cases {
+	for _, c := range captionCodecCases {
 		t.Run(c.name, func(t *testing.T) {
 			asset, err := LoadAsset("../assets/test10s", 1, 1)
 			require.NoError(t, err)
@@ -214,54 +217,62 @@ func TestGenMoQGroupCC608_LOCMAF(t *testing.T) {
 	}
 }
 
-// TestGenMoQGroupCC608_EncryptedPreEncryption proves the CTA-608 SEI is spliced
-// BEFORE encryption: createFragment splices the SEI in front of each frame's VCL
-// NALU, and only then does GenCMAFChunk call encryptFragment, so the caption
-// rides inside the encrypted payload. It builds an ECCP/ClearKey-protected AVC
-// track with captions on, generates an encrypted CMAF group, decrypts every
-// object with the known key, and decodes the CC1 caption back out. The
+// TestGenMoQGroupCC608_EncryptedPreEncryption proves the CTA-608 captions are
+// spliced BEFORE encryption: createFragment splices the envelope into each
+// frame's coded sample, and only then does GenCMAFChunk call encryptFragment, so
+// the caption rides inside the encrypted payload. It builds an ECCP/ClearKey
+// protected track with captions on, generates an encrypted CMAF group, decrypts
+// every object with the known key, and decodes the CC1 caption back out. The
 // pre-decrypt objects are also confirmed to differ from their plaintext, so the
 // caption really travels through real ciphertext rather than a clear payload.
+//
+// AV1 is the interesting case: its CENC binding derives the subsample ranges
+// from the sample's OBU structure, so a caption OBU inserted ahead of the frame
+// OBU has to end up in the clear part and leave the tile ranges intact.
 func TestGenMoQGroupCC608_EncryptedPreEncryption(t *testing.T) {
 	kidStr := "39112233445566778899aabbccddeeff"
 	keyStr := "40112233445566778899aabbccddeeff"
 	ivStr := "41112233445566778899aabbccddeeff"
 
-	eccp, err := ParseCENCflags("cbcs", kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
-	require.NoError(t, err)
-	asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
-	require.NoError(t, err)
-	asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
+	for _, c := range captionCodecCases {
+		t.Run(c.name, func(t *testing.T) {
+			eccp, err := ParseCENCflags("cbcs", kidStr, keyStr, ivStr, "http://localhost:8081/clearkey")
+			require.NoError(t, err)
+			asset, err := LoadAssetWithProtection("../assets/test10s", 1, 1, nil, eccp)
+			require.NoError(t, err)
+			asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
 
-	ct := asset.GetTrackByName("video_400kbps_avc_eccp")
-	require.NotNil(t, ct, "protected AVC track must exist")
-	require.NotEmpty(t, ct.contentProtectionRefIDs, "track must be encrypted")
+			ct := asset.GetTrackByName(c.name + "_eccp")
+			require.NotNil(t, ct, "protected track must exist")
+			require.NotEmpty(t, ct.contentProtectionRefIDs, "track must be encrypted")
 
-	mg, err := GenMoQGroup(ct, groupNrClock, 1, MoqGroupDurMS, "cmaf")
-	require.NoError(t, err)
-	require.Equal(t, 25, len(mg.MoQObjects), "25 fps => 25 objects in a 1s group")
+			mg, err := GenMoQGroup(ct, groupNrClock, 1, MoqGroupDurMS, "cmaf")
+			require.NoError(t, err)
+			require.Equal(t, 25, len(mg.MoQObjects), "25 fps => 25 objects in a 1s group")
 
-	// Recover the CENC DecryptInfo from the (encrypted) init segment, then
-	// decrypt every object with the known content key.
-	initData, err := ct.SpecData.GenCMAFInitData()
-	require.NoError(t, err)
-	_, _, ipd, err := DecryptInit(initData)
-	require.NoError(t, err)
+			// Recover the CENC DecryptInfo from the (encrypted) init segment,
+			// then decrypt every object with the known content key.
+			initData, err := ct.SpecData.GenCMAFInitData()
+			require.NoError(t, err)
+			_, _, ipd, err := DecryptInit(initData)
+			require.NoError(t, err)
 
-	dec := make([]MoQObject, len(mg.MoQObjects))
-	sawCiphertext := false
-	for i, obj := range mg.MoQObjects {
-		plain, err := DecryptFragment(obj, ipd, eccp.cenc.key)
-		require.NoErrorf(t, err, "decrypt object %d", i)
-		if !bytes.Equal(obj, plain) {
-			sawCiphertext = true
-		}
-		dec[i] = plain
+			dec := make([]MoQObject, len(mg.MoQObjects))
+			sawCiphertext := false
+			for i, obj := range mg.MoQObjects {
+				plain, err := DecryptFragment(obj, ipd, eccp.cenc.key)
+				require.NoErrorf(t, err, "decrypt object %d", i)
+				if !bytes.Equal(obj, plain) {
+					sawCiphertext = true
+				}
+				dec[i] = plain
+			}
+			require.True(t, sawCiphertext, "objects must actually be encrypted on the wire")
+
+			flips, row13, row14 := decodeGroupCaption(t, dec, c.codec)
+			assert.Equal(t, 1, flips, "one pop-on cue per group after decryption")
+			assert.Equal(t, "12:34:56.000", row13)
+			assert.Equal(t, "GRP 45296", row14)
+		})
 	}
-	require.True(t, sawCiphertext, "objects must actually be encrypted on the wire")
-
-	flips, row13, row14 := decodeGroupCaption(t, dec, carriage.CodecAVC)
-	assert.Equal(t, 1, flips, "one pop-on cue per group after decryption")
-	assert.Equal(t, "12:34:56.000", row13)
-	assert.Equal(t, "GRP 45296", row14)
 }

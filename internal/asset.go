@@ -12,7 +12,6 @@ import (
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/locmaf"
 
 	"github.com/Eyevinn/moqlivemock/internal/cc608"
@@ -78,7 +77,7 @@ type ContentTrack struct {
 	// cc608 is the optional CTA-608 caption generator for a video track. A nil
 	// generator (the default) means captions are off; it is nil-safe, so all
 	// caption logic is a complete no-op unless SetCC608Generator installs an
-	// enabled generator. Only ever set on AVC/HEVC video tracks.
+	// enabled generator. Only ever set on video tracks.
 	cc608 *cc608.Generator
 }
 
@@ -128,8 +127,8 @@ func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
 // SetCC608Generator installs gen as the CTA-608 caption generator on every
 // video content track of the asset. Audio and subtitle tracks are untouched.
 // Passing a nil or disabled generator leaves captioning off (a complete no-op);
-// the actual AVC/HEVC-vs-other codec gate is applied later at serve time via
-// cc608.CodecFor, so AV1 video tracks do not get captions yet.
+// the codec gate is applied later at serve time via cc608.CodecFor, which
+// admits AVC, HEVC and AV1.
 func (a *Asset) SetCC608Generator(gen *cc608.Generator) {
 	for gi := range a.Groups {
 		for ti := range a.Groups[gi].Tracks {
@@ -641,12 +640,13 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 				base.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
 				// installed for this track (i.e. -cc608 was set) AND the codec
-				// actually carries the SEI (AVC/HEVC) — not yet AV1 — so the catalog
-				// never claims captions that are not in the elementary stream.
-				// This mirrors the injection gate in newGroupCCSplice exactly, so
-				// the catalog advertises captions iff they are really injected.
-				// The value is copied into both the CMAF and LOCMAF variants
-				// below, which is correct: the SEI rides in the shared bitstream.
+				// actually carries them (AVC/HEVC in an SEI NAL unit, AV1 in a
+				// metadata OBU), so the catalog never claims captions that are
+				// not in the elementary stream. This mirrors the injection gate
+				// in newGroupCCSplice exactly, so the catalog advertises captions
+				// iff they are really injected. The value is copied into both the
+				// CMAF and LOCMAF variants below, which is correct: the captions
+				// ride in the shared bitstream.
 				if _, ok := cc608.CodecFor(ct.SpecData.Codec()); ok && ct.CC608Generator().Enabled() {
 					base.Accessibility = cta608CC1Eng
 				}
@@ -850,9 +850,9 @@ func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 				track.Framerate = Ptr(frameRate)
 				// Advertise CTA-608 captions only when an enabled generator is
 				// installed for this track (i.e. -cc608 was set) AND the codec
-				// actually carries the SEI (AVC/HEVC) — not yet AV1 — so the catalog
-				// never claims captions that are not in the elementary stream.
-				// Mirrors the injection gate in newGroupCCSplice.
+				// actually carries them (AVC/HEVC SEI, AV1 metadata OBU), so the
+				// catalog never claims captions that are not in the elementary
+				// stream. Mirrors the injection gate in newGroupCCSplice.
 				if _, ok := cc608.CodecFor(ct.SpecData.Codec()); ok && ct.CC608Generator().Enabled() {
 					track.Accessibility = cta608CC1Eng
 				}
@@ -1028,16 +1028,16 @@ func Ptr[T any](v T) *T {
 }
 
 // ccSplice carries one MoQ group's CTA-608 caption schedule so createFragment
-// can splice the right SEI in front of each frame's first VCL NALU. A nil
-// *ccSplice (or one with a nil SEI slice) disables splicing entirely, keeping
-// caption injection a complete no-op. The schedule is computed once per group
-// (in GenMoQGroup) and shared by every chunk of that group; GroupStartNr is the
-// group's first sample number, so the SEI for the frame at sample sampleNr is
-// SEI[sampleNr-GroupStartNr].
+// can splice each frame's caption envelope into its sample. A nil *ccSplice (or
+// one with a nil Schedule) disables splicing entirely, keeping caption
+// injection a complete no-op. The schedule is computed once per group (in
+// GenMoQGroup) and shared by every chunk of that group; GroupStartNr is the
+// group's first sample number, so the envelope for the frame at sample sampleNr
+// is Schedule[sampleNr-GroupStartNr].
 type ccSplice struct {
 	GroupStartNr uint64
-	SEI          [][]byte
-	Codec        carriage.Codec
+	Schedule     [][]byte
+	Codec        cc608.Codec
 }
 
 // GenCMAFChunk returns a raw CMAF chunk consisting of endNr-startNr samples.
@@ -1121,14 +1121,14 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc 
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
-		// Splice the frame's CTA-608 SEI in when captions are enabled. The
+		// Splice the frame's CTA-608 envelope in when captions are enabled. The
 		// splice allocates a fresh slice, so t.Samples is never mutated.
 		data := orig.Data
-		if cc != nil && cc.SEI != nil {
-			if idx := int(sampleNr - cc.GroupStartNr); idx >= 0 && idx < len(cc.SEI) && len(cc.SEI[idx]) > 0 {
-				spliced, err := cc608.SpliceSEIBeforeVCL(orig.Data, cc.SEI[idx], cc.Codec)
+		if cc != nil && cc.Schedule != nil {
+			if idx := int(sampleNr - cc.GroupStartNr); idx >= 0 && idx < len(cc.Schedule) && len(cc.Schedule[idx]) > 0 {
+				spliced, err := cc608.Splice(orig.Data, cc.Schedule[idx], cc.Codec)
 				if err != nil {
-					return nil, fmt.Errorf("cc608: splice SEI for sample %d: %w", sampleNr, err)
+					return nil, fmt.Errorf("cc608: splice captions for sample %d: %w", sampleNr, err)
 				}
 				data = spliced
 			}

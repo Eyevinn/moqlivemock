@@ -22,11 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A `Codec:` overlay line (now the first overlay line) burned into all generated
   test video by `utils/contentgen`, selectable via its `-codecs h264,h265,av1`
   flag.
+- **In-band CTA-608 captions**, via a new `mlmpub -cc608` flag (default off).
+  One self-contained pop-on CC1 caption per MoQ group carries the UTC clock on
+  row 13 and the group number on row 14, generated with
+  [`Eyevinn/go-608`](https://github.com/Eyevinn/go-608). All three video codecs
+  are covered — AVC and HEVC in an SEI NAL unit before the first VCL NALU, AV1
+  in a `metadata_itu_t_t35` OBU before the first frame OBU — in every packaging
+  (CMAF, LOCMAF, LOC and moq-mi) and in the encrypted namespaces, where the
+  captions are spliced in before encryption and so ride inside the ciphertext.
+  When the flag is set, the MSF/CMSF catalogs advertise the captions on each
+  video track with an `accessibility` descriptor
+  (`urn:scte:dash:cc:cea-608:2015`, `CC1=eng`); catalogless `moq-mi` signals
+  nothing and is in-band only.
 
 ### Changed
 
-- Bumped `github.com/Eyevinn/mp4ff` to v0.54.0 for the AV1 API
-  (`SequenceHeader`, `SetAV1Descriptor`, and the AV1 CENC binding).
+- Bumped `github.com/Eyevinn/mp4ff` to v0.55.0 for the AV1 API
+  (`SequenceHeader`, `SetAV1Descriptor`, the AV1 CENC binding, and the
+  CTA-608 metadata-OBU helpers).
+- Bumped `github.com/Eyevinn/go-608` to v0.7.0 for AV1 CTA-608 carriage and its
+  now-exported sample splice, which replaces moqlivemock's local copy.
 - Regenerated the AVC and HEVC `assets/test10s` tracks so they also carry the
   new codec overlay line.
 

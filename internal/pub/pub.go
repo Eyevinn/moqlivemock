@@ -402,7 +402,7 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 	}
 
 	// Optional CTA-608 caption injection (no-op unless -cc608 installed an
-	// enabled generator on this AVC/HEVC video track).
+	// enabled generator on this video track).
 	captioner := newVideoCaptioner(ct)
 
 	now := time.Now().UnixMilli()
@@ -420,8 +420,9 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 		}
 		startNr, endNr := internal.CalcLOCGroupRange(ct, groupNr, internal.MoqGroupDurMS)
 		// A LOC group is one wall-clock second, so groupNr is the caption clock
-		// anchor in whole seconds. sei is nil (no splicing) when captions are off.
-		sei := captioner.schedule(int64(groupNr), startNr, endNr)
+		// anchor in whole seconds. ccSched is nil (no splicing) when captions
+		// are off.
+		ccSched := captioner.schedule(int64(groupNr), startNr, endNr)
 		slog.Info("writing LOC group", "track", ct.Name, "group", groupNr, "objects", endNr-startNr)
 		objectID := uint64(0)
 		for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
@@ -431,9 +432,11 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 			}
 			_, origNr := ct.CalcSample(sampleNr)
 			sample := ct.Samples[origNr]
-			// Splice the frame's CTA-608 SEI before the (optional) videoConfig
-			// prepend, so parameter sets precede the SEI which precedes the VCL.
-			data := captioner.spliceFrame(sample.Data, sei, sampleNr, startNr)
+			// Splice the frame's CTA-608 envelope before the (optional)
+			// videoConfig prepend, so the decoder configuration (AVC/HEVC
+			// parameter sets, AV1 sequence header OBU) stays ahead of the
+			// captions, which in turn stay ahead of the picture data.
+			data := captioner.spliceFrame(sample.Data, ccSched, sampleNr, startNr)
 
 			sampleTime := sampleNr * sampleDur
 			objTimeMS := int64(sampleTime * 1000 / timebase)

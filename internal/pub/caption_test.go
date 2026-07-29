@@ -3,9 +3,7 @@ package pub
 import (
 	"testing"
 
-	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cta608"
-	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,15 +44,13 @@ func captionedVideoTrack(t *testing.T, name string) *internal.ContentTrack {
 	return ct
 }
 
-// decodeFrames feeds a sequence of per-frame AVCC sample datas through the
-// cta608 decoder and returns the flip count and the last-flip row 13/14 text.
-func decodeFrames(t *testing.T, frames [][]byte, codec carriage.Codec) (flips int, row13, row14 string) {
+// decodeFrames feeds a sequence of per-frame coded samples through the cta608
+// decoder and returns the flip count and the last-flip row 13/14 text.
+func decodeFrames(t *testing.T, frames [][]byte, codec cc608.Codec) (flips int, row13, row14 string) {
 	t.Helper()
 	var dec cta608.Decoder
 	for i, data := range frames {
-		nalus, err := avc.GetNalusFromSample(data)
-		require.NoErrorf(t, err, "frame %d", i)
-		f1, _, err := carriage.FieldPairs(nalus, codec)
+		f1, _, err := cc608.FieldPairs(data, codec)
 		require.NoErrorf(t, err, "frame %d FieldPairs", i)
 		if len(f1) == 0 {
 			continue
@@ -71,32 +67,33 @@ func decodeFrames(t *testing.T, frames [][]byte, codec carriage.Codec) (flips in
 
 // TestVideoCaptioner_LOC mirrors PublishLOCTrack's grouping and splicing exactly
 // (same CalcLOCGroupRange range, same per-frame spliceFrame indexing) and proves
-// the produced frames carry a decodable CC1 caption for both AVC and HEVC.
+// the produced frames carry a decodable CC1 caption for AVC, HEVC and AV1.
 func TestVideoCaptioner_LOC(t *testing.T) {
 	cases := []struct {
 		name  string
-		codec carriage.Codec
+		codec cc608.Codec
 	}{
-		{"video_400kbps_avc", carriage.CodecAVC},
-		{"video_400kbps_hevc", carriage.CodecHEVC},
+		{"video_400kbps_avc", cc608.CodecAVC},
+		{"video_400kbps_hevc", cc608.CodecHEVC},
+		{"video_400kbps_av1", cc608.CodecAV1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ct := captionedVideoTrack(t, c.name)
 			cap := newVideoCaptioner(ct)
-			require.True(t, cap.on, "captioner should be enabled for AVC/HEVC")
+			require.True(t, cap.on, "captioner should be enabled for %s", c.codec)
 			require.Equal(t, c.codec, cap.codec)
 
 			startNr, endNr := internal.CalcLOCGroupRange(ct, groupNrClock, internal.MoqGroupDurMS)
 			require.Equal(t, uint64(25), endNr-startNr)
-			sei := cap.schedule(int64(groupNrClock), startNr, endNr)
-			require.NotNil(t, sei)
-			require.Len(t, sei, 25)
+			sched := cap.schedule(int64(groupNrClock), startNr, endNr)
+			require.NotNil(t, sched)
+			require.Len(t, sched, 25)
 
 			var frames [][]byte
 			for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 				_, origNr := ct.CalcSample(sampleNr)
-				frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sei, sampleNr, startNr))
+				frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sched, sampleNr, startNr))
 			}
 			flips, row13, row14 := decodeFrames(t, frames, c.codec)
 			assert.Equal(t, 1, flips, "one pop-on cue per group")
@@ -124,24 +121,24 @@ func TestVideoCaptioner_MoqMI(t *testing.T) {
 	anchorSec := int64(startSample * sampleDur / timebase)
 	require.Equal(t, int64(groupNrClock), anchorSec, "1s GOP => anchor second == group number")
 
-	sei := cap.schedule(anchorSec, startSample, endSample)
-	require.NotNil(t, sei)
-	require.Len(t, sei, int(gopLen))
+	sched := cap.schedule(anchorSec, startSample, endSample)
+	require.NotNil(t, sched)
+	require.Len(t, sched, int(gopLen))
 
 	var frames [][]byte
 	for sampleNr := startSample; sampleNr < endSample; sampleNr++ {
 		_, origNr := ct.CalcSample(sampleNr)
-		frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sei, sampleNr, startSample))
+		frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sched, sampleNr, startSample))
 	}
-	flips, row13, row14 := decodeFrames(t, frames, carriage.CodecAVC)
+	flips, row13, row14 := decodeFrames(t, frames, cc608.CodecAVC)
 	assert.Equal(t, 1, flips)
 	assert.Equal(t, "12:34:56.000", row13)
 	assert.Equal(t, "GRP 45296", row14)
 }
 
 // TestVideoCaptioner_Disabled proves the captioner is a complete no-op when
-// captions are off, on a non-video track, or on an unsupported codec (AV1):
-// schedule returns nil and spliceFrame returns the frame unchanged.
+// captions are off or the track is not captionable: schedule returns nil and
+// spliceFrame returns the frame unchanged.
 func TestVideoCaptioner_Disabled(t *testing.T) {
 	asset, err := internal.LoadAsset("../../assets/test10s", 1, 1)
 	require.NoError(t, err)
@@ -155,13 +152,8 @@ func TestVideoCaptioner_Disabled(t *testing.T) {
 	orig := ct.Samples[0].Data
 	assert.Equal(t, orig, cap.spliceFrame(orig, nil, 0, 0))
 
-	// Generator enabled, but AV1 is an unsupported caption codec.
-	asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
-	av1 := asset.GetTrackByName("video_400kbps_av1")
-	require.NotNil(t, av1)
-	assert.False(t, newVideoCaptioner(av1).on, "AV1 must not be captioned")
-
 	// Generator enabled, but audio is not a video track.
+	asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
 	aud := asset.GetTrackByName("audio_monotonic_128kbps_aac")
 	require.NotNil(t, aud)
 	assert.False(t, newVideoCaptioner(aud).on, "audio must not be captioned")

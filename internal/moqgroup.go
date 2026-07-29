@@ -46,8 +46,8 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 	}
 	// Build the group's CTA-608 caption schedule once (per group, not per
 	// chunk) and share it across every chunk of the group. cc stays nil for a
-	// disabled/absent generator, a non-video track, or a non-AVC/HEVC codec, in
-	// which case createFragment does no splicing at all.
+	// disabled/absent generator, a non-video track, or a codec with no caption
+	// carriage, in which case createFragment does no splicing at all.
 	cc := track.newGroupCCSplice(groupNr, startNr, endNr)
 	v02State := locmaf.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
@@ -77,23 +77,24 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 
 // newGroupCCSplice builds the CTA-608 caption schedule for one MoQ group of the
 // track, covering samples [startNr,endNr). It returns nil (no splicing) unless
-// the track has an enabled caption generator, is an AVC/HEVC video track, and
-// go-608 can build the group. A MoQ group is one wall-clock second, so groupNr
-// is the caption clock anchor in whole seconds (matching cc608.DefaultContent).
+// the track has an enabled caption generator, is a video track in a codec with
+// CTA-608 carriage (AVC, HEVC or AV1), and go-608 can build the group. A MoQ
+// group is one wall-clock second, so groupNr is the caption clock anchor in
+// whole seconds (matching cc608.DefaultContent).
 func (t *ContentTrack) newGroupCCSplice(groupNr, startNr, endNr uint64) *ccSplice {
 	if !t.cc608.Enabled() || t.ContentType != "video" || t.SampleDur == 0 || endNr <= startNr {
 		return nil
 	}
 	codec, ok := cc608.CodecFor(t.SpecData.Codec())
 	if !ok {
-		return nil // AV1 (SEI carriage not yet wired) and other codecs: no captions.
+		return nil // Audio, subtitles, or a video codec with no 608 carriage.
 	}
 	fps := float64(t.TimeScale) / float64(t.SampleDur)
-	sei := t.cc608.SEISchedule(int64(groupNr), fps, int(endNr-startNr), codec)
-	if sei == nil {
+	sched := t.cc608.Schedule(int64(groupNr), fps, int(endNr-startNr), codec)
+	if sched == nil {
 		return nil
 	}
-	return &ccSplice{GroupStartNr: startNr, SEI: sei, Codec: codec}
+	return &ccSplice{GroupStartNr: startNr, Schedule: sched, Codec: codec}
 }
 
 // CalcLOCGroupRange returns the [startNr, endNr) sample range for the
