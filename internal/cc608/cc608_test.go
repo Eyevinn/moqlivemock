@@ -54,35 +54,47 @@ func assertLine(t *testing.T, name string, ln cta608.Line, row int, color cta608
 	}
 }
 
-// TestSEIScheduleRoundTrip builds a group's SEI schedule at two frame rates and
-// decodes it back through the full carriage + cta608.Decoder path, checking that
-// the group's single pop-on flip reconstructs the expected CC1 caption (round
-// trip) and that returning nFrames NALs proves no Overran occurred.
-func TestSEIScheduleRoundTrip(t *testing.T) {
+// TestScheduleRoundTrip builds a group's caption schedule at two frame rates and
+// decodes it back through the full carriage + cta608.Decoder path for all three
+// codecs, checking that the group's single pop-on flip reconstructs the expected
+// CC1 caption (round trip) and that returning nFrames envelopes proves no
+// Overran occurred. The AV1 case exercises the metadata-OBU envelope, which
+// carries the identical cc_data() and so must decode to the identical caption.
+func TestScheduleRoundTrip(t *testing.T) {
 	const groupNr = 45296 // 12:34:56 UTC
 	cases := []struct {
 		name    string
 		fps     float64
 		nFrames int
-		codec   carriage.Codec
+		codec   Codec
 	}{
-		{"25fps avc", 25.0, 25, carriage.CodecAVC},
-		{"30fps hevc", 30.0, 30, carriage.CodecHEVC},
+		{"25fps avc", 25.0, 25, CodecAVC},
+		{"30fps hevc", 30.0, 30, CodecHEVC},
+		{"25fps av1", 25.0, 25, CodecAV1},
+		{"30fps av1", 30.0, 30, CodecAV1},
 	}
 	g := New(Config{Enabled: true})
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			seis := g.SEISchedule(groupNr, c.fps, c.nFrames, c.codec)
-			if len(seis) != c.nFrames {
-				t.Fatalf("got %d SEI NALs, want %d (nil => build error / Overran)", len(seis), c.nFrames)
+			envelopes := g.Schedule(groupNr, c.fps, c.nFrames, c.codec)
+			if len(envelopes) != c.nFrames {
+				t.Fatalf("got %d envelopes, want %d (nil => build error / Overran)", len(envelopes), c.nFrames)
 			}
 
 			var dec cta608.Decoder
 			flips := 0
 			var gotTime, gotGroup string
 			var timeColor, groupColor cta608.Color
-			for i, nalu := range seis {
-				f1, _, err := carriage.FieldPairs([][]byte{nalu}, c.codec)
+			for i, env := range envelopes {
+				// A bare envelope is not a coded sample, so feed it to the
+				// decoder as the only thing in one: an AV1 metadata OBU already
+				// is a valid (frameless) OBU sequence, while an SEI NAL unit
+				// needs its 4-byte length prefix to form a NAL stream.
+				sample := env
+				if c.codec != CodecAV1 {
+					sample = carriage.PrefixNALUs(env)
+				}
+				f1, _, err := FieldPairs(sample, c.codec)
 				if err != nil {
 					t.Fatalf("frame %d FieldPairs: %v", i, err)
 				}
@@ -117,23 +129,29 @@ func TestSEIScheduleRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSEIScheduleDisabled checks that captions-off cases return nil.
-func TestSEIScheduleDisabled(t *testing.T) {
-	var nilGen *Generator
-	if got := nilGen.SEISchedule(1, 30.0, 30, carriage.CodecAVC); got != nil {
-		t.Errorf("nil Generator: got %d NALs, want nil", len(got))
-	}
-	off := New(Config{Enabled: false})
-	if got := off.SEISchedule(1, 30.0, 30, carriage.CodecAVC); got != nil {
-		t.Errorf("disabled Generator: got %d NALs, want nil", len(got))
-	}
-	on := New(Config{Enabled: true})
-	if got := on.SEISchedule(1, 30.0, 0, carriage.CodecAVC); got != nil {
-		t.Errorf("zero frames: got %d NALs, want nil", len(got))
-	}
-	// An out-of-range fps makes BuildUnitCues error; SEISchedule degrades to nil.
-	if got := on.SEISchedule(1, 5.0, 30, carriage.CodecAVC); got != nil {
-		t.Errorf("bad fps: got %d NALs, want nil", len(got))
+// TestScheduleDisabled checks that captions-off cases return nil, for every
+// codec (the early-outs precede the envelope choice, so AV1 must behave the
+// same as the SEI codecs).
+func TestScheduleDisabled(t *testing.T) {
+	for _, codec := range []Codec{CodecAVC, CodecHEVC, CodecAV1} {
+		t.Run(codec.String(), func(t *testing.T) {
+			var nilGen *Generator
+			if got := nilGen.Schedule(1, 30.0, 30, codec); got != nil {
+				t.Errorf("nil Generator: got %d envelopes, want nil", len(got))
+			}
+			off := New(Config{Enabled: false})
+			if got := off.Schedule(1, 30.0, 30, codec); got != nil {
+				t.Errorf("disabled Generator: got %d envelopes, want nil", len(got))
+			}
+			on := New(Config{Enabled: true})
+			if got := on.Schedule(1, 30.0, 0, codec); got != nil {
+				t.Errorf("zero frames: got %d envelopes, want nil", len(got))
+			}
+			// An out-of-range fps makes BuildUnitCues error; Schedule degrades to nil.
+			if got := on.Schedule(1, 5.0, 30, codec); got != nil {
+				t.Errorf("bad fps: got %d envelopes, want nil", len(got))
+			}
+		})
 	}
 }
 
@@ -158,15 +176,16 @@ func TestNewDefaults(t *testing.T) {
 func TestCodecFor(t *testing.T) {
 	cases := []struct {
 		codec     string
-		wantCodec carriage.Codec
+		wantCodec Codec
 		wantOK    bool
 	}{
-		{"avc1.640028", carriage.CodecAVC, true},
-		{"avc3.42e01e", carriage.CodecAVC, true},
-		{"hev1.2.4.L120.90", carriage.CodecHEVC, true},
-		{"hvc1.1.6.L93.90", carriage.CodecHEVC, true},
-		{"av01.0.05M.08", 0, false},
+		{"avc1.640028", CodecAVC, true},
+		{"avc3.42e01e", CodecAVC, true},
+		{"hev1.2.4.L120.90", CodecHEVC, true},
+		{"hvc1.1.6.L93.90", CodecHEVC, true},
+		{"av01.0.05M.08", CodecAV1, true},
 		{"mp4a.40.2", 0, false},
+		{"stpp.ttml.im1t", 0, false},
 		{"", 0, false},
 	}
 	for _, c := range cases {

@@ -2,11 +2,16 @@
 //
 // It is a thin, serve-path-agnostic wrapper over the Eyevinn/go-608 library. For
 // one MoQ group (== one wall-clock second) it builds a self-contained pop-on
-// caption via go-608's per-unit cue mechanism and returns one bare SEI NAL unit
-// per video frame. The caller splices each SEI in front of the frame's first VCL
-// NALU with SpliceSEIBeforeVCL. Wiring this into the publisher/catalog is a
-// separate concern (see the serve-path ticket); this package only produces the
-// SEI bytes.
+// caption via go-608's per-unit cue mechanism and returns one caption envelope
+// per video frame. The caller splices each envelope into the frame's coded
+// sample with Splice. Wiring this into the publisher/catalog is a separate
+// concern; this package only produces the caption bytes.
+//
+// The three supported codecs share one cc_data() payload but not one envelope:
+// AVC and HEVC carry it in an SEI NAL unit, AV1 in a metadata_itu_t_t35 OBU.
+// go-608 exposes those as two parallel APIs and deliberately keeps its own
+// carriage.Codec two-valued (it names NAL framing, which AV1 has none of), so
+// this package owns the three-value Codec discriminator and dispatches on it.
 package cc608
 
 import (
@@ -97,17 +102,18 @@ func (g *Generator) Channel() int { return g.channel }
 // Lang returns the advertised caption language tag.
 func (g *Generator) Lang() string { return g.lang }
 
-// SEISchedule builds one group's captions and returns one bare SEI NAL unit per
-// video frame (len == nFrames), ready to splice before each frame's first VCL
-// NALU. groupNr is the MoQ group number (== unix seconds); the group's captions
+// Schedule builds one group's captions and returns one caption envelope per
+// video frame (len == nFrames), ready to splice into the frame's coded sample
+// with Splice: a bare SEI NAL unit for AVC/HEVC, a metadata_itu_t_t35 OBU for
+// AV1. groupNr is the MoQ group number (== unix seconds); the group's captions
 // start at wall-clock groupNr*1000 ms. fps is the video frame rate and nFrames
-// the number of frames in the group; codec selects the AVC/HEVC SEI framing.
+// the number of frames in the group.
 //
 // It returns nil when captions are off (nil or disabled Generator), when
 // nFrames <= 0, or when go-608 cannot build the group (an out-of-range fps or a
 // caption that does not fit the group — the Overran case). A nil return means
 // "no captions this group"; the caller simply skips splicing.
-func (g *Generator) SEISchedule(groupNr int64, fps float64, nFrames int, codec carriage.Codec) [][]byte {
+func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Codec) [][]byte {
 	if !g.Enabled() || nFrames <= 0 {
 		return nil
 	}
@@ -116,9 +122,14 @@ func (g *Generator) SEISchedule(groupNr int64, fps float64, nFrames int, codec c
 	if err != nil {
 		return nil
 	}
+	nalCodec, isNAL := codec.nalCodec()
 	out := make([][]byte, len(frames))
 	for i, f := range frames {
-		out[i] = carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, codec)
+		if isNAL {
+			out[i] = carriage.FrameSEINALU(f.Field1, f.Field2, f.CCCount, nalCodec)
+		} else {
+			out[i] = carriage.FrameMetadataOBU(f.Field1, f.Field2, f.CCCount)
+		}
 	}
 	return out
 }
@@ -143,17 +154,19 @@ func DefaultContent(_ int, cueStartMS int64) generate.UnitCue {
 	}}
 }
 
-// CodecFor maps a representation codec string to the go-608 carriage codec:
-// "avc*" -> CodecAVC, "hev*"/"hvc*" -> CodecHEVC. It returns ok=false for any
-// other codec (AV1, audio, unknown): CTA-608 SEI carriage is wired for AVC/HEVC
-// today, and AV1 is not yet supported. The returned Codec is meaningless when
-// ok is false; always check ok.
-func CodecFor(codecStr string) (carriage.Codec, bool) {
+// CodecFor maps a representation codec string to the caption codec: "avc*" ->
+// CodecAVC, "hev*"/"hvc*" -> CodecHEVC, "av01*" -> CodecAV1. It returns
+// ok=false for anything else (audio, subtitles, unknown video), which is the
+// gate both the injection and the catalog use. The returned Codec is
+// meaningless when ok is false; always check ok.
+func CodecFor(codecStr string) (Codec, bool) {
 	switch {
 	case strings.HasPrefix(codecStr, "avc"):
-		return carriage.CodecAVC, true
+		return CodecAVC, true
 	case strings.HasPrefix(codecStr, "hev"), strings.HasPrefix(codecStr, "hvc"):
-		return carriage.CodecHEVC, true
+		return CodecHEVC, true
+	case strings.HasPrefix(codecStr, "av01"):
+		return CodecAV1, true
 	default:
 		return 0, false
 	}

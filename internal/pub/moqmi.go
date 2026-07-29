@@ -94,16 +94,17 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 		endSample := startSample + gopLen
 		// A moq-mi video group is one GOP. Anchor the caption clock at the
 		// group's wall-clock start second (samples are epoch-anchored, so
-		// startSample*sampleDur/timebase is that second). sei is nil when off.
+		// startSample*sampleDur/timebase is that second). ccSched is nil when
+		// captions are off.
 		anchorSec := int64(startSample * sampleDur / timebase)
-		sei := captioner.schedule(anchorSec, startSample, endSample)
+		ccSched := captioner.schedule(anchorSec, startSample, endSample)
 		for objectID, sampleNr := uint64(0), startSample; sampleNr < endSample; objectID, sampleNr = objectID+1, sampleNr+1 {
 			if ctx.Err() != nil {
 				return
 			}
 			_, origNr := ct.CalcSample(sampleNr)
 			sample := ct.Samples[origNr]
-			data := captioner.spliceFrame(sample.Data, sei, sampleNr, startSample)
+			data := captioner.spliceFrame(sample.Data, ccSched, sampleNr, startSample)
 			pts := sampleNr * sampleDur
 			ptsMS := int64(pts * 1000 / timebase)
 			waitMS := ptsMS - time.Now().UnixMilli()

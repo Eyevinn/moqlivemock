@@ -5,14 +5,14 @@ go 1.25.0
 require (
 	github.com/Dash-Industry-Forum/livesim2 v1.9.0
 	github.com/Eyevinn/moqtransport v0.9.0
-	github.com/Eyevinn/mp4ff v0.54.0
+	github.com/Eyevinn/mp4ff v0.55.0
 	github.com/mengelbart/qlog v0.1.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/quic-go/webtransport-go v0.11.0
 	github.com/stretchr/testify v1.11.1
 )
 
-require github.com/Eyevinn/go-608 v0.6.0
+require github.com/Eyevinn/go-608 v0.7.0
 
 require (
 	github.com/Eyevinn/locmaf v0.1.1
