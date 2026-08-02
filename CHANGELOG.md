@@ -40,8 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bumped `github.com/Eyevinn/mp4ff` to v0.55.0 for the AV1 API
   (`SequenceHeader`, `SetAV1Descriptor`, the AV1 CENC binding, and the
   CTA-608 metadata-OBU helpers).
-- Bumped `github.com/Eyevinn/go-608` to v0.7.0 for AV1 CTA-608 carriage and its
-  now-exported sample splice, which replaces moqlivemock's local copy.
+- Bumped `github.com/Eyevinn/go-608` to v0.8.0 for AV1 CTA-608 carriage and its
+  now-exported sample splice, which replaces moqlivemock's local copy. v0.8.0
+  makes a unit's number and start time independent inputs
+  (`generate.BuildUnitCues` takes a `generate.Unit`), so the caption content
+  function now reads the group number from `Unit.Nr` instead of deriving it from
+  the cue timestamp.
 - Regenerated the AVC and HEVC `assets/test10s` tracks so they also carry the
   new codec overlay line.
 

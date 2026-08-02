@@ -5,26 +5,32 @@ import (
 
 	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cta608"
+	"github.com/Eyevinn/go-608/generate"
 )
 
 // TestDefaultContent checks the two-line cue content: row 13 is the UTC clock
 // (HH:MM:SS.mmm, white, centered) and row 14 is "GRP <n>" (yellow, centered),
-// where n = cueStartMS/1000. The clock wraps at 24 h but the group keeps counting.
+// where n is the unit number the caller passed. The clock wraps at 24 h but the
+// group keeps counting. The last case pins the group to the unit number rather
+// than to the timestamp, which go-608 v0.8.0 made independent inputs.
 func TestDefaultContent(t *testing.T) {
 	cases := []struct {
 		name       string
+		unitNr     int64
 		cueStartMS int64
 		wantTime   string
 		wantGroup  string
 	}{
-		{"epoch", 0, "00:00:00.000", "GRP 0"},
-		{"whole second", 45296000, "12:34:56.000", "GRP 45296"},
-		{"sub-second millis", 45296123, "12:34:56.123", "GRP 45296"},
-		{"day wrap keeps group", 90061500, "01:01:01.500", "GRP 90061"},
+		{"epoch", 0, 0, "00:00:00.000", "GRP 0"},
+		{"whole second", 45296, 45296000, "12:34:56.000", "GRP 45296"},
+		{"sub-second millis", 45296, 45296123, "12:34:56.123", "GRP 45296"},
+		{"day wrap keeps group", 90061, 90061500, "01:01:01.500", "GRP 90061"},
+		{"number independent of time", 7, 45296000, "12:34:56.000", "GRP 7"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cue := DefaultContent(0, c.cueStartMS)
+			u := generate.Unit{Nr: c.unitNr, StartMS: c.cueStartMS}
+			cue := DefaultContent(u, 0, c.cueStartMS)
 			if len(cue.Lines) != 2 {
 				t.Fatalf("got %d lines, want 2", len(cue.Lines))
 			}
