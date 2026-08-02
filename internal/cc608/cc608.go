@@ -117,8 +117,8 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 	if !g.Enabled() || nFrames <= 0 {
 		return nil
 	}
-	unitStartMS := groupNr * 1000
-	frames, err := generate.BuildUnitCues(fps, nFrames, unitStartMS, targetPeriodMS, g.content)
+	unit := generate.Unit{Nr: groupNr, StartMS: groupNr * 1000, Frames: nFrames}
+	frames, err := generate.BuildUnitCues(fps, unit, targetPeriodMS, g.content)
 	if err != nil {
 		return nil
 	}
@@ -136,14 +136,14 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 
 // DefaultContent is the built-in CueContentFunc: two centered pop-on lines per
 // cue. Row 13 (white) is the cue's UTC wall-clock time HH:MM:SS.mmm; row 14
-// (yellow) is "GRP <n>" where n is the MoQ group number (== unix seconds), so the
-// caption is a self-describing clock. cueIdx is unused: with one cue per group the
-// content is a pure function of cueStartMS.
-func DefaultContent(_ int, cueStartMS int64) generate.UnitCue {
+// (yellow) is "GRP <n>" where n is u.Nr, the MoQ group number (== unix seconds),
+// so the caption is a self-describing clock. cueIdx is unused: with one cue per
+// group the content is a pure function of u.Nr and cueStartMS.
+func DefaultContent(u generate.Unit, _ int, cueStartMS int64) generate.UnitCue {
 	t := time.UnixMilli(cueStartMS).UTC()
 	h, m, s := t.Clock()
 	ts := fmt.Sprintf("%02d:%02d:%02d.%03d", h, m, s, t.Nanosecond()/1_000_000)
-	grp := fmt.Sprintf("GRP %d", cueStartMS/1000)
+	grp := fmt.Sprintf("GRP %d", u.Nr)
 	return generate.UnitCue{Lines: []cta608.Line{
 		{Row: captionRowTime, Align: cta608.AlignCenter, Runs: []cta608.Run{
 			{Text: ts, Pen: cta608.Pen{Color: cta608.White}},
