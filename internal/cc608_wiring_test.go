@@ -258,16 +258,18 @@ func TestGenMoQGroupCC608_EncryptedPreEncryption(t *testing.T) {
 			require.NoError(t, err)
 
 			dec := make([]MoQObject, len(mg.MoQObjects))
-			sawCiphertext := false
 			for i, obj := range mg.MoQObjects {
 				plain, err := DecryptFragment(obj, ipd, eccp.cenc.key)
 				require.NoErrorf(t, err, "decrypt object %d", i)
-				if !bytes.Equal(obj, plain) {
-					sawCiphertext = true
-				}
+				// Compare the mdat payloads, not the whole objects: decryption
+				// also strips senc/saiz/saio, so the moof always differs and a
+				// whole-object comparison would pass even on an all-clear
+				// sample — precisely the AV1 failure mode (empty tile ranges)
+				// this test exists to rule out.
+				require.NotEqualf(t, mdatData(t, obj), mdatData(t, plain),
+					"object %d media payload must actually be encrypted on the wire", i)
 				dec[i] = plain
 			}
-			require.True(t, sawCiphertext, "objects must actually be encrypted on the wire")
 
 			flips, row13, row14 := decodeGroupCaption(t, dec, c.codec)
 			assert.Equal(t, 1, flips, "one pop-on cue per group after decryption")
