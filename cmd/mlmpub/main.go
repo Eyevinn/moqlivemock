@@ -297,6 +297,7 @@ func runServer(opts *options) error {
 		tlsConfig: tlsConfig,
 		handler:   h,
 		sidePort:  opts.sidePort,
+		eccp:      eccp,
 	}
 
 	return s.runServer(ctx)

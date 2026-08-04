@@ -343,7 +343,11 @@ moqlivemock supports two independent content protection modes that can run simul
 Use `-kid`, `-iv`, and optionally `-cenckey` flags. If no cenc key is provided, the
 key-id is used as the key. The ClearKey license endpoint is served at `/clearkey` on
 the side server, so `-sideport` must be set. For production behind a reverse proxy,
-use `-laurl` to specify the external license URL announced in the catalog. The ClearKey license server always returns the key id as the cenc key, so `-kid` must match `-cenckey`.
+use `-laurl` to specify the external license URL announced in the catalog.
+
+`/clearkey` serves the configured content key — `-cenckey` when set, otherwise the
+key-id — for the configured `-kid`, and answers 404 for any other key-id. `-kid`
+and `-cenckey` may therefore differ.
 
 ```sh
 # Local development

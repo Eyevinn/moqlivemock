@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -28,8 +29,27 @@ type DRMInfo struct {
 
 // CENCInfo contains information unique to CENC and is not signaled in the catalog
 type CENCInfo struct {
+	kid []byte
 	key []byte
 	iv  []byte
+}
+
+// ContentKeyForKID returns the CENC content key configured for kid, or ok=false
+// when d holds no key for it. kid is the raw 16-byte key ID.
+//
+// This is what a ClearKey license endpoint must answer with: the configured
+// content key (-cenckey), which equals the KID only when -cenckey was omitted.
+// Handing back the KID for a stream encrypted with a different key gives EME a
+// wrong key and the decoder garbage, so an unknown KID has to be a miss rather
+// than an echo.
+func (d *DRMInfo) ContentKeyForKID(kid []byte) (key []byte, ok bool) {
+	if d == nil || d.cenc == nil || len(d.cenc.kid) == 0 {
+		return nil, false
+	}
+	if !bytes.Equal(kid, d.cenc.kid) {
+		return nil, false
+	}
+	return d.cenc.key, true
 }
 
 // ConfigureDRMFromFile reads a DRM config file and returns a *DRMInfo struct.
@@ -90,6 +110,7 @@ func ConfigureDRMFromFile(configpath string) (*DRMInfo, error) {
 	}
 
 	cenc := &CENCInfo{
+		kid: contentKey.KeyID,
 		key: contentKey.Key,
 		iv:  contentKey.ExplicitIV,
 	}
@@ -153,6 +174,7 @@ func ParseCENCflags(scheme, kidStr, keyStr, ivStr, laURL string) (*DRMInfo, erro
 	}
 
 	cenc := &CENCInfo{
+		kid: kid,
 		key: key,
 		iv:  iv,
 	}
