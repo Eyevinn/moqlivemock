@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Regenerated the AVC and HEVC `assets/test10s` tracks so they also carry the
   new codec overlay line.
 
+### Fixed
+
+- `mlmpub`'s `/clearkey` license endpoint served the requested KID back as the
+  content key, ignoring `-cenckey`. Any run that set `-cenckey` therefore
+  published content encrypted with the real key while handing players the KID,
+  so EME decrypted with the wrong key and the decoder failed on the first
+  packet. It now serves the configured content key, base64url-encoded per the
+  EME ClearKey request format, and answers 404 for a KID it has no key for
+  instead of echoing it ([#122][issue-122]).
+
 ## [0.12.0] - 2026-07-06
 
 Catalog retrieval now uses a relative joining FETCH, aligned to the live edge.
@@ -505,5 +515,6 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [interop-runner]: https://github.com/englishm/moq-interop-runner
 [interop-70]: https://github.com/englishm/moq-interop-runner/issues/70
+[issue-122]: https://github.com/Eyevinn/moqlivemock/issues/122
 [moxygen-173]: https://github.com/facebookexperimental/moxygen/issues/173
 [wp]: https://github.com/Eyevinn/warp-player
