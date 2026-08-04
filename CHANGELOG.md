@@ -28,8 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [`Eyevinn/go-608`](https://github.com/Eyevinn/go-608). All three video codecs
   are covered — AVC and HEVC in an SEI NAL unit before the first VCL NALU, AV1
   in a `metadata_itu_t_t35` OBU before the first frame OBU — in every packaging
-  (CMAF, LOCMAF, LOC and moq-mi) and in the encrypted namespaces, where the
-  captions are spliced in before encryption and so ride inside the ciphertext.
+  (CMAF, LOCMAF, LOC and moq-mi, whose video is AVC-only) and in the encrypted
+  namespaces, where the captions are spliced in before encryption and so ride
+  inside the ciphertext.
   When the flag is set, the MSF/CMSF catalogs advertise the captions on each
   video track with an `accessibility` descriptor
   (`urn:scte:dash:cc:cea-608:2015`, `CC1=eng`); catalogless `moq-mi` signals

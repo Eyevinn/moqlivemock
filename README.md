@@ -193,8 +193,9 @@ second), with the UTC time on row 13 (white) and the group number on row 14
 caption timing directly verifiable against the picture.
 
 All three video codecs carry the captions, in every packaging (CMAF, LOCMAF,
-LOC and moq-mi) and including the encrypted namespaces, where the captions are
-injected before encryption and so ride inside the ciphertext:
+LOC and moq-mi — note that moq-mi video is AVC-only) and including the encrypted
+namespaces, where the captions are injected before encryption and so ride inside
+the ciphertext:
 
 | Codec | Carriage |
 |-------|----------|

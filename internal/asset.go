@@ -1109,10 +1109,12 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 
 // createFragment creates a fragment from the track with sequence number chunkNr,
 // and samples from startNr to endNr. When cc carries a per-group CTA-608 schedule
-// the matching SEI NAL is spliced in front of each frame's first VCL NALU before
-// the sample is added — and thus before any encryption in the callers — so the
-// captions ride inside the encrypted payload. A nil cc (or one whose SEI does not
-// cover the frame) leaves the sample data untouched, i.e. a complete no-op.
+// the matching caption envelope is spliced into each frame's coded sample (an SEI
+// NAL before the first VCL NALU for AVC/HEVC, a metadata OBU before the first
+// frame OBU for AV1) before the sample is added — and thus before any encryption
+// in the callers — so the captions ride inside the encrypted payload. A nil cc
+// (or one whose schedule does not cover the frame) leaves the sample data
+// untouched, i.e. a complete no-op.
 func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc *ccSplice) (*mp4.Fragment, error) {
 	f, err := mp4.CreateFragment(chunkNr, trackID)
 	if err != nil {

@@ -38,7 +38,7 @@ const (
 
 // defaultChannel is CC1 (the primary field-1 caption service). go-608's
 // BuildUnitCues always serializes CC1 on field 1, so this is currently a
-// descriptive setting (used by the catalog/consumer, not by SEISchedule).
+// descriptive setting (used by the catalog/consumer, not by Schedule).
 const defaultChannel = 1
 
 // defaultLang is the BCP-47-ish language tag advertised for the caption service.
@@ -48,7 +48,8 @@ const defaultLang = "eng"
 // disabled generator; Channel and Lang default to CC1/"eng" when left zero/empty,
 // and Content defaults to DefaultContent when nil.
 type Config struct {
-	// Enabled turns caption generation on. A disabled Generator returns no SEI.
+	// Enabled turns caption generation on. A disabled Generator produces no
+	// caption envelopes.
 	Enabled bool
 	// Channel is the CEA-608 caption channel (1 == CC1). Informational: go-608
 	// emits CC1 on field 1 regardless.
@@ -59,9 +60,10 @@ type Config struct {
 	Content generate.CueContentFunc
 }
 
-// Generator produces per-frame CTA-608 SEI for MoQ groups. A nil *Generator is a
-// valid, disabled generator: SEISchedule returns nil for it. This lets a consumer
-// hold a possibly-nil *Generator to mean "captions off" without a branch.
+// Generator produces per-frame CTA-608 caption envelopes for MoQ groups. A nil
+// *Generator is a valid, disabled generator: Schedule returns nil for it. This
+// lets a consumer hold a possibly-nil *Generator to mean "captions off" without
+// a branch.
 type Generator struct {
 	enabled bool
 	channel int
@@ -110,9 +112,10 @@ func (g *Generator) Lang() string { return g.lang }
 // the number of frames in the group.
 //
 // It returns nil when captions are off (nil or disabled Generator), when
-// nFrames <= 0, or when go-608 cannot build the group (an out-of-range fps or a
-// caption that does not fit the group — the Overran case). A nil return means
-// "no captions this group"; the caller simply skips splicing.
+// nFrames <= 0, when codec is not one of the three supported values, or when
+// go-608 cannot build the group (an out-of-range fps or a caption that does not
+// fit the group — the Overran case). A nil return means "no captions this
+// group"; the caller simply skips splicing.
 func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Codec) [][]byte {
 	if !g.Enabled() || nFrames <= 0 {
 		return nil
@@ -122,7 +125,10 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 	if err != nil {
 		return nil
 	}
-	nalCodec, isNAL := codec.nalCodec()
+	nalCodec, isNAL, err := codec.nalCodec()
+	if err != nil {
+		return nil
+	}
 	out := make([][]byte, len(frames))
 	for i, f := range frames {
 		if isNAL {

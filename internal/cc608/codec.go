@@ -13,8 +13,9 @@ import (
 // This is the three-value discriminator go-608 leaves to its consumers:
 // carriage.Codec names NAL framing and so stays two-valued, with the AV1
 // metadata-OBU functions sitting beside the SEI ones rather than inside them.
-// Keeping the third value here means a switch that forgets AV1 fails to
-// compile instead of silently captioning nothing.
+// Every value is enumerated explicitly in nalCodec, so a fourth codec added
+// here surfaces as an error at its first caption call rather than being
+// misrouted to the AV1 splicer.
 type Codec int
 
 const (
@@ -37,15 +38,20 @@ func (c Codec) String() string {
 }
 
 // nalCodec maps the NAL-framed codecs onto go-608's carriage.Codec. ok is false
-// for CodecAV1, which has no NAL units and takes the parallel OBU path.
-func (c Codec) nalCodec() (carriage.Codec, bool) {
+// for CodecAV1, which has no NAL units and takes the parallel OBU path. Any
+// other value is an error rather than a silent fall-through to the OBU path: a
+// new codec added to Codec without a case here must not have its samples handed
+// to the AV1 splicer, which would abort the whole track deep in the serve path.
+func (c Codec) nalCodec() (nc carriage.Codec, isNAL bool, err error) {
 	switch c {
 	case CodecAVC:
-		return carriage.CodecAVC, true
+		return carriage.CodecAVC, true, nil
 	case CodecHEVC:
-		return carriage.CodecHEVC, true
+		return carriage.CodecHEVC, true, nil
+	case CodecAV1:
+		return 0, false, nil
 	default:
-		return 0, false
+		return 0, false, fmt.Errorf("cc608: unsupported codec %s", c)
 	}
 }
 
@@ -59,7 +65,11 @@ func (c Codec) nalCodec() (carriage.Codec, bool) {
 // sequence header. Both keep the caption ahead of the picture data of the same
 // access unit, which is what puts it in scope for that frame.
 func Splice(sample, envelope []byte, codec Codec) ([]byte, error) {
-	if nalCodec, ok := codec.nalCodec(); ok {
+	nalCodec, isNAL, err := codec.nalCodec()
+	if err != nil {
+		return nil, err
+	}
+	if isNAL {
 		return carriage.SpliceSEIBeforeVCL(sample, envelope, nalCodec)
 	}
 	return carriage.SpliceOBUBeforeFrame(sample, envelope)
@@ -73,8 +83,11 @@ func Splice(sample, envelope []byte, codec Codec) ([]byte, error) {
 // stream" is one call regardless of codec — the same dispatch as Splice, in the
 // opposite direction.
 func FieldPairs(sample []byte, codec Codec) (field1, field2 []byte, err error) {
-	nalCodec, ok := codec.nalCodec()
-	if !ok {
+	nalCodec, isNAL, err := codec.nalCodec()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isNAL {
 		return carriage.OBUFieldPairs(sample)
 	}
 	nalus, err := carriage.SampleNALUs(sample)
