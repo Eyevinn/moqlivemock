@@ -46,10 +46,20 @@ func mdatData(t *testing.T, chunk []byte) []byte {
 	return mdat.Data
 }
 
-// decodeGroupCaption feeds a whole group's per-object captions through the
-// cta608 decoder in order and returns the number of on-screen flips plus the
-// text of rows 13 and 14 at the last flip.
-func decodeGroupCaption(t *testing.T, objects []MoQObject, codec cc608.Codec) (flips int, row13, row14 string) {
+// decodeGroupCaption feeds a whole group's per-object captions through a fresh
+// cta608 decoder in order and returns how many times the displayed screen
+// changed plus the text of rows 13 and 14 as the group leaves it.
+//
+// The decoder is fresh per call and is fed one group's objects only, so a passing
+// assertion is also proof the group is self-contained: whatever the caption reads
+// at the end was derived from that group's samples alone, which is what lets a
+// subscriber join at an arbitrary group.
+//
+// The screen is read at the end rather than at a change, because the number of
+// changes is mode-dependent: pop-on flips its caption on once, while paint-on
+// grows it two characters at a time and so changes the screen repeatedly. Both
+// leave the same finished caption displayed.
+func decodeGroupCaption(t *testing.T, objects []MoQObject, codec cc608.Codec) (changes int, row13, row14 string) {
 	t.Helper()
 	var dec cta608.Decoder
 	for i, obj := range objects {
@@ -60,12 +70,10 @@ func decodeGroupCaption(t *testing.T, objects []MoQObject, codec cc608.Codec) (f
 		}
 		require.NoErrorf(t, dec.Feed(f1), "object %d decode", i)
 		if dec.Changed() {
-			flips++
-			row13 = rowText(dec.Screen(), 13)
-			row14 = rowText(dec.Screen(), 14)
+			changes++
 		}
 	}
-	return flips, row13, row14
+	return changes, rowText(dec.Screen(), 13), rowText(dec.Screen(), 14)
 }
 
 // rowText concatenates the text of the decoded screen row with the given index.
@@ -85,27 +93,30 @@ func rowText(s cta608.Screen, idx int) string {
 
 // TestGenMoQGroupCC608_CMAF verifies that with an enabled generator installed
 // via SetCC608Generator, a CMAF-packaged video group carries a decodable CTA-608
-// CC1 caption for AVC, HEVC and AV1. It also confirms one flip per group (one
-// pop-on cue per wall-clock second).
+// CC1 caption for AVC, HEVC and AV1, in both caption modes. The mode reaching the
+// serve path at all is the point of covering both here; how each one gets the
+// caption on screen is pinned in the cc608 package's own tests.
 func TestGenMoQGroupCC608_CMAF(t *testing.T) {
-	for _, c := range captionCodecCases {
-		t.Run(c.name, func(t *testing.T) {
-			asset, err := LoadAsset("../assets/test10s", 1, 1)
-			require.NoError(t, err)
-			asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
+	for _, mode := range []cc608.Mode{cc608.ModePaintOn, cc608.ModePopOn} {
+		for _, c := range captionCodecCases {
+			t.Run(mode.String()+"/"+c.name, func(t *testing.T) {
+				asset, err := LoadAsset("../assets/test10s", 1, 1)
+				require.NoError(t, err)
+				asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true, Mode: mode}))
 
-			ct := asset.GetTrackByName(c.name)
-			require.NotNil(t, ct)
+				ct := asset.GetTrackByName(c.name)
+				require.NotNil(t, ct)
 
-			mg, err := GenMoQGroup(ct, groupNrClock, 1, MoqGroupDurMS, "cmaf")
-			require.NoError(t, err)
-			require.Equal(t, 25, len(mg.MoQObjects), "25 fps => 25 objects in a 1s group")
+				mg, err := GenMoQGroup(ct, groupNrClock, 1, MoqGroupDurMS, "cmaf")
+				require.NoError(t, err)
+				require.Equal(t, 25, len(mg.MoQObjects), "25 fps => 25 objects in a 1s group")
 
-			flips, row13, row14 := decodeGroupCaption(t, mg.MoQObjects, c.codec)
-			assert.Equal(t, 1, flips, "one pop-on cue per group")
-			assert.Equal(t, "12:34:56.000", row13)
-			assert.Equal(t, "GRP 45296", row14)
-		})
+				changes, row13, row14 := decodeGroupCaption(t, mg.MoQObjects, c.codec)
+				assert.Positive(t, changes, "the caption must reach the screen")
+				assert.Equal(t, "12:34:56.000", row13)
+				assert.Equal(t, "GRP 45296", row14)
+			})
+		}
 	}
 }
 
@@ -209,8 +220,8 @@ func TestGenMoQGroupCC608_LOCMAF(t *testing.T) {
 				chunks[i] = chunk
 			}
 
-			flips, row13, row14 := decodeGroupCaption(t, chunks, c.codec)
-			assert.Equal(t, 1, flips, "one pop-on cue per group")
+			changes, row13, row14 := decodeGroupCaption(t, chunks, c.codec)
+			assert.Positive(t, changes, "the caption must reach the screen")
 			assert.Equal(t, "12:34:56.000", row13)
 			assert.Equal(t, "GRP 45296", row14)
 		})
@@ -271,8 +282,8 @@ func TestGenMoQGroupCC608_EncryptedPreEncryption(t *testing.T) {
 				dec[i] = plain
 			}
 
-			flips, row13, row14 := decodeGroupCaption(t, dec, c.codec)
-			assert.Equal(t, 1, flips, "one pop-on cue per group after decryption")
+			changes, row13, row14 := decodeGroupCaption(t, dec, c.codec)
+			assert.Positive(t, changes, "the caption must reach the screen after decryption")
 			assert.Equal(t, "12:34:56.000", row13)
 			assert.Equal(t, "GRP 45296", row14)
 		})

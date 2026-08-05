@@ -44,9 +44,15 @@ func captionedVideoTrack(t *testing.T, name string) *internal.ContentTrack {
 	return ct
 }
 
-// decodeFrames feeds a sequence of per-frame coded samples through the cta608
-// decoder and returns the flip count and the last-flip row 13/14 text.
-func decodeFrames(t *testing.T, frames [][]byte, codec cc608.Codec) (flips int, row13, row14 string) {
+// decodeFrames feeds a sequence of per-frame coded samples through a fresh cta608
+// decoder and returns how many times the displayed screen changed plus the row
+// 13/14 text the last frame leaves on it.
+//
+// The screen is read at the end rather than at a change because the change count
+// is mode-dependent: pop-on flips its caption on once, paint-on grows it two
+// characters at a time. Both leave the same finished caption displayed, which is
+// what these tests are about.
+func decodeFrames(t *testing.T, frames [][]byte, codec cc608.Codec) (changes int, row13, row14 string) {
 	t.Helper()
 	var dec cta608.Decoder
 	for i, data := range frames {
@@ -57,12 +63,10 @@ func decodeFrames(t *testing.T, frames [][]byte, codec cc608.Codec) (flips int, 
 		}
 		require.NoErrorf(t, dec.Feed(f1), "frame %d decode", i)
 		if dec.Changed() {
-			flips++
-			row13 = rowText(dec.Screen(), 13)
-			row14 = rowText(dec.Screen(), 14)
+			changes++
 		}
 	}
-	return flips, row13, row14
+	return changes, rowText(dec.Screen(), 13), rowText(dec.Screen(), 14)
 }
 
 // TestVideoCaptioner_LOC mirrors PublishLOCTrack's grouping and splicing exactly
@@ -95,8 +99,8 @@ func TestVideoCaptioner_LOC(t *testing.T) {
 				_, origNr := ct.CalcSample(sampleNr)
 				frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sched, sampleNr, startNr))
 			}
-			flips, row13, row14 := decodeFrames(t, frames, c.codec)
-			assert.Equal(t, 1, flips, "one pop-on cue per group")
+			changes, row13, row14 := decodeFrames(t, frames, c.codec)
+			assert.Positive(t, changes, "the caption must reach the screen")
 			assert.Equal(t, "12:34:56.000", row13)
 			assert.Equal(t, "GRP 45296", row14)
 		})
@@ -130,8 +134,8 @@ func TestVideoCaptioner_MoqMI(t *testing.T) {
 		_, origNr := ct.CalcSample(sampleNr)
 		frames = append(frames, cap.spliceFrame(ct.Samples[origNr].Data, sched, sampleNr, startSample))
 	}
-	flips, row13, row14 := decodeFrames(t, frames, cc608.CodecAVC)
-	assert.Equal(t, 1, flips)
+	changes, row13, row14 := decodeFrames(t, frames, cc608.CodecAVC)
+	assert.Positive(t, changes, "the caption must reach the screen")
 	assert.Equal(t, "12:34:56.000", row13)
 	assert.Equal(t, "GRP 45296", row14)
 }
