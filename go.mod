@@ -12,7 +12,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 )
 
-require github.com/Eyevinn/go-608 v0.8.0
+require github.com/Eyevinn/go-608 v0.9.0
 
 require (
 	github.com/Eyevinn/locmaf v0.1.1
