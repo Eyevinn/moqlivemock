@@ -187,10 +187,36 @@ rather than as a separate track:
 ./mlmpub -cc608
 ```
 
-One self-contained pop-on caption is generated per MoQ group (one wall-clock
-second), with the UTC time on row 13 (white) and the group number on row 14
-(yellow) — the same self-describing clock as the subtitle tracks, which makes
-caption timing directly verifiable against the picture.
+One self-contained caption is generated per MoQ group (one wall-clock second),
+with the UTC time on row 13 (white) and the group number on row 14 (yellow) — the
+same self-describing clock as the subtitle tracks, which makes caption timing
+directly verifiable against the picture.
+
+### Caption mode
+
+`-cc608mode` selects how the caption reaches the screen. Both modes keep every
+group independent: a group's whole caption is derivable from that group's samples
+alone, so a subscriber joining at an arbitrary group is correct immediately.
+
+| `-cc608mode` | On screen | Frame it lands on (25 fps, 1 s group) |
+|---|---|---|
+| `paint-on` (default) | Screen clears on the group's first frame, then the caption grows two characters per frame and stands for the rest of the group | first characters at frame 4, complete at frame 17 |
+| `pop-on` | Built invisibly, then the whole caption flips on at once — the classic broadcast style | nothing until frame 18, then displayed into the *next* group |
+
+```shell
+./mlmpub -cc608                      # paint-on
+./mlmpub -cc608 -cc608mode pop-on    # classic pop-on
+```
+
+Paint-on is the default because a MoQ group is one second and carries exactly one
+cue, so the visible transition decides the display interval. Its caption is
+displayed over the second it names; pop-on's build drains one byte pair per frame,
+so the flip lands three-quarters through the group and the caption reading
+`GRP n` is mostly on screen during group *n+1*. Aligning pop-on would mean
+spending the previous group's frames on this group's build (go-608's
+`WithFlipAtCueStart`), which is exactly the cross-group dependency that low
+latency and independent groups rule out. The progressive typing doubles as a
+liveness tell.
 
 All three video codecs carry the captions, in every packaging (CMAF, LOCMAF,
 LOC and moq-mi — note that moq-mi video is AVC-only) and including the encrypted

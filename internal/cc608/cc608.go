@@ -1,11 +1,12 @@
 // Package cc608 generates in-band CTA-608 closed captions for moqlivemock video.
 //
 // It is a thin, serve-path-agnostic wrapper over the Eyevinn/go-608 library. For
-// one MoQ group (== one wall-clock second) it builds a self-contained pop-on
-// caption via go-608's per-unit cue mechanism and returns one caption envelope
-// per video frame. The caller splices each envelope into the frame's coded
-// sample with Splice. Wiring this into the publisher/catalog is a separate
-// concern; this package only produces the caption bytes.
+// one MoQ group (== one wall-clock second) it builds a self-contained caption via
+// go-608's per-unit cue mechanism — painted on progressively or popped on whole,
+// see Mode — and returns one caption envelope per video frame. The caller splices
+// each envelope into the frame's coded sample with Splice. Wiring this into the
+// publisher/catalog is a separate concern; this package only produces the caption
+// bytes.
 //
 // The three supported codecs share one cc_data() payload but not one envelope:
 // AVC and HEVC carry it in an SEI NAL unit, AV1 in a metadata_itu_t_t35 OBU.
@@ -22,11 +23,12 @@ import (
 	"github.com/Eyevinn/go-608/carriage"
 	"github.com/Eyevinn/go-608/cta608"
 	"github.com/Eyevinn/go-608/generate"
+	"github.com/Eyevinn/go-608/schedule"
 )
 
 // targetPeriodMS is the nominal caption update period handed to go-608. A MoQ
 // group is one second (MoqGroupDurMS), so with a 1000 ms period NumCues resolves
-// to exactly one cue per group: one self-contained pop-on caption per group.
+// to exactly one cue per group: one self-contained caption per group.
 const targetPeriodMS = 1000
 
 // Caption rows (1..15, 15 = bottom). The two lines sit near the bottom but leave
@@ -58,6 +60,8 @@ type Config struct {
 	Lang string
 	// Content formats each cue's lines. Nil selects DefaultContent.
 	Content generate.CueContentFunc
+	// Mode selects paint-on or pop-on delivery. The zero value is ModePaintOn.
+	Mode Mode
 }
 
 // Generator produces per-frame CTA-608 caption envelopes for MoQ groups. A nil
@@ -69,6 +73,7 @@ type Generator struct {
 	channel int
 	lang    string
 	content generate.CueContentFunc
+	mode    Mode
 }
 
 // New returns a Generator from cfg, filling in the CC1/"eng"/DefaultContent
@@ -91,6 +96,7 @@ func New(cfg Config) *Generator {
 		channel: channel,
 		lang:    lang,
 		content: content,
+		mode:    cfg.Mode,
 	}
 }
 
@@ -104,12 +110,19 @@ func (g *Generator) Channel() int { return g.channel }
 // Lang returns the advertised caption language tag.
 func (g *Generator) Lang() string { return g.lang }
 
+// Mode returns the caption delivery mode.
+func (g *Generator) Mode() Mode { return g.mode }
+
 // Schedule builds one group's captions and returns one caption envelope per
 // video frame (len == nFrames), ready to splice into the frame's coded sample
 // with Splice: a bare SEI NAL unit for AVC/HEVC, a metadata_itu_t_t35 OBU for
 // AV1. groupNr is the MoQ group number (== unix seconds); the group's captions
 // start at wall-clock groupNr*1000 ms. fps is the video frame rate and nFrames
 // the number of frames in the group.
+//
+// The group's caption is whole and self-contained in either Mode, so the result
+// depends only on this group's number — never on a neighbouring group — which is
+// what lets a subscriber join at an arbitrary group.
 //
 // It returns nil when captions are off (nil or disabled Generator), when
 // nFrames <= 0, when codec is not one of the three supported values, or when
@@ -121,7 +134,17 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 		return nil
 	}
 	unit := generate.Unit{Nr: groupNr, StartMS: groupNr * 1000, Frames: nFrames}
-	frames, err := generate.BuildUnitCues(fps, unit, targetPeriodMS, g.content)
+	// The two builders take the same arguments and return the same per-frame
+	// slice; only what the decoder does with the pairs differs. Neither is passed
+	// a cross-unit option (go-608's WithFlipAtCueStart), which is what keeps a
+	// group's caption derivable from that group alone.
+	var frames []schedule.Frame
+	var err error
+	if g.mode == ModePopOn {
+		frames, err = generate.BuildUnitCues(fps, unit, targetPeriodMS, g.content)
+	} else {
+		frames, err = generate.BuildUnitPaintCues(fps, unit, targetPeriodMS, g.content)
+	}
 	if err != nil {
 		return nil
 	}
@@ -140,7 +163,7 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 	return out
 }
 
-// DefaultContent is the built-in CueContentFunc: two centered pop-on lines per
+// DefaultContent is the built-in CueContentFunc: two centered lines per
 // cue. Row 13 (white) is the cue's UTC wall-clock time HH:MM:SS.mmm; row 14
 // (yellow) is "GRP <n>" where n is u.Nr, the MoQ group number (== unix seconds),
 // so the caption is a self-describing clock. cueIdx is unused: with one cue per

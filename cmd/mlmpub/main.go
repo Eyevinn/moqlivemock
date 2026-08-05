@@ -64,6 +64,7 @@ type options struct {
 	laURL            string
 	drmConfigPath    string
 	cc608            bool
+	cc608Mode        string
 	version          bool
 }
 
@@ -96,6 +97,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.drmConfigPath, "drmpath", "", "path to a drm config file")
 	fs.BoolVar(&opts.cc608, "cc608", false,
 		"inject auto-generated CTA-608 CC1 captions into AVC, HEVC and AV1 video")
+	fs.StringVar(&opts.cc608Mode, "cc608mode", "",
+		fmt.Sprintf("CTA-608 caption delivery mode: %s (default %s). Requires -cc608",
+			strings.Join(cc608.ModeNames(), " or "), cc608.ModePaintOn))
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -190,9 +194,17 @@ func runServer(opts *options) error {
 	// Enable in-band CTA-608 caption injection on video tracks when requested.
 	// A nil generator (the default) is a complete no-op; the codec gate is
 	// applied per track at serve time.
+	ccMode, err := cc608.ParseMode(opts.cc608Mode)
+	if err != nil {
+		return err
+	}
+	if opts.cc608Mode != "" && !opts.cc608 {
+		return fmt.Errorf("-cc608mode %s requires -cc608", opts.cc608Mode)
+	}
 	if opts.cc608 {
-		asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true}))
-		slog.Info("enabled CTA-608 caption injection (CC1) on AVC, HEVC and AV1 video tracks")
+		asset.SetCC608Generator(cc608.New(cc608.Config{Enabled: true, Mode: ccMode}))
+		slog.Info("enabled CTA-608 caption injection (CC1) on AVC, HEVC and AV1 video tracks",
+			"mode", ccMode)
 	}
 
 	now := time.Now().UnixMilli()

@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   video track with an `accessibility` descriptor
   (`urn:scte:dash:cc:cea-608:2015`, `CC1=eng`); catalogless `moq-mi` signals
   nothing and is in-band only.
+- **`mlmpub -cc608mode paint-on|pop-on`** (default `paint-on`) selects how an
+  in-band CTA-608 caption reaches the screen. Paint-on clears the screen on the
+  group's first frame and then grows the caption two characters per frame, so it
+  is displayed over the second it names — at 25 fps the first characters land on
+  frame 4 and the caption is complete on frame 17 of 25. Pop-on builds the caption
+  invisibly and flips it on whole, which at 25 fps happens on frame 18, leaving
+  the caption reading `GRP n` on screen mostly during group *n+1*. Both modes keep
+  every group independent — a group's whole caption comes from that group's
+  samples alone — which is why paint-on is the default and why go-608's cross-unit
+  `WithFlipAtCueStart` is not used ([#118][issue-118]).
 
 ### Changed
 
@@ -50,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the package's own `cc608.DefaultContent`, not go-608's default `Config`
   whose UTC line shortened to time-of-day, and the stricter `generate.NumCues`
   still yields one cue for a one-second MoQ group at every broadcast rate. v0.9.0
-  additionally offers paint-on and roll-up caption modes, which moqlivemock does
-  not use yet.
+  additionally offers paint-on and roll-up caption modes; moqlivemock now uses
+  paint-on (see `-cc608mode` above) and not roll-up.
 - Regenerated the AVC and HEVC `assets/test10s` tracks so they also carry the
   new codec overlay line.
 
@@ -520,6 +530,7 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [interop-runner]: https://github.com/englishm/moq-interop-runner
 [interop-70]: https://github.com/englishm/moq-interop-runner/issues/70
+[issue-118]: https://github.com/Eyevinn/moqlivemock/issues/118
 [issue-122]: https://github.com/Eyevinn/moqlivemock/issues/122
 [moxygen-173]: https://github.com/facebookexperimental/moxygen/issues/173
 [wp]: https://github.com/Eyevinn/warp-player
