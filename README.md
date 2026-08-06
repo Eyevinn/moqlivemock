@@ -194,18 +194,21 @@ directly verifiable against the picture.
 
 ### Caption mode
 
-`-cc608mode` selects how the caption reaches the screen. Both modes keep every
-group independent: a group's whole caption is derivable from that group's samples
-alone, so a subscriber joining at an arbitrary group is correct immediately.
+`-cc608mode` selects how the caption reaches the screen, covering all three
+CTA-608 presentation styles. Every mode keeps every group independent: a group's
+whole caption is derivable from that group's samples alone, so a subscriber
+joining at an arbitrary group is correct immediately.
 
 | `-cc608mode` | On screen | Frame it lands on (25 fps, 1 s group) |
 |---|---|---|
 | `paint-on` (default) | Screen clears on the group's first frame, then the caption grows two characters per frame and stands for the rest of the group | first characters at frame 4, complete at frame 17 |
+| `roll-up2`, `roll-up3`, `roll-up4` | Types onto the base row the same way, but scrolls the window up before each line instead of clearing the screen. The digit is the window size (RU2/RU3/RU4); bare `roll-up` means `roll-up2` | first characters at frame 5, complete at frame 19 |
 | `pop-on` | Built invisibly, then the whole caption flips on at once — the classic broadcast style | nothing until frame 18, then displayed into the *next* group |
 
 ```shell
-./mlmpub -cc608                      # paint-on
-./mlmpub -cc608 -cc608mode pop-on    # classic pop-on
+./mlmpub -cc608                       # paint-on
+./mlmpub -cc608 -cc608mode roll-up3   # roll-up, 3-row window
+./mlmpub -cc608 -cc608mode pop-on     # classic pop-on
 ```
 
 Paint-on is the default because a MoQ group is one second and carries exactly one
@@ -217,6 +220,22 @@ spending the previous group's frames on this group's build (go-608's
 `WithFlipAtCueStart`), which is exactly the cross-group dependency that low
 latency and independent groups rule out. The progressive typing doubles as a
 liveness tell.
+
+Roll-up animates like paint-on and finishes two frames later, the cost of the
+extra carriage return it sends per line. Two details are worth knowing:
+
+* **The window size changes the wire, not the picture.** With one cue per group
+  and the window reset at each group's first frame, only the two rows a group
+  writes for itself are ever filled, so `roll-up2`, `roll-up3` and `roll-up4`
+  display identically here. What differs is the RU2/RU3/RU4 mode code the
+  decoder receives, which is the point for exercising a decoder against all
+  three.
+* **The window is reset per group, not carried.** go-608 can carry a roll-up
+  window across units (`WithRollUpCarry`), which is how broadcast roll-up fills
+  to its full depth — but the displayed rows would then depend on the preceding
+  groups, and a subscriber joining mid-stream would see a partly filled window.
+  moqlivemock always resets, keeping groups independent in display as well as in
+  data.
 
 All three video codecs carry the captions, in every packaging (CMAF, LOCMAF,
 LOC and moq-mi — note that moq-mi video is AVC-only) and including the encrypted

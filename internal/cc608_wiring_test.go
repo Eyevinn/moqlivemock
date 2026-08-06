@@ -97,7 +97,7 @@ func rowText(s cta608.Screen, idx int) string {
 // serve path at all is the point of covering both here; how each one gets the
 // caption on screen is pinned in the cc608 package's own tests.
 func TestGenMoQGroupCC608_CMAF(t *testing.T) {
-	for _, mode := range []cc608.Mode{cc608.ModePaintOn, cc608.ModePopOn} {
+	for _, mode := range []cc608.Mode{cc608.ModePaintOn, cc608.ModePopOn, cc608.ModeRollUp3} {
 		for _, c := range captionCodecCases {
 			t.Run(mode.String()+"/"+c.name, func(t *testing.T) {
 				asset, err := LoadAsset("../assets/test10s", 1, 1)
