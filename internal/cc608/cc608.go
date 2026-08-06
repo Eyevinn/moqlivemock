@@ -2,8 +2,8 @@
 //
 // It is a thin, serve-path-agnostic wrapper over the Eyevinn/go-608 library. For
 // one MoQ group (== one wall-clock second) it builds a self-contained caption via
-// go-608's per-unit cue mechanism — painted on progressively or popped on whole,
-// see Mode — and returns one caption envelope per video frame. The caller splices
+// go-608's per-unit cue mechanism — painted on progressively, rolled up, or popped
+// on whole, see Mode — and returns one caption envelope per video frame. The caller splices
 // each envelope into the frame's coded sample with Splice. Wiring this into the
 // publisher/catalog is a separate concern; this package only produces the caption
 // bytes.
@@ -134,15 +134,19 @@ func (g *Generator) Schedule(groupNr int64, fps float64, nFrames int, codec Code
 		return nil
 	}
 	unit := generate.Unit{Nr: groupNr, StartMS: groupNr * 1000, Frames: nFrames}
-	// The two builders take the same arguments and return the same per-frame
-	// slice; only what the decoder does with the pairs differs. Neither is passed
-	// a cross-unit option (go-608's WithFlipAtCueStart), which is what keeps a
-	// group's caption derivable from that group alone.
+	// The three builders take the same arguments (roll-up adds its window size)
+	// and return the same per-frame slice; only what the decoder does with the
+	// pairs differs. None is passed a cross-unit option — not go-608's
+	// WithFlipAtCueStart for pop-on, nor WithRollUpCarry for roll-up — which is
+	// what keeps a group's caption derivable from that group alone.
 	var frames []schedule.Frame
 	var err error
-	if g.mode == ModePopOn {
+	switch rows, isRollUp := g.mode.rollUpRows(); {
+	case isRollUp:
+		frames, err = generate.BuildUnitRollUpCues(fps, unit, targetPeriodMS, rows, g.content)
+	case g.mode == ModePopOn:
 		frames, err = generate.BuildUnitCues(fps, unit, targetPeriodMS, g.content)
-	} else {
+	default:
 		frames, err = generate.BuildUnitPaintCues(fps, unit, targetPeriodMS, g.content)
 	}
 	if err != nil {

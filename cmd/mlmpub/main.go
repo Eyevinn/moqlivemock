@@ -98,8 +98,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.cc608, "cc608", false,
 		"inject auto-generated CTA-608 CC1 captions into AVC, HEVC and AV1 video")
 	fs.StringVar(&opts.cc608Mode, "cc608mode", "",
-		fmt.Sprintf("CTA-608 caption delivery mode: %s (default %s). Requires -cc608",
-			strings.Join(cc608.ModeNames(), " or "), cc608.ModePaintOn))
+		fmt.Sprintf("CTA-608 caption delivery mode: %s (default %s; \"roll-up\" means roll-up2)."+
+			" Requires -cc608", strings.Join(cc608.ModeNames(), ", "), cc608.ModePaintOn))
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
 	return &opts, err

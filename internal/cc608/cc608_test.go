@@ -60,6 +60,10 @@ func assertLine(t *testing.T, name string, ln cta608.Line, row int, color cta608
 	}
 }
 
+// allModes is every -cc608mode value. Tests that assert a property all modes must
+// share iterate this, so a mode added later is covered without being remembered.
+var allModes = []Mode{ModePaintOn, ModePopOn, ModeRollUp2, ModeRollUp3, ModeRollUp4}
+
 // decodeSchedule replays a group's envelopes through the full carriage +
 // cta608.Decoder path with a fresh decoder, and reports per frame what the
 // displayed screen held. Feeding one group only makes every assertion built on
@@ -110,11 +114,18 @@ func decodeSchedule(t *testing.T, envelopes [][]byte, codec Codec) (
 }
 
 // TestScheduleRoundTrip builds a group's caption schedule at two frame rates in
-// both modes and decodes it back through the full carriage + cta608.Decoder path
+// every mode and decodes it back through the full carriage + cta608.Decoder path
 // for all three codecs, checking that the group reconstructs the expected CC1
 // caption (round trip) and that returning nFrames envelopes proves no Overran
 // occurred. The AV1 case exercises the metadata-OBU envelope, which carries the
 // identical cc_data() and so must decode to the identical caption.
+//
+// Roll-up matters here beyond the round trip: it is the tightest of the three on
+// the pair budget (a mode entry per cue plus a CR per line), so a caption that
+// grows would fail this first, and its lines are written in Row order onto a
+// scrolling window rather than positioned absolutely — the assertion that rows 13
+// and 14 still end up holding the clock and the group tag is what pins that the
+// window lays out the way the content declares.
 func TestScheduleRoundTrip(t *testing.T) {
 	const groupNr = 45296 // 12:34:56 UTC
 	cases := []struct {
@@ -128,7 +139,7 @@ func TestScheduleRoundTrip(t *testing.T) {
 		{"25fps av1", 25.0, 25, CodecAV1},
 		{"30fps av1", 30.0, 30, CodecAV1},
 	}
-	for _, mode := range []Mode{ModePaintOn, ModePopOn} {
+	for _, mode := range allModes {
 		g := New(Config{Enabled: true, Mode: mode})
 		for _, c := range cases {
 			t.Run(mode.String()+"/"+c.name, func(t *testing.T) {
@@ -163,11 +174,11 @@ func TestScheduleRoundTrip(t *testing.T) {
 }
 
 // TestScheduleModeDisplayTiming pins the difference the mode choice is made for.
-// Both modes finish the caption inside its own group, but paint-on starts putting
-// it on screen in the group's first frames, while pop-on shows nothing until its
-// EOC flips the finished caption on around three-quarters through — so the
-// caption paint-on displays over the second it names, pop-on displays mostly over
-// the following one.
+// Every mode finishes the caption inside its own group, but the progressive modes
+// (paint-on and roll-up) start putting it on screen in the group's first frames,
+// while pop-on shows nothing until its EOC flips the finished caption on around
+// three-quarters through — so a progressive caption is displayed over the second
+// it names, and pop-on's mostly over the following one.
 //
 // The frame numbers are deliberately loose bounds, not exact indices: the point
 // is which half of the group the caption lands in, and an exact index would break
@@ -204,6 +215,35 @@ func TestScheduleModeDisplayTiming(t *testing.T) {
 			wantChanges:   func(n int) bool { return n == 1 },
 			changesDesc:   "exactly one (the whole caption flips on at once)",
 		},
+		// Roll-up types onto a scrolling window, so it animates like paint-on. It
+		// pays a CR per line on top of paint-on's two control pairs, which is why
+		// it may finish later — but still inside its own group. All three window
+		// sizes carry the same two lines and so share these bounds; only the RU
+		// code on the wire differs.
+		{
+			mode:          ModeRollUp2,
+			maxFirstText:  nFrames / 4,
+			minCompleteAt: 1,
+			maxCompleteAt: nFrames - 1,
+			wantChanges:   func(n int) bool { return n > 1 },
+			changesDesc:   "more than one (the base row grows two characters at a time)",
+		},
+		{
+			mode:          ModeRollUp3,
+			maxFirstText:  nFrames / 4,
+			minCompleteAt: 1,
+			maxCompleteAt: nFrames - 1,
+			wantChanges:   func(n int) bool { return n > 1 },
+			changesDesc:   "more than one (the base row grows two characters at a time)",
+		},
+		{
+			mode:          ModeRollUp4,
+			maxFirstText:  nFrames / 4,
+			minCompleteAt: 1,
+			maxCompleteAt: nFrames - 1,
+			wantChanges:   func(n int) bool { return n > 1 },
+			changesDesc:   "more than one (the base row grows two characters at a time)",
+		},
 	} {
 		t.Run(c.mode.String(), func(t *testing.T) {
 			g := New(Config{Enabled: true, Mode: c.mode})
@@ -231,15 +271,21 @@ func TestScheduleModeDisplayTiming(t *testing.T) {
 // TestScheduleSelfContained is the independent-group guarantee: consecutive
 // groups each carry their own whole caption, so a fresh decoder fed one group in
 // isolation — a subscriber joining there — reconstructs that group's caption and
-// no other. Neither mode is passed a cross-unit option, so this must hold for
-// both; it is the property #118's pop-on preload would have traded away.
+// no other. No mode is passed a cross-unit option, so this must hold for every
+// one of them.
+//
+// The two options omitted are the two ways it could break, and each belongs to a
+// different mode: WithFlipAtCueStart would put a pop-on group's build in its
+// predecessor (the trade #118 proposed), and WithRollUpCarry would leave a
+// roll-up group's upper rows holding its predecessor's lines. Running the whole
+// mode set through this is what keeps either from being adopted unnoticed.
 func TestScheduleSelfContained(t *testing.T) {
 	const (
 		firstGroup = 45296 // 12:34:56 UTC
 		fps        = 25.0
 		nFrames    = 25
 	)
-	for _, mode := range []Mode{ModePaintOn, ModePopOn} {
+	for _, mode := range allModes {
 		for _, codec := range []Codec{CodecAVC, CodecHEVC, CodecAV1} {
 			t.Run(mode.String()+"/"+codec.String(), func(t *testing.T) {
 				g := New(Config{Enabled: true, Mode: mode})
@@ -365,9 +411,14 @@ func TestParseMode(t *testing.T) {
 		{"", ModePaintOn, false},
 		{"paint-on", ModePaintOn, false},
 		{"pop-on", ModePopOn, false},
+		{"roll-up2", ModeRollUp2, false},
+		{"roll-up3", ModeRollUp3, false},
+		{"roll-up4", ModeRollUp4, false},
+		{"roll-up", ModeRollUp2, false}, // go608-clock's spelling; 2 is its zero value
 		{"paint_on", 0, true},
 		{"PAINT-ON", 0, true},
-		{"roll-up", 0, true},
+		{"roll-up5", 0, true}, // outside go-608's 2..4 window range
+		{"roll-up1", 0, true},
 	} {
 		got, err := ParseMode(c.in)
 		if c.wantErr {
@@ -389,8 +440,33 @@ func TestParseMode(t *testing.T) {
 	if New(Config{Enabled: true}).Mode() != ModePaintOn {
 		t.Errorf("default Mode = %v, want %v", New(Config{Enabled: true}).Mode(), ModePaintOn)
 	}
-	if names := ModeNames(); len(names) != 2 || names[0] != "paint-on" {
-		t.Errorf("ModeNames() = %v, want the default first", names)
+	if names := ModeNames(); len(names) != 5 || names[0] != "paint-on" {
+		t.Errorf("ModeNames() = %v, want 5 canonical names with the default first", names)
+	}
+	// String must give back the canonical spelling, never the "roll-up" alias.
+	for _, c := range []struct {
+		mode Mode
+		want string
+	}{
+		{ModePaintOn, "paint-on"}, {ModePopOn, "pop-on"},
+		{ModeRollUp2, "roll-up2"}, {ModeRollUp3, "roll-up3"}, {ModeRollUp4, "roll-up4"},
+	} {
+		if got := c.mode.String(); got != c.want {
+			t.Errorf("Mode.String() = %q, want %q", got, c.want)
+		}
+	}
+	// The window size must match the mode's name, since it picks the RU code.
+	for _, c := range []struct {
+		mode     Mode
+		wantRows int
+		wantOK   bool
+	}{
+		{ModeRollUp2, 2, true}, {ModeRollUp3, 3, true}, {ModeRollUp4, 4, true},
+		{ModePaintOn, 0, false}, {ModePopOn, 0, false},
+	} {
+		if rows, ok := c.mode.rollUpRows(); rows != c.wantRows || ok != c.wantOK {
+			t.Errorf("%v.rollUpRows() = %d, %v; want %d, %v", c.mode, rows, ok, c.wantRows, c.wantOK)
+		}
 	}
 	if got := Mode(42).String(); got != "Mode(42)" {
 		t.Errorf("Mode(42).String() = %q", got)
