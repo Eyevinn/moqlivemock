@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -489,12 +490,21 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 	var groups []TrackGroup
 	groupID := uint32(1)
 	// Add video group(s) first
-	// Sort by codec string (av01 before avc1 before hvc1) then by bitrate
-	// ascending. AVC tracks sort ahead of HEVC, which matters because HEVC
-	// with CENC is not fully supported in Widevine/Chrome; AV1 sorts first
-	// by codec string but carries no such constraint.
+	// Sort by codec (AVC, then HEVC, then AV1), then by codec string, then by
+	// bitrate ascending. AVC leads because HEVC with CENC is not fully
+	// supported in Widevine/Chrome. AV1 is last because a player that takes
+	// the first video track as its default should land on the codec with the
+	// widest support and the fewest feature gaps: AV1 carries CTA-608 in a
+	// metadata OBU rather than an SEI NAL unit, so receivers that read
+	// captions from SEI - warp-player among them - can play an AV1 rendition
+	// but never caption it, and defaulting to it makes a working build look
+	// like a broken one. Sorting on the raw codec string put av01 first.
 	if videoTracks, ok := tracksByType["video"]; ok {
 		sort.Slice(videoTracks, func(i, j int) bool {
+			ri, rj := videoCodecRank(videoTracks[i].SpecData.Codec()), videoCodecRank(videoTracks[j].SpecData.Codec())
+			if ri != rj {
+				return ri < rj
+			}
 			ci := videoTracks[i].SpecData.Codec()
 			cj := videoTracks[j].SpecData.Codec()
 			if ci != cj {
@@ -515,8 +525,19 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 	}
 
 	// Then audio group(s)
+	// Sort by codec (AAC, then Opus, then AC-3), then by bitrate ascending.
+	// Same reasoning as video: a player that defaults to the first audio track
+	// should land on the most widely supported codec. AAC leads, and AC-3 is
+	// last because it is the narrowest - Firefox does not decode it at all,
+	// and the WebCodecs engine here supports only AAC and Opus, so an AC-3
+	// default would silence that path entirely. Sorting on bitrate alone made
+	// the winner an accident of the encoder ladder.
 	if audioTracks, ok := tracksByType["audio"]; ok {
 		sort.Slice(audioTracks, func(i, j int) bool {
+			ri, rj := audioCodecRank(audioTracks[i].SpecData.Codec()), audioCodecRank(audioTracks[j].SpecData.Codec())
+			if ri != rj {
+				return ri < rj
+			}
 			return audioTracks[i].SampleBitrate < audioTracks[j].SampleBitrate
 		})
 		groups = append(groups, TrackGroup{
@@ -1279,4 +1300,38 @@ func DecryptFragment(payload []byte, decryptInfo mp4.DecryptInfo, key mp4.UUID) 
 		return nil, fmt.Errorf("unable to encode decrypted fragment: %w", err)
 	}
 	return encSw.Bytes(), nil
+}
+
+// videoCodecRank orders video codecs for the catalog: AVC, then HEVC, then
+// AV1. Ranking on a prefix rather than the raw codec string keeps the order
+// independent of the profile/level suffix each codec appends. An unknown
+// codec sorts after the known ones rather than displacing them.
+func videoCodecRank(codec string) int {
+	switch {
+	case strings.HasPrefix(codec, "avc1"), strings.HasPrefix(codec, "avc3"):
+		return 0
+	case strings.HasPrefix(codec, "hvc1"), strings.HasPrefix(codec, "hev1"):
+		return 1
+	case strings.HasPrefix(codec, "av01"):
+		return 2
+	default:
+		return 3
+	}
+}
+
+// audioCodecRank orders audio codecs for the catalog: AAC, then Opus, then
+// AC-3 / Enhanced AC-3. Matched on a prefix so the AAC object-type suffix and
+// the two AC-3 flavours need no special cases. An unknown codec sorts after
+// the known ones.
+func audioCodecRank(codec string) int {
+	switch {
+	case strings.HasPrefix(codec, "mp4a"):
+		return 0
+	case strings.HasPrefix(codec, "Opus"), strings.HasPrefix(codec, "opus"):
+		return 1
+	case strings.HasPrefix(codec, "ac-3"), strings.HasPrefix(codec, "ec-3"):
+		return 2
+	default:
+		return 3
+	}
 }

@@ -200,7 +200,11 @@ func TestLoadAsset(t *testing.T) {
 		}
 	}
 
-	// Check that video tracks are sorted by codec (avc before hvc) then by bitrate ascending
+	// Video tracks are ordered AVC, then HEVC, then AV1, and by bitrate
+	// ascending within a codec. The codec order is deliberate rather than
+	// alphabetical: a player that defaults to the first video track should
+	// land on the widest support (AVC) and never on AV1, whose CTA-608 rides
+	// in a metadata OBU that SEI-based receivers do not read.
 	var videoCodecs []string
 	var videoBitrates []int
 	var videoNames []string
@@ -218,8 +222,34 @@ func TestLoadAsset(t *testing.T) {
 			require.LessOrEqual(t, videoBitrates[i-1], videoBitrates[i],
 				"video tracks not in bitrate order within codec: got %v (%v)", videoBitrates, videoNames)
 		} else {
-			require.LessOrEqual(t, videoCodecs[i-1], videoCodecs[i],
-				"video tracks not in codec order: got %v (%v)", videoCodecs, videoNames)
+			require.Less(t, videoCodecRank(videoCodecs[i-1]), videoCodecRank(videoCodecs[i]),
+				"video tracks not in AVC, HEVC, AV1 order: got %v (%v)", videoCodecs, videoNames)
+		}
+	}
+
+	// Audio tracks are ordered AAC, then Opus, then AC-3, and by bitrate
+	// ascending within a codec, for the same reason: AC-3 is the narrowest
+	// (Firefox cannot decode it, and the WebCodecs path handles only AAC and
+	// Opus), so it must never be what a defaulting player picks.
+	var audioCodecs []string
+	var audioBitrates []int
+	var audioNames []string
+	for _, group := range asset.Groups {
+		if len(group.Tracks) > 0 && group.Tracks[0].ContentType == "audio" {
+			for _, track := range group.Tracks {
+				audioCodecs = append(audioCodecs, track.SpecData.Codec())
+				audioBitrates = append(audioBitrates, int(track.SampleBitrate))
+				audioNames = append(audioNames, track.Name)
+			}
+		}
+	}
+	for i := 1; i < len(audioBitrates); i++ {
+		if audioCodecRank(audioCodecs[i-1]) == audioCodecRank(audioCodecs[i]) {
+			require.LessOrEqual(t, audioBitrates[i-1], audioBitrates[i],
+				"audio tracks not in bitrate order within codec: got %v (%v)", audioBitrates, audioNames)
+		} else {
+			require.Less(t, audioCodecRank(audioCodecs[i-1]), audioCodecRank(audioCodecs[i]),
+				"audio tracks not in AAC, Opus, AC-3 order: got %v (%v)", audioCodecs, audioNames)
 		}
 	}
 
