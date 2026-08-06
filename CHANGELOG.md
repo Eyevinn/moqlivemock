@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-06
+
+AV1 video and in-band CTA-608 captions. AV1 (`av01`) is served across the CMSF
+namespaces and LOC, encrypted variants included, and `mlmpub -cc608` injects
+CC1 captions into the video elementary stream itself for all three codecs, in
+every packaging, riding inside the ciphertext where the namespace is encrypted.
+`-cc608mode` selects the presentation style — paint-on by default, so a
+caption is displayed over the second it names without any group depending on
+its neighbours.
+
 ### Added
 
 - **AV1 (`av01`) support.** `mlmpub` now serves AV1 video tracks in the CMSF
@@ -59,6 +69,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bumped `github.com/Eyevinn/moqtransport` to v0.10.0. A dependency release with
+  no library API change: `quicmoq` and `webtransportmoq` are untouched, and it
+  carries the same webtransport-go and quic-go versions moqlivemock had already
+  moved to.
+- Bumped the `github.com/Eyevinn/webtransport-go` fork to v0.12.0 and
+  `github.com/quic-go/quic-go` to v0.61.0. v0.12.0 renames
+  `webtransport.Dialer` to `webtransport.Transport`, and
+  draft-ietf-webtrans-http3-16 now requires the QUIC RESET_STREAM_AT extension,
+  so listeners set `EnableStreamResetPartialDelivery`.
 - Bumped `github.com/Eyevinn/mp4ff` to v0.55.0 for the AV1 API
   (`SequenceHeader`, `SetAV1Descriptor`, the AV1 CENC binding, and the
   CTA-608 metadata-OBU helpers).
@@ -75,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through `-cc608mode` (see above).
 - Regenerated the AVC and HEVC `assets/test10s` tracks so they also carry the
   new codec overlay line.
+- Bumped `golang.org/x/text` to v0.39.0, which resolves GO-2026-5970, and
+  `golang.org/x/crypto` to v0.52.0.
 
 ### Fixed
 
@@ -85,6 +106,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packet. It now serves the configured content key, base64url-encoded per the
   EME ClearKey request format, and answers 404 for a KID it has no key for
   instead of echoing it ([#122][issue-122]).
+- Catalog track order within a group is now ranked by codec — video AVC, then
+  HEVC, then AV1; audio AAC, then Opus, then AC-3 — instead of by the raw codec
+  string, with an unrecognised codec sorting last rather than displacing a known
+  one. Bitrate-ascending order within a codec is unchanged. Both lists were
+  sorted on the full string, so the first entry of each was an accident of the
+  alphabet: `av01` sorts before `avc1`, and audio was ordered on bitrate alone.
+  That matters because receivers default to the first track of a type, and both
+  accidental defaults were the narrowest choice — AV1 carries CTA-608 in a
+  metadata OBU rather than an SEI NAL unit, so a receiver that reads captions
+  from SEI plays the rendition but can never caption it, and AC-3 is decoded by
+  neither Firefox nor a WebCodecs pipeline.
 
 ## [0.12.0] - 2026-07-06
 
@@ -514,7 +546,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.12.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.13.0...HEAD
+[0.13.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...v0.11.0
