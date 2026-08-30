@@ -27,6 +27,7 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/cc608"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
+	"github.com/Eyevinn/moqtransport"
 )
 
 const (
@@ -340,7 +341,7 @@ func generateTLSConfigWithCertAndKey(certFile, keyFile string) (*tls.Config, err
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{"moqt-16", "moq-00", "h3"},
+		NextProtos:   append(moqtransport.SupportedALPNs(), "h3"),
 	}, nil
 }
 
@@ -411,6 +412,6 @@ func generateTLSConfig() (*tls.Config, error) {
 
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"moqt-16", "moq-00", "h3"},
+		NextProtos:   append(moqtransport.SupportedALPNs(), "h3"),
 	}, nil
 }

@@ -11,14 +11,14 @@ import (
 	"github.com/Eyevinn/mp4ff/aac"
 )
 
-// LOC property IDs from draft-ietf-moq-loc-02 §2.3.1.
+// LOC property IDs from draft-ietf-moq-loc-03 §2.3.1.
 const (
-	locPropTimestamp = 0x06
+	locPropTimestamp = 0x0A
 )
 
-// locTimestampMicros returns the LOC Timestamp (ID 0x06) from the object's
+// locTimestampMicros returns the LOC Timestamp (ID 0x0A) from the object's
 // extension headers, interpreted as microseconds since the Unix epoch
-// (the default when no Timescale property is present, per LOC-02 §2.3.1.1).
+// (the default when no Timescale property is present, per LOC-03 §2.3.1.1).
 func locTimestampMicros(headers moqtransport.KVPList) (uint64, bool) {
 	for _, kv := range headers {
 		if kv.Type == locPropTimestamp {

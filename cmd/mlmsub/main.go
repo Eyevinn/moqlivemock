@@ -9,12 +9,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
+	"github.com/Eyevinn/moqtransport"
 )
 
 const (
@@ -88,7 +90,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.acceptAny, "accept-any", false, "Accept any announced namespace")
 	fs.BoolVar(&opts.discover, "discover", false, "Discovery mode: list announced namespaces and exit")
 	fs.StringVar(&opts.catalogTrack, "catalog-track", "catalog", "Catalog track name (e.g. 'catalog' or 'catalog.json')")
-	fs.IntVar(&opts.draft, "draft", 14, "MoQ Transport draft version (14 or 16)")
+	fs.IntVar(&opts.draft, "draft", 18, "MoQ Transport draft version (18)")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -220,16 +222,14 @@ func runClient(ctx context.Context, opts *options) error {
 		}
 	}
 
-	var alpn string
-	switch opts.draft {
-	case 16:
-		alpn = "moqt-16"
-	default:
-		alpn = "moq-00"
+	// From draft-17 the protocol identifier is the whole of version
+	// negotiation: SETUP carries no version field, so a session whose ALPN or
+	// WebTransport subprotocol is not a MOQT version cannot start at all.
+	alpn := fmt.Sprintf("moqt-%d", opts.draft)
+	if !slices.Contains(moqtransport.SupportedALPNs(), alpn) {
+		return fmt.Errorf("draft %d is not supported; this build speaks %v",
+			opts.draft, moqtransport.SupportedALPNs())
 	}
-	// Record what we offer so the session refuses to silently downgrade to
-	// draft-14 over WebTransport if the peer omits the WT-Protocol header.
-	h.Protocols = []string{alpn}
 
 	return runClientWithDial(ctx, opts.addr, useWebTransport, alpn, h, outs)
 }

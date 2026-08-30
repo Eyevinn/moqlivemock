@@ -43,7 +43,7 @@ func main() {
 	test := flag.String("t", "", "Specific test to run (default: all)")
 	list := flag.Bool("l", false, "List available tests")
 	tlsSkipVerify := flag.Bool("tls-disable-verify", false, "Skip TLS verification")
-	draft := flag.Int("draft", 16, "MoQ Transport draft version (14 or 16)")
+	draft := flag.Int("draft", 18, "MoQ Transport draft version (18)")
 	flag.Parse()
 
 	// Environment variable overrides
@@ -61,8 +61,8 @@ func main() {
 			*draft = d
 		}
 	}
-	if *draft != 14 && *draft != 16 {
-		fmt.Fprintf(os.Stderr, "Error: draft must be 14 or 16, got %d\n", *draft)
+	if *draft != 18 {
+		fmt.Fprintf(os.Stderr, "Error: draft must be 18, got %d\n", *draft)
 		os.Exit(1)
 	}
 
@@ -94,14 +94,9 @@ func main() {
 		}
 	}
 
-	// Select ALPN based on draft
-	var alpn string
-	switch *draft {
-	case 14:
-		alpn = "moq-00"
-	default:
-		alpn = "moqt-16"
-	}
+	// From draft-17 the ALPN is the whole of version negotiation, and the
+	// library knows which ones it speaks.
+	alpn := moqtransport.SupportedALPNs()[0]
 
 	// TAP v14 output
 	fmt.Println("TAP version 14")
@@ -143,13 +138,7 @@ func dial(ctx context.Context, relay string, tlsSkipVerify bool, draft int) (moq
 		addr = net.JoinHostPort(u.Hostname(), "443")
 	}
 
-	var alpn string
-	switch draft {
-	case 14:
-		alpn = "moq-00"
-	default:
-		alpn = "moqt-16"
-	}
+	alpn := moqtransport.SupportedALPNs()[0]
 
 	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
 		InsecureSkipVerify: tlsSkipVerify,
@@ -167,16 +156,14 @@ func dial(ctx context.Context, relay string, tlsSkipVerify bool, draft int) (moq
 // runSession creates a session with a no-op handler, runs it, and returns it.
 func runSession(ctx context.Context, conn moqtransport.Connection, draft int) (*moqtransport.Session, error) {
 	s := &moqtransport.Session{
-		InitialMaxRequestID: 64,
-
-		Handler: moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-			// Accept announcements from relay
-			if r.Method == moqtransport.MessageAnnounce {
-				_ = w.Accept()
-			}
-		}),
+		// Accept announcements from the relay.
+		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
+			func(r *moqtransport.PublishNamespaceRequest) {
+				_ = r.Accept()
+			}),
+		Implementation: "Eyevinn/mlmtest",
 	}
-	if err := s.RunContext(ctx, conn); err != nil {
+	if err := s.Run(ctx, conn); err != nil {
 		return nil, fmt.Errorf("session setup: %w", err)
 	}
 	return s, nil
@@ -192,7 +179,7 @@ func testSetupOnly(ctx context.Context, relay string, tlsSkipVerify bool, draft 
 	if err != nil {
 		return err
 	}
-	s.Close()
+	closeSession(s)
 	return nil
 }
 
@@ -206,10 +193,10 @@ func testAnnounceOnly(ctx context.Context, relay string, tlsSkipVerify bool, dra
 	if err != nil {
 		return err
 	}
-	if err := s.Announce(ctx, []string{"moq-test", "interop"}); err != nil {
+	if _, err := s.PublishNamespace(ctx, []string{"moq-test", "interop"}); err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
 	}
-	s.Close()
+	closeSession(s)
 	return nil
 }
 
@@ -223,13 +210,16 @@ func testPublishNamespaceDone(ctx context.Context, relay string, tlsSkipVerify b
 	if err != nil {
 		return err
 	}
-	if err := s.Announce(ctx, []string{"moq-test", "interop"}); err != nil {
+	publication, err := s.PublishNamespace(ctx, []string{"moq-test", "interop"})
+	if err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
 	}
-	if err := s.Unannounce(ctx, []string{"moq-test", "interop"}); err != nil {
+	// Closing the announcement's stream is what draft-18 uses in place of
+	// UNANNOUNCE.
+	if err := publication.Close(); err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE_DONE: %w", err)
 	}
-	s.Close()
+	closeSession(s)
 	return nil
 }
 
@@ -245,47 +235,54 @@ func testSubscribeError(ctx context.Context, relay string, tlsSkipVerify bool, d
 	}
 	_, subErr := s.Subscribe(ctx, []string{"nonexistent", "namespace"}, "test-track")
 	if subErr == nil {
-		_ = s.Close()
+		closeSession(s)
 		return fmt.Errorf("expected REQUEST_ERROR but got SUBSCRIBE_OK")
 	}
 	// Any error (subscribe error, timeout) is acceptable — the relay rejected the subscribe
 	if strings.Contains(subErr.Error(), "context deadline exceeded") {
-		_ = s.Close()
+		closeSession(s)
 		return fmt.Errorf("timed out waiting for REQUEST_ERROR")
 	}
-	_ = s.Close()
+	closeSession(s)
 	return nil
 }
 
-// runPublisherSession creates a session that announces a namespace and accepts subscriptions.
+// runPublisherSession creates a session that announces a namespace and accepts
+// subscriptions. The announcement lasts as long as the returned handle is
+// open: closing it is draft-18's PUBLISH_NAMESPACE_DONE.
 func runPublisherSession(
 	ctx context.Context, relay string, tlsSkipVerify bool, draft int, namespace []string,
-) (*moqtransport.Session, error) {
+) (*moqtransport.Session, *moqtransport.NamespacePublication, error) {
 	conn, err := dial(ctx, relay, tlsSkipVerify, draft)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	s := &moqtransport.Session{
-		InitialMaxRequestID: 64,
-
-		Handler: moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-			if r.Method == moqtransport.MessageAnnounce {
-				_ = w.Accept()
-			}
-		}),
-		SubscribeHandler: moqtransport.SubscribeHandlerFunc(
-			func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-				_ = w.Accept()
+		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
+			func(r *moqtransport.PublishNamespaceRequest) {
+				_ = r.Accept()
 			}),
+		SubscribeHandler: moqtransport.SubscribeHandlerFunc(
+			func(r *moqtransport.SubscribeRequest) {
+				_, _ = r.Accept()
+			}),
+		Implementation: "Eyevinn/mlmtest",
 	}
-	if err := s.RunContext(ctx, conn); err != nil {
-		return nil, fmt.Errorf("publisher session setup: %w", err)
+	if err := s.Run(ctx, conn); err != nil {
+		return nil, nil, fmt.Errorf("publisher session setup: %w", err)
 	}
-	if err := s.Announce(ctx, namespace); err != nil {
-		s.Close()
-		return nil, fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
+	publication, err := s.PublishNamespace(ctx, namespace)
+	if err != nil {
+		closeSession(s)
+		return nil, nil, fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
 	}
-	return s, nil
+	return s, publication, nil
+}
+
+// closeSession ends a session cleanly. Every close in these tests is a normal
+// end of a test case, not a failure.
+func closeSession(s *moqtransport.Session) {
+	_ = s.Close(moqtransport.SessionErrorNoError, "test complete")
 }
 
 // testAnnounceSubscribe: publisher announces, subscriber subscribes, both succeed.
@@ -293,11 +290,11 @@ func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool
 	ns := []string{"moq-test", "interop"}
 
 	// Publisher: connect, setup, announce
-	pub, err := runPublisherSession(ctx, relay, tlsSkipVerify, draft, ns)
+	pub, _, err := runPublisherSession(ctx, relay, tlsSkipVerify, draft, ns)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
-	defer pub.Close()
+	defer closeSession(pub)
 
 	// Subscriber: connect, setup, subscribe
 	conn, err := dial(ctx, relay, tlsSkipVerify, draft)
@@ -308,7 +305,7 @@ func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool
 	if err != nil {
 		return fmt.Errorf("subscriber session: %w", err)
 	}
-	defer sub.Close()
+	defer closeSession(sub)
 
 	_, subErr := sub.Subscribe(ctx, ns, "test-track")
 	if subErr != nil {
@@ -331,7 +328,7 @@ func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerif
 	if err != nil {
 		return fmt.Errorf("subscriber session: %w", err)
 	}
-	defer sub.Close()
+	defer closeSession(sub)
 
 	// Subscribe in background (may block waiting for publisher)
 	var subErr error
@@ -345,11 +342,11 @@ func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerif
 	// Wait 500ms, then publisher connects and announces
 	time.Sleep(500 * time.Millisecond)
 
-	pub, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, draft, ns)
+	pub, _, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, draft, ns)
 	if pubErr != nil {
 		return fmt.Errorf("publisher: %w", pubErr)
 	}
-	defer pub.Close()
+	defer closeSession(pub)
 
 	// Wait for subscriber result
 	wg.Wait()

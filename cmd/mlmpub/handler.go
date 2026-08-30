@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
+	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/moqtransport/quicmoq"
 	"github.com/Eyevinn/moqtransport/webtransportmoq"
 	"github.com/quic-go/quic-go"
@@ -65,7 +67,7 @@ func (s *server) runServer(ctx context.Context) error {
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
-		ApplicationProtocols: []string{"moqt-16", "moq-00"},
+		ApplicationProtocols: moqtransport.SupportedALPNs(),
 	}
 	http.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
 		session, err := wt.Upgrade(w, r)
@@ -82,10 +84,10 @@ func (s *server) runServer(ctx context.Context) error {
 			return err
 		}
 		alpn := conn.ConnectionState().TLS.NegotiatedProtocol
-		switch alpn {
-		case "h3":
+		switch {
+		case alpn == "h3":
 			go serveQUICConn(&wt, conn)
-		case "moq-00", "moqt-16":
+		case slices.Contains(moqtransport.SupportedALPNs(), alpn):
 			go s.handler.Handle(ctx, quicmoq.NewServer(conn))
 		default:
 			slog.Warn("unknown ALPN, closing connection", "alpn", alpn)

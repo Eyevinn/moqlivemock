@@ -33,7 +33,7 @@ const (
 	// object header carrying a single LOC frame: same MoQ object framing as
 	// CMAF plus the LOC Timestamp extension property (1 byte property ID +
 	// vi64 µs-since-epoch ≈ 9 bytes). draft-ietf-moq-transport-16 +
-	// draft-ietf-moq-loc-02 §2.3.1.1.
+	// draft-ietf-moq-loc-03 §2.3.1.1.
 	locObjectOverheadBytes = cmafObjectOverheadBytes + 9
 )
 
@@ -803,12 +803,12 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 }
 
 // GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
-// Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-02.
+// Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-03.
 //
 // Only AVC/HEVC/AV1 video and AAC/Opus audio tracks with ProtectionNone are
 // included. No initData is set (LOC sends video config in-band with keyframes).
 // AVC tracks use "avc3" and HEVC tracks use "hev1" codec prefixes since
-// parameter sets travel in the payload (draft-ietf-moq-loc-02 §2.1.1). AV1 keeps
+// parameter sets travel in the payload (draft-ietf-moq-loc-03 §2.1.1). AV1 keeps
 // its "av01" codec string: it has no distinct in-band sample entry and the
 // sequence header OBU rides in the keyframe temporal units.
 func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
