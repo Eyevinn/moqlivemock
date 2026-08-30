@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Migrated to MoQ Transport draft-18** (`moqtransport` v0.11.0). Drafts 14 and
+  16 are no longer supported: from draft-17 the ALPN is the whole of version
+  negotiation, so `mlmsub`/`mlmtest` offer `moqt-18` only and `-draft` accepts
+  18. Sessions take a context and typed request handlers, announcements are
+  streams whose closing replaces UNANNOUNCE, and a publisher now sees a
+  subscriber leave -- publish loops end on the subscription's context rather
+  than the session's. `InitialMaxRequestID` is gone with MAX_REQUEST_ID.
+- **The LOC Timestamp Object Property moves from `0x06` to `0x0A`**, per
+  draft-ietf-moq-loc-03. MOQT's Properties registry allocates `0x06` to
+  SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a `0x06` Object
+  Property makes the track malformed from draft-18 onwards and the subscription
+  is refused. draft-16 had no scope rule for extension headers, so the collision
+  was silently tolerated until the new parser enforced it.
+- The ALPN lists are no longer hard-coded -- `moqtransport.SupportedALPNs` is the
+  single source, and `mlmtest`'s table runs over it rather than a literal list.
+- moq-mi header construction moves in from `moqtransport` to `internal/moqmi`.
+  It builds H.264 and AAC metadata properties, which is one application's
+  packaging rather than anything a transport should know about.
+
+### Fixed
+
+- The joining-fetch catalog path drains the whole response. The old code read a
+  single object because `moqtransport` had no fetch-complete signal to stop on;
+  `ErrFetchComplete` is that signal, so deltas after object 0 are no longer
+  dropped.
+- `-qlog` selects the file it names. Both commands opened the default file
+  regardless, so `-qlog somewhere.json` wrote to `mlmpub.log`/`mlmsub.log`
+  instead. A file that cannot be opened is now an error rather than a nil
+  writer.
+
 ## [0.13.0] - 2026-08-06
 
 AV1 video and in-band CTA-608 captions. AV1 (`av01`) is served across the CMSF
