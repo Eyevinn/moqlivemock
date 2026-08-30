@@ -13,6 +13,8 @@ require (
 
 require github.com/Eyevinn/go-608 v0.9.0
 
+require github.com/mengelbart/qlog v0.1.0 // indirect
+
 require (
 	github.com/Eyevinn/locmaf v0.2.1
 	github.com/beevik/etree v1.5.0 // indirect
