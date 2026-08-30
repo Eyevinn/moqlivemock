@@ -11,6 +11,7 @@ import (
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqtransport"
+	"github.com/mengelbart/qlog"
 )
 
 const (
@@ -44,6 +45,8 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		SubscribeHandler:        h.getSubscribeHandler(ctx),
 		FetchHandler:            h.getFetchHandler(),
 		Implementation:          "Eyevinn/moqlivemock",
+		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
+			conn.Perspective().String(), moqtransport.QlogSchema),
 	}
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
 	if err := session.Run(ctx, conn); err != nil {

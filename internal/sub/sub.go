@@ -16,6 +16,7 @@ import (
 	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
+	"github.com/mengelbart/qlog"
 )
 
 // Handler handles MoQ subscriber sessions. It subscribes to a catalog,
@@ -103,6 +104,8 @@ func (h *Handler) startSession(ctx context.Context, conn moqtransport.Connection
 	session := &moqtransport.Session{
 		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
 		Implementation:          "Eyevinn/moqlivemock",
+		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
+			conn.Perspective().String(), moqtransport.QlogSchema),
 	}
 	if err := session.Run(ctx, conn); err != nil {
 		return nil, err

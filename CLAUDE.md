@@ -20,8 +20,32 @@ moqlivemock is a Go-based MoQ (Media over QUIC) live streaming mock implementati
 
 ### MoQ Transport Dependency
 
-Uses `github.com/Eyevinn/moqtransport` (forked from mengelbart/moqtransport) with draft-14 and draft-16 support.
-Version negotiation uses ALPN (`moqt-16` for draft-16, `moq-00` for draft-14) and `WT-Available-Protocols` for WebTransport.
+Uses `github.com/Eyevinn/moqtransport`, on **draft-18**. Drafts 14 and 16 are
+gone: draft-17 changed the varint encoding, moved SETUP onto a pair of
+unidirectional streams and gave every request its own bidirectional stream, so
+nothing of the older wire format survives.
+
+The negotiated protocol identifier is the whole of version negotiation from
+draft-17 on — SETUP carries no version field — so `moqtransport.SupportedALPNs()`
+is the single source for both the QUIC ALPN list and the WebTransport
+subprotocol list. Do not hard-code `moqt-18` anywhere.
+
+Consequences worth knowing:
+
+- There is no UNSUBSCRIBE, UNANNOUNCE or ANNOUNCE_CANCEL. A request lasts as
+  long as its stream, and ending that stream is the message. A publisher learns
+  a subscriber has gone from `Subscription.Context()` being cancelled.
+- Extension headers are now Object Properties, with a registry and per-property
+  scope. The LOC Timestamp property is **0x0A** (draft-ietf-moq-loc-03), not
+  0x06: MOQT allocates 0x06 to SUBGROUP_DELIVERY_TIMEOUT, which is Track scope
+  only, so a 0x06 Object Property makes the track malformed.
+- The PROPERTIES bit lives in the subgroup header and covers every Object on
+  the stream, so a subgroup carrying properties must be opened with
+  `moqtransport.WithObjectProperties()`.
+
+While the transport's draft-18 branch is in flight, `go.mod` has a
+`replace github.com/Eyevinn/moqtransport => ../moqtransport`. That must not
+reach main.
 
 ### Multi-Namespace Architecture
 
@@ -101,7 +125,8 @@ AV1 tracks that round-trip correctly.
 ### Interop Testing (mlmtest)
 
 `mlmtest` is an interop test client for [moq-interop-runner](https://github.com/englishm/moq-interop-runner).
-It connects to a server/relay and runs protocol-level test cases with both draft-14 and draft-16, outputting TAP v14 results.
+It connects to a server/relay and runs protocol-level test cases against every
+draft the build speaks, outputting TAP v14 results.
 `go run ./cmd/mlmtest -l` lists the test cases.
 
 moq-interop-runner drives it through environment variables rather than flags:

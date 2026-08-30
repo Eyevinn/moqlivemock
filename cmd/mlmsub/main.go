@@ -167,9 +167,10 @@ func runClient(ctx context.Context, opts *options) error {
 	if opts.qlogfile == "-" {
 		logfh = os.Stderr
 	} else {
-		fh, err := os.OpenFile(defaultQlogFileName, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		// The flag names the file; defaultQlogFileName is only its default.
+		fh, err := os.OpenFile(opts.qlogfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 		if err != nil {
-			slog.Error("failed to open log file", "error", err)
+			return fmt.Errorf("opening qlog file %q: %w", opts.qlogfile, err)
 		}
 		logfh = fh
 		defer fh.Close()
