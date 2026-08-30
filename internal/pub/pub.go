@@ -3,6 +3,7 @@ package pub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -10,8 +11,6 @@ import (
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqtransport"
-	"github.com/mengelbart/qlog"
-	"github.com/mengelbart/qlog/moqt"
 )
 
 const (
@@ -41,37 +40,61 @@ type Handler struct {
 // and serves subscriptions. The context controls the lifetime of publishing goroutines.
 func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	session := &moqtransport.Session{
-		Handler:             h.getHandler(),
-		SubscribeHandler:    h.getSubscribeHandler(ctx),
-		FetchHandler:        h.getFetchHandler(),
-		InitialMaxRequestID: 100,
-		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
+		SubscribeHandler:        h.getSubscribeHandler(ctx),
+		FetchHandler:            h.getFetchHandler(),
+		Implementation:          "Eyevinn/moqlivemock",
 	}
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
-	err := session.Run(conn)
-	if err != nil {
+	if err := session.Run(ctx, conn); err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
-		err = conn.CloseWithError(0, "session initialization error")
-		if err != nil {
+		if err := conn.CloseWithError(0, "session initialization error"); err != nil {
 			slog.Error("failed to close connection", "error", err)
 		}
 		return
 	}
+	slog.Info("MoQ session established", "version", session.Version())
+
+	// An announcement lasts as long as the stream carrying it, so the handles
+	// are held until the session ends rather than dropped. Closing one is what
+	// draft-18 uses in place of UNANNOUNCE.
+	announce := func(namespace []string) *moqtransport.NamespacePublication {
+		publication, err := session.PublishNamespace(ctx, namespace)
+		if err != nil {
+			slog.Error("failed to announce namespace", "namespace", namespace, "error", err)
+			return nil
+		}
+		slog.Info("namespace announced successfully", "namespace", namespace)
+		return publication
+	}
+
+	var publications []*moqtransport.NamespacePublication
+	defer func() {
+		for _, p := range publications {
+			_ = p.Close()
+		}
+	}()
+
 	for _, ns := range h.Namespaces {
 		slog.Info("announcing namespace", "namespace", ns.Namespace)
-		if err := session.Announce(ctx, ns.Namespace); err != nil {
-			slog.Error("failed to announce namespace", "namespace", ns.Namespace, "error", err)
+		if p := announce(ns.Namespace); p != nil {
+			publications = append(publications, p)
+		} else {
 			return
 		}
-		slog.Info("namespace announced successfully", "namespace", ns.Namespace)
 	}
 	// Announce interop test namespace for moq-interop-runner compatibility
 	slog.Info("announcing interop namespace", "namespace", interopNamespace)
-	if err := session.Announce(ctx, interopNamespace); err != nil {
-		slog.Warn("failed to announce interop namespace", "error", err)
+	if p := announce(interopNamespace); p != nil {
+		publications = append(publications, p)
 	}
-	// Block until context is cancelled to keep the session alive
-	<-ctx.Done()
+
+	// Block until the context is cancelled or the session ends.
+	select {
+	case <-ctx.Done():
+	case <-session.Context().Done():
+		slog.Info("MoQ session ended", "reason", context.Cause(session.Context()))
+	}
 }
 
 // interopNamespace is the namespace used by the moq-interop-runner test cases.
@@ -81,23 +104,19 @@ func isInteropNamespace(ns []string) bool {
 	return tupleEqual(ns, interopNamespace)
 }
 
-func (h *Handler) getHandler() moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-		switch r.Method {
-		case moqtransport.MessageAnnounce:
-			if isInteropNamespace(r.Namespace) {
-				slog.Info("accepting interop announcement", "namespace", r.Namespace)
-				if err := w.Accept(); err != nil {
-					slog.Error("failed to accept interop announcement", "error", err)
-				}
-				return
-			}
-			slog.Warn("got unexpected announcement", "namespace", r.Namespace)
-			err := w.Reject(0, "publisher doesn't take announcements")
-			if err != nil {
-				slog.Error("failed to reject announcement", "error", err)
+func (h *Handler) getPublishNamespaceHandler() moqtransport.PublishNamespaceHandler {
+	return moqtransport.PublishNamespaceHandlerFunc(func(r *moqtransport.PublishNamespaceRequest) {
+		if isInteropNamespace(r.Namespace()) {
+			slog.Info("accepting interop announcement", "namespace", r.Namespace())
+			if err := r.Accept(); err != nil {
+				slog.Error("failed to accept interop announcement", "error", err)
 			}
 			return
+		}
+		slog.Warn("got unexpected announcement", "namespace", r.Namespace())
+		if err := r.Reject(moqtransport.RequestErrorUninterested,
+			"publisher doesn't take announcements"); err != nil {
+			slog.Error("failed to reject announcement", "error", err)
 		}
 	})
 }
@@ -134,195 +153,192 @@ func locationInFetchRange(loc, start, end moqtransport.Location) bool {
 }
 
 func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
-	return moqtransport.FetchHandlerFunc(
-		func(w *moqtransport.FetchResponseWriter, m *moqtransport.FetchMessage) {
-			nsEntry := h.findNamespace(m.Namespace)
-			if nsEntry == nil {
-				slog.Warn("fetch: unknown namespace", "received", m.Namespace)
-				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "non-matching namespace")
-				if err != nil {
-					slog.Error("failed to reject fetch", "error", err)
-				}
-				return
+	return moqtransport.FetchHandlerFunc(func(r *moqtransport.FetchRequest) {
+		reject := func(reason string) {
+			if err := r.Reject(moqtransport.RequestErrorDoesNotExist, reason); err != nil {
+				slog.Error("failed to reject fetch", "error", err, "reason", reason)
 			}
-			if nsEntry.Packaging == "moqmi" {
-				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist),
-					"moq-mi has no catalog")
-				if err != nil {
-					slog.Error("failed to reject moq-mi fetch", "error", err)
-				}
-				return
-			}
-			if m.Track != "catalog" {
-				err := w.Reject(uint64(moqtransport.ErrorCodeFetchTrackDoesNotExist), "only catalog is fetchable")
-				if err != nil {
-					slog.Error("failed to reject fetch", "error", err)
-				}
-				return
-			}
-			err := w.Accept()
+		}
+		nsEntry := h.findNamespace(r.Namespace())
+		if nsEntry == nil {
+			slog.Warn("fetch: unknown namespace", "received", r.Namespace())
+			reject("non-matching namespace")
+			return
+		}
+		if nsEntry.Packaging == "moqmi" {
+			reject("moq-mi has no catalog")
+			return
+		}
+		if r.Track() != "catalog" {
+			reject("only catalog is fetchable")
+			return
+		}
+
+		response, err := r.Accept()
+		if err != nil {
+			slog.Error("failed to accept fetch", "error", err)
+			return
+		}
+		// The catalog is a single object at {group:0, object:0}. Honor the
+		// requested range -- already resolved against the subscription for a
+		// joining fetch -- and serve the object only when it covers {0,0}; any
+		// other range yields an empty response, which is a FETCH_HEADER and a
+		// FIN and is a meaningful answer in itself.
+		start, end := r.Range()
+		catalogLoc := moqtransport.Location{Group: 0, Object: 0}
+		if locationInFetchRange(catalogLoc, start, end) {
+			catalogJSON, err := json.Marshal(nsEntry.Catalog)
 			if err != nil {
-				slog.Error("failed to accept fetch", "error", err)
+				slog.Error("failed to marshal catalog", "error", err)
 				return
 			}
-			fs, err := w.FetchStream()
-			if err != nil {
-				slog.Error("failed to get fetch stream", "error", err)
+			if err := response.WriteObject(moqtransport.Object{
+				GroupID:  0,
+				ObjectID: 0,
+				Priority: MediaPriority,
+				Payload:  catalogJSON,
+			}); err != nil {
+				slog.Error("failed to write catalog via fetch", "error", err)
+				response.Reset(moqtransport.StreamErrorInternal)
 				return
 			}
-			// The catalog is a single object at {group:0, object:0}. Honor the
-			// requested range (resolved by the transport for joining fetches):
-			// serve the object only when [StartLocation, EndLocation) covers
-			// {0,0}; any other group or object yields an empty response. This is
-			// what a relative joining FETCH (offset 0) against the catalog's
-			// largest location {0,0} asks for.
-			catalogLoc := moqtransport.Location{Group: 0, Object: 0}
-			if locationInFetchRange(catalogLoc, m.StartLocation, m.EndLocation) {
-				catalogJSON, err := json.Marshal(nsEntry.Catalog)
-				if err != nil {
-					slog.Error("failed to marshal catalog", "error", err)
-					return
-				}
-				if _, err = fs.WriteObject(0, 0, 0, 0, catalogJSON); err != nil {
-					slog.Error("failed to write catalog via fetch", "error", err)
-					return
-				}
-				slog.Info("served catalog via FETCH", "namespace", m.Namespace,
-					"fetchType", m.FetchType, "start", m.StartLocation, "end", m.EndLocation)
-			} else {
-				slog.Info("FETCH range excludes catalog object {0,0}; empty response",
-					"namespace", m.Namespace, "start", m.StartLocation, "end", m.EndLocation)
-			}
-			if err = fs.Close(); err != nil {
-				slog.Error("failed to close fetch stream", "error", err)
-				return
-			}
-		})
+			joining, isJoining := r.Joining()
+			slog.Info("served catalog via FETCH", "namespace", r.Namespace(),
+				"joining", isJoining, "joiningRequestID", joining, "start", start, "end", end)
+		} else {
+			slog.Info("FETCH range excludes catalog object {0,0}; empty response",
+				"namespace", r.Namespace(), "start", start, "end", end)
+		}
+		if err := response.Close(); err != nil {
+			slog.Error("failed to close fetch stream", "error", err)
+		}
+	})
 }
 
 func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.SubscribeHandler {
-	return moqtransport.SubscribeHandlerFunc(
-		func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-			// Accept interop test subscriptions (control-plane only, no media)
-			if isInteropNamespace(m.Namespace) {
-				slog.Info("accepting interop subscription", "namespace", m.Namespace, "track", m.Track)
-				if err := w.Accept(); err != nil {
-					slog.Error("failed to accept interop subscription", "error", err)
-				}
-				return
-			}
-			nsEntry := h.findNamespace(m.Namespace)
-			if nsEntry == nil {
-				slog.Warn("got unexpected subscription namespace", "received", m.Namespace)
-				err := w.Reject(0, "non-matching namespace")
-				if err != nil {
-					slog.Error("failed to reject subscription", "error", err)
-				}
-				return
-			}
-			// moq-mi namespaces are catalogless and use fixed convention track names.
-			if nsEntry.Packaging == "moqmi" {
-				if m.Track == "catalog" {
-					err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist,
-						"moq-mi has no catalog")
-					if err != nil {
-						slog.Error("failed to reject catalog subscription for moq-mi", "error", err)
-					}
-					return
-				}
-				assetTrack := ResolveMoqMITrack(nsEntry.MoqMITracks, m.Track)
-				if assetTrack == "" {
-					err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist,
-						"unknown moq-mi track")
-					if err != nil {
-						slog.Error("failed to reject moq-mi subscription", "error", err)
-					}
-					return
-				}
-				if err := w.Accept(); err != nil {
-					slog.Error("failed to accept moq-mi subscription", "error", err)
-					return
-				}
-				slog.Info("got moq-mi subscription", "track", m.Track,
-					"assetTrack", assetTrack, "namespace", m.Namespace)
-				go PublishMoqMITrack(ctx, w, h.Asset, assetTrack, m.Track)
-				return
-			}
-			if m.Track == "catalog" {
-				// Advertise the catalog's largest location so subscribers can
-				// resolve a relative Joining FETCH (offset 0) against this
-				// subscription per MSF draft-01 §5. The catalog is a single full
-				// object at {group:0, object:0}. We still write object 0 on the
-				// subscription below for backward compatibility with
-				// subscribe-only clients; joining clients dedupe it against the
-				// FETCH (objects <= largest are skipped on the subscription).
-				err := w.Accept(moqtransport.WithLargestLocation(&moqtransport.Location{Group: 0, Object: 0}))
-				if err != nil {
-					slog.Error("failed to accept subscription", "error", err)
-					return
-				}
-				sg, err := w.OpenSubgroup(0, 0, 0)
-				if err != nil {
-					slog.Error("failed to open subgroup", "error", err)
-					return
-				}
-				json, err := json.Marshal(nsEntry.Catalog)
-				if err != nil {
-					slog.Error("failed to marshal catalog", "error", err)
-					return
-				}
-				_, err = sg.WriteObject(0, json)
-				if err != nil {
-					slog.Error("failed to write catalog", "error", err)
-					return
-				}
-				err = sg.Close()
-				if err != nil {
-					slog.Error("failed to close subgroup", "error", err)
-					return
-				}
-				return
-			}
-			// Check for subtitle tracks first
-			if st := h.Asset.GetSubtitleTrackByName(m.Track); st != nil {
-				err := w.Accept()
-				if err != nil {
-					slog.Error("failed to accept subscription", "error", err)
-					return
-				}
-				slog.Info("got subtitle subscription", "track", st.Name, "namespace", m.Namespace)
-				go PublishSubtitleTrack(ctx, w, st)
-				return
-			}
+	return moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
+		namespace, track := r.Namespace(), r.Track()
 
-			// Check for video/audio tracks in this namespace's catalog
-			for _, track := range nsEntry.Catalog.Tracks {
-				if m.Track == track.Name {
-					err := w.Accept()
-					if err != nil {
-						slog.Error("failed to accept subscription", "error", err)
-						return
-					}
-					slog.Info("got subscription", "track", track.Name, "namespace", m.Namespace,
-						"packaging", nsEntry.Packaging)
-					if nsEntry.Packaging == "loc" {
-						go PublishLOCTrack(ctx, w, h.Asset, track.Name)
-					} else {
-						go PublishTrack(ctx, w, h.Asset, track.Name, track.Packaging)
-					}
-					return
-				}
+		reject := func(reason string) {
+			if err := r.Reject(moqtransport.RequestErrorDoesNotExist, reason); err != nil {
+				slog.Error("failed to reject subscription", "error", err, "reason", reason)
 			}
-			// If we get here, the track was not found
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "unknown track")
+		}
+		accept := func(opts ...moqtransport.SubscribeOkOption) *moqtransport.Subscription {
+			subscription, err := r.Accept(opts...)
 			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
+				slog.Error("failed to accept subscription", "error", err,
+					"namespace", namespace, "track", track)
+				return nil
 			}
-		})
+			return subscription
+		}
+
+		// Accept interop test subscriptions (control-plane only, no media).
+		if isInteropNamespace(namespace) {
+			slog.Info("accepting interop subscription", "namespace", namespace, "track", track)
+			accept()
+			return
+		}
+		nsEntry := h.findNamespace(namespace)
+		if nsEntry == nil {
+			slog.Warn("got unexpected subscription namespace", "received", namespace)
+			reject("non-matching namespace")
+			return
+		}
+
+		// moq-mi namespaces are catalogless and use fixed convention track names.
+		if nsEntry.Packaging == "moqmi" {
+			if track == "catalog" {
+				reject("moq-mi has no catalog")
+				return
+			}
+			assetTrack := ResolveMoqMITrack(nsEntry.MoqMITracks, track)
+			if assetTrack == "" {
+				reject("unknown moq-mi track")
+				return
+			}
+			subscription := accept()
+			if subscription == nil {
+				return
+			}
+			slog.Info("got moq-mi subscription", "track", track,
+				"assetTrack", assetTrack, "namespace", namespace)
+			go PublishMoqMITrack(ctx, subscription, h.Asset, assetTrack, track)
+			return
+		}
+
+		if track == "catalog" {
+			// Advertise the catalog's largest location so subscribers can
+			// resolve a relative Joining FETCH (offset 0) against this
+			// subscription per MSF draft-01 §5. The catalog is a single full
+			// object at {group:0, object:0}. We still write object 0 on the
+			// subscription below for backward compatibility with
+			// subscribe-only clients; joining clients dedupe it against the
+			// FETCH (objects <= largest are skipped on the subscription).
+			subscription := accept(moqtransport.WithLargestObject(
+				moqtransport.Location{Group: 0, Object: 0}))
+			if subscription == nil {
+				return
+			}
+			if err := h.writeCatalog(subscription, nsEntry); err != nil {
+				slog.Error("failed to publish catalog", "error", err, "namespace", namespace)
+			}
+			return
+		}
+
+		// Check for subtitle tracks first.
+		if st := h.Asset.GetSubtitleTrackByName(track); st != nil {
+			subscription := accept()
+			if subscription == nil {
+				return
+			}
+			slog.Info("got subtitle subscription", "track", st.Name, "namespace", namespace)
+			go PublishSubtitleTrack(ctx, subscription, st)
+			return
+		}
+
+		// Check for video/audio tracks in this namespace's catalog.
+		for _, catalogTrack := range nsEntry.Catalog.Tracks {
+			if track != catalogTrack.Name {
+				continue
+			}
+			subscription := accept()
+			if subscription == nil {
+				return
+			}
+			slog.Info("got subscription", "track", catalogTrack.Name, "namespace", namespace,
+				"packaging", nsEntry.Packaging)
+			if nsEntry.Packaging == "loc" {
+				go PublishLOCTrack(ctx, subscription, h.Asset, catalogTrack.Name)
+			} else {
+				go PublishTrack(ctx, subscription, h.Asset, catalogTrack.Name, catalogTrack.Packaging)
+			}
+			return
+		}
+		reject("unknown track")
+	})
+}
+
+// writeCatalog publishes the catalog as a single object at {0, 0}.
+func (h *Handler) writeCatalog(subscription *moqtransport.Subscription, nsEntry *NamespaceEntry) error {
+	catalogJSON, err := json.Marshal(nsEntry.Catalog)
+	if err != nil {
+		return fmt.Errorf("marshalling catalog: %w", err)
+	}
+	sg, err := subscription.OpenSubgroup(0, 0, MediaPriority, moqtransport.WithEndOfGroup())
+	if err != nil {
+		return fmt.Errorf("opening subgroup: %w", err)
+	}
+	if _, err := sg.WriteObject(0, catalogJSON); err != nil {
+		sg.Reset(moqtransport.StreamErrorInternal)
+		return fmt.Errorf("writing catalog: %w", err)
+	}
+	return sg.Close()
 }
 
 // PublishTrack publishes media track data in MoQ groups, pacing delivery to wall-clock time.
-func PublishTrack(ctx context.Context, publisher moqtransport.Publisher,
+func PublishTrack(ctx context.Context, publisher *moqtransport.Subscription,
 	asset *internal.Asset, trackName, packaging string) {
 
 	// LOCMAF variant tracks in a unified CMSF catalog are named
@@ -367,16 +383,24 @@ func PublishTrack(ctx context.Context, publisher moqtransport.Publisher,
 	}
 }
 
-// LOC extension header property IDs from draft-ietf-moq-loc-02 §2.3.1.
+// LOC extension header property IDs from draft-ietf-moq-loc-03 §2.3.1.
 const (
-	locPropTimestamp = 0x06 // vi64: microseconds since Unix epoch when no Timescale is present
+	// locPropTimestamp is the LOC Timestamp property: microseconds since the
+	// Unix epoch when no Timescale property is present.
+	//
+	// draft-ietf-moq-loc-03 moved it from 0x06 to 0x0A. It had to: MOQT's
+	// Properties registry allocates 0x06 to SUBGROUP_DELIVERY_TIMEOUT, which
+	// is Track scope only, so a 0x06 Object Property is a malformed track from
+	// draft-18 onwards and gets the session closed.
+	locPropTimestamp = 0x0A
 )
 
 // PublishLOCTrack publishes LOC media track data (one raw frame per object) in MoQ groups,
 // pacing delivery to wall-clock time. Each object carries a LOC Timestamp property
-// (draft-ietf-moq-loc-02 §2.3.1.1) with the sample presentation time in microseconds
+// (draft-ietf-moq-loc-03 §2.3.1.1) with the sample presentation time in microseconds
 // since the Unix epoch.
-func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asset *internal.Asset, trackName string) {
+func PublishLOCTrack(ctx context.Context, publisher *moqtransport.Subscription,
+	asset *internal.Asset, trackName string) {
 	ct := asset.GetTrackByName(trackName)
 	if ct == nil {
 		slog.Error("track not found", "track", trackName)
@@ -413,7 +437,11 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 		if ctx.Err() != nil {
 			return
 		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority)
+		// Every object on this stream carries a LOC Timestamp property, and
+		// draft-18 puts the PROPERTIES bit in the subgroup header rather than
+		// per object, so it has to be declared when the stream is opened.
+		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority,
+			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("failed to open subgroup", "error", err)
 			return
@@ -463,10 +491,10 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 			// sampleTime can reach ~1.8e15 for wall-clock-anchored live streams, so a
 			// naive multiply overflows; split into quotient and fractional microseconds.
 			timestampUs := (sampleTime/timebase)*1_000_000 + (sampleTime%timebase)*1_000_000/timebase
-			headers := moqtransport.KVPList{
+			properties := moqtransport.KVPList{
 				{Type: locPropTimestamp, ValueVarInt: timestampUs},
 			}
-			if _, err := sg.WriteObjectWithHeaders(objectID, headers, payload); err != nil {
+			if _, err := sg.WriteObjectWithProperties(objectID, properties, payload); err != nil {
 				slog.Error("failed to write LOC object", "track", ct.Name, "group", groupNr,
 					"object", objectID, "error", err)
 				_ = sg.Close()
@@ -484,7 +512,7 @@ func PublishLOCTrack(ctx context.Context, publisher moqtransport.Publisher, asse
 }
 
 // PublishSubtitleTrack publishes subtitle track data in MoQ groups, pacing delivery to wall-clock time.
-func PublishSubtitleTrack(ctx context.Context, publisher moqtransport.Publisher, st *internal.SubtitleTrack) {
+func PublishSubtitleTrack(ctx context.Context, publisher *moqtransport.Subscription, st *internal.SubtitleTrack) {
 	now := time.Now().UnixMilli()
 	currGroupNr := internal.CurrSubtitleGroupNr(uint64(now), internal.MoqGroupDurMS)
 	groupNr := currGroupNr + 1 // Start stream on next group

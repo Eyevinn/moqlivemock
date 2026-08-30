@@ -283,7 +283,11 @@ func (c *memConn) Perspective() moqtransport.Perspective {
 }
 
 func (c *memConn) NegotiatedALPN() string {
-	return "moq-00" // in-memory connections use draft-14 negotiation
+	// From draft-17 the negotiated protocol identifier is the whole of version
+	// negotiation, and a session cannot start without one it recognises. An
+	// in-memory connection has no TLS to negotiate it, so it reports what this
+	// build speaks.
+	return moqtransport.SupportedALPNs()[0]
 }
 
 // memStream implements moqtransport.Stream (bidirectional).

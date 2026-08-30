@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/Eyevinn/moqlivemock/internal/moqmi"
 	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/moqmi"
 )
 
 // IsMoqMINamespace reports whether the given namespace tuple identifies a
@@ -24,7 +24,7 @@ func IsMoqMINamespace(ns []string) bool {
 // (video0, audio0) without fetching a catalog, parses the moq-mi extension
 // headers on each object, and writes raw payloads to configured outputs.
 func (h *Handler) handleMoqMI(ctx context.Context, conn moqtransport.Connection) {
-	session, err := h.startSession(conn)
+	session, err := h.startSession(ctx, conn)
 	if err != nil {
 		slog.Error("moq-mi: session init failed", "error", err)
 		_ = conn.CloseWithError(0, "session initialization error")
@@ -98,7 +98,7 @@ func (h *Handler) subscribeMoqMI(ctx context.Context, s *moqtransport.Session,
 // the media type and per-codec metadata. seqState tracks the last SeqID seen so
 // gaps can be flagged.
 func logMoqMIObject(trackName string, o *moqtransport.Object, lastSeq *uint64, haveSeq *bool) {
-	mt, ok := moqmi.MediaType(o.ExtensionHeaders)
+	mt, ok := moqmi.MediaType(o.Properties)
 	if !ok {
 		slog.Warn("moq-mi: object missing media-type header",
 			"track", trackName, "group", o.GroupID, "object", o.ObjectID)
@@ -106,13 +106,13 @@ func logMoqMIObject(trackName string, o *moqtransport.Object, lastSeq *uint64, h
 	}
 	switch mt {
 	case moqmi.MediaTypeVideoH264AVCC:
-		meta, present, err := moqmi.ReadVideoMetadata(o.ExtensionHeaders)
+		meta, present, err := moqmi.ReadVideoMetadata(o.Properties)
 		if err != nil || !present {
 			slog.Warn("moq-mi: video metadata missing/invalid",
 				"track", trackName, "err", err, "present", present)
 			return
 		}
-		extradata, hasExtra := moqmi.ReadVideoExtradata(o.ExtensionHeaders)
+		extradata, hasExtra := moqmi.ReadVideoExtradata(o.Properties)
 		seqGap := seqDelta(meta.SeqID, lastSeq, haveSeq)
 		slog.Info("moq-mi: video object",
 			"track", trackName, "group", o.GroupID, "object", o.ObjectID,
@@ -123,7 +123,7 @@ func logMoqMIObject(trackName string, o *moqtransport.Object, lastSeq *uint64, h
 			"extradataLen", len(extradata), "hasExtradata", hasExtra,
 			"seqGap", seqGap)
 	case moqmi.MediaTypeAudioAACLC:
-		meta, present, err := moqmi.ReadAudioAACMetadata(o.ExtensionHeaders)
+		meta, present, err := moqmi.ReadAudioAACMetadata(o.Properties)
 		if err != nil || !present {
 			slog.Warn("moq-mi: aac metadata missing/invalid",
 				"track", trackName, "err", err, "present", present)
@@ -137,7 +137,7 @@ func logMoqMIObject(trackName string, o *moqtransport.Object, lastSeq *uint64, h
 			"dur", meta.Duration, "wallclockMS", meta.WallclockMS,
 			"payloadLen", len(o.Payload), "seqGap", seqGap)
 	case moqmi.MediaTypeAudioOpus:
-		meta, present, err := moqmi.ReadAudioOpusMetadata(o.ExtensionHeaders)
+		meta, present, err := moqmi.ReadAudioOpusMetadata(o.Properties)
 		if err != nil || !present {
 			slog.Warn("moq-mi: opus metadata missing/invalid",
 				"track", trackName, "err", err, "present", present)
@@ -151,7 +151,7 @@ func logMoqMIObject(trackName string, o *moqtransport.Object, lastSeq *uint64, h
 			"dur", meta.Duration, "wallclockMS", meta.WallclockMS,
 			"payloadLen", len(o.Payload), "seqGap", seqGap)
 	case moqmi.MediaTypeUTF8Text:
-		meta, present, err := moqmi.ReadTextMetadata(o.ExtensionHeaders)
+		meta, present, err := moqmi.ReadTextMetadata(o.Properties)
 		if err != nil || !present {
 			slog.Warn("moq-mi: text metadata missing/invalid",
 				"track", trackName, "err", err, "present", present)

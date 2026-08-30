@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Eyevinn/moqtransport"
@@ -18,7 +20,9 @@ import (
 )
 
 // startInteropServer starts a QUIC-based MoQ server that accepts
-// interop test operations (announce, subscribe) on both draft-14 and draft-16 ALPNs.
+// interop test operations (announce, subscribe) against every draft this build
+// speaks. From draft-17 the ALPN is the whole of version negotiation, so the
+// set of drafts and the set of ALPNs are the same thing.
 // It returns the listener address and a cancel function.
 func startInteropServer(t *testing.T) (addr string, cancel func()) {
 	t.Helper()
@@ -54,27 +58,27 @@ func startInteropServer(t *testing.T) (addr string, cancel func()) {
 
 func serveInteropConn(ctx context.Context, conn *quic.Conn) {
 	s := &moqtransport.Session{
-		InitialMaxRequestID: 64,
-		Handler: moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-			if r.Method == moqtransport.MessageAnnounce {
-				_ = w.Accept()
-			}
-		}),
+		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
+			func(r *moqtransport.PublishNamespaceRequest) {
+				_ = r.Accept()
+			}),
 		SubscribeHandler: moqtransport.SubscribeHandlerFunc(
-			func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-				// Accept interop namespace, reject everything else
-				if len(m.Namespace) == 2 && m.Namespace[0] == "moq-test" && m.Namespace[1] == "interop" {
-					_ = w.Accept()
+			func(r *moqtransport.SubscribeRequest) {
+				// Accept the interop namespace, reject everything else.
+				ns := r.Namespace()
+				if len(ns) == 2 && ns[0] == "moq-test" && ns[1] == "interop" {
+					_, _ = r.Accept()
 					return
 				}
-				_ = w.Reject(0, "unknown namespace")
+				_ = r.Reject(moqtransport.RequestErrorDoesNotExist, "unknown namespace")
 			}),
+		Implementation: "Eyevinn/mlmtest interop stub",
 	}
-	if err := s.Run(quicmoq.NewServer(conn)); err != nil {
+	if err := s.Run(ctx, quicmoq.NewServer(conn)); err != nil {
 		return
 	}
 	<-ctx.Done()
-	s.Close()
+	_ = s.Close(moqtransport.SessionErrorNoError, "test over")
 }
 
 func generateTLSConfig() (*tls.Config, error) {
@@ -95,7 +99,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"moqt-16", "moq-00"},
+		NextProtos:   moqtransport.SupportedALPNs(),
 	}, nil
 }
 
@@ -103,7 +107,11 @@ func TestInteropTestCases(t *testing.T) {
 	addr, cancel := startInteropServer(t)
 	defer cancel()
 
-	for _, draft := range []int{14, 16} {
+	for _, alpn := range moqtransport.SupportedALPNs() {
+		draft, err := strconv.Atoi(strings.TrimPrefix(alpn, "moqt-"))
+		if err != nil {
+			t.Fatalf("cannot read a draft number out of ALPN %q: %v", alpn, err)
+		}
 		for _, tc := range testCases {
 			t.Run(fmt.Sprintf("draft%d/%s", draft, tc.name), func(t *testing.T) {
 				ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTimeout)

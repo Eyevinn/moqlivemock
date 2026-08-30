@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/moqmi"
 	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/moqmi"
 )
 
 // MoqMITrackMap maps moqmi-convention track names (video0, audio0, ...) to
@@ -27,7 +27,7 @@ type MoqMITrackMap map[string]string
 //
 // Payloads are the codec bitstream as defined by moqmi (AVCC length-prefixed
 // NALUs for H.264, raw Opus packets, AAC raw_data_block).
-func PublishMoqMITrack(ctx context.Context, publisher moqtransport.Publisher,
+func PublishMoqMITrack(ctx context.Context, publisher *moqtransport.Subscription,
 	asset *internal.Asset, assetTrackName, moqmiTrackName string) {
 	ct := asset.GetTrackByName(assetTrackName)
 	if ct == nil {
@@ -47,7 +47,7 @@ func PublishMoqMITrack(ctx context.Context, publisher moqtransport.Publisher,
 	}
 }
 
-func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
+func publishMoqMIVideo(ctx context.Context, publisher *moqtransport.Subscription,
 	ct *internal.ContentTrack, avcData *internal.AVCData, moqmiTrackName string) {
 	extradata, err := avcData.GenAVCDecoderConfigurationRecord()
 	if err != nil {
@@ -85,7 +85,8 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 		if ctx.Err() != nil {
 			return
 		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority)
+		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority,
+			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("moqmi: failed to open subgroup", "error", err)
 			return
@@ -129,7 +130,7 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 			} else {
 				headers = moqmi.VideoHeaders(meta, nil)
 			}
-			if _, err := sg.WriteObjectWithHeaders(objectID, headers, data); err != nil {
+			if _, err := sg.WriteObjectWithProperties(objectID, headers, data); err != nil {
 				slog.Error("moqmi: failed to write video object",
 					"group", groupNr, "object", objectID, "error", err)
 				return
@@ -146,7 +147,7 @@ func publishMoqMIVideo(ctx context.Context, publisher moqtransport.Publisher,
 	}
 }
 
-func publishMoqMIAudio(ctx context.Context, publisher moqtransport.Publisher,
+func publishMoqMIAudio(ctx context.Context, publisher *moqtransport.Subscription,
 	ct *internal.ContentTrack, mediaType uint64, moqmiTrackName string) {
 	timebase := uint64(ct.TimeScale)
 	sampleDur := uint64(ct.SampleDur)
@@ -188,7 +189,8 @@ func publishMoqMIAudio(ctx context.Context, publisher moqtransport.Publisher,
 		_, origNr := ct.CalcSample(frameNr)
 		sample := ct.Samples[origNr]
 
-		sg, err := publisher.OpenSubgroup(frameNr, 0, MediaPriority)
+		sg, err := publisher.OpenSubgroup(frameNr, 0, MediaPriority,
+			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("moqmi: failed to open audio subgroup", "error", err)
 			return
@@ -213,7 +215,7 @@ func publishMoqMIAudio(ctx context.Context, publisher moqtransport.Publisher,
 			_ = sg.Close()
 			return
 		}
-		if _, err := sg.WriteObjectWithHeaders(0, headers, sample.Data); err != nil {
+		if _, err := sg.WriteObjectWithProperties(0, headers, sample.Data); err != nil {
 			slog.Error("moqmi: failed to write audio object",
 				"frame", frameNr, "error", err)
 			_ = sg.Close()

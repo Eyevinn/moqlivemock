@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,12 +16,6 @@ import (
 	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
-	"github.com/mengelbart/qlog"
-	"github.com/mengelbart/qlog/moqt"
-)
-
-const (
-	initialMaxRequestID = 64
 )
 
 // Handler handles MoQ subscriber sessions. It subscribes to a catalog,
@@ -68,81 +63,56 @@ func (h *Handler) RunWithConn(ctx context.Context, conn moqtransport.Connection)
 }
 
 func (h *Handler) runDiscover(ctx context.Context, conn moqtransport.Connection) error {
-	session := &moqtransport.Session{
-		Handler:             h.getHandler(),
-		SubscribeHandler:    h.getSubscribeHandler(),
-		InitialMaxRequestID: initialMaxRequestID,
-		Protocols:           h.Protocols,
-		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
-	}
-	err := session.Run(conn)
+	session, err := h.startSession(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("session init: %w", err)
 	}
+	_ = session
 	slog.Info("connected, waiting for namespace announcements...")
 	<-ctx.Done()
 	return nil
 }
 
-func (h *Handler) getHandler() moqtransport.Handler {
-	return moqtransport.HandlerFunc(func(w moqtransport.ResponseWriter, r *moqtransport.Message) {
-		switch r.Method {
-		case moqtransport.MessageAnnounce:
-			if h.AcceptAny || h.Discover {
-				slog.Info("discovered namespace", "namespace", r.Namespace)
-				err := w.Accept()
-				if err != nil {
-					slog.Error("failed to accept announcement", "error", err)
-				}
-				return
-			}
-			if !tupleEqual(r.Namespace, h.Namespace) {
-				slog.Warn("got unexpected announcement namespace",
-					"received", r.Namespace,
-					"expected", h.Namespace)
-				err := w.Reject(0, "non-matching namespace")
-				if err != nil {
-					slog.Error("failed to reject announcement", "error", err)
-				}
-				return
-			}
-			err := w.Accept()
-			if err != nil {
+func (h *Handler) getPublishNamespaceHandler() moqtransport.PublishNamespaceHandler {
+	return moqtransport.PublishNamespaceHandlerFunc(func(r *moqtransport.PublishNamespaceRequest) {
+		namespace := r.Namespace()
+		if h.AcceptAny || h.Discover {
+			slog.Info("discovered namespace", "namespace", namespace)
+			if err := r.Accept(); err != nil {
 				slog.Error("failed to accept announcement", "error", err)
-				return
 			}
+			return
+		}
+		if !tupleEqual(namespace, h.Namespace) {
+			slog.Warn("got unexpected announcement namespace",
+				"received", namespace, "expected", h.Namespace)
+			if err := r.Reject(moqtransport.RequestErrorUninterested, "non-matching namespace"); err != nil {
+				slog.Error("failed to reject announcement", "error", err)
+			}
+			return
+		}
+		if err := r.Accept(); err != nil {
+			slog.Error("failed to accept announcement", "error", err)
 		}
 	})
 }
 
-func (h *Handler) getSubscribeHandler() moqtransport.SubscribeHandler {
-	return moqtransport.SubscribeHandlerFunc(
-		func(w *moqtransport.SubscribeResponseWriter, m *moqtransport.SubscribeMessage) {
-			err := w.Reject(moqtransport.ErrorCodeSubscribeTrackDoesNotExist, "endpoint does not publish any tracks")
-			if err != nil {
-				slog.Error("failed to reject subscription", "error", err)
-			}
-		})
-}
-
 // startSession creates and runs a MoQ subscriber session on the given connection,
 // returning the running session on success.
-func (h *Handler) startSession(conn moqtransport.Connection) (*moqtransport.Session, error) {
+func (h *Handler) startSession(ctx context.Context, conn moqtransport.Connection) (*moqtransport.Session, error) {
 	session := &moqtransport.Session{
-		Handler:             h.getHandler(),
-		SubscribeHandler:    h.getSubscribeHandler(),
-		InitialMaxRequestID: initialMaxRequestID,
-		Protocols:           h.Protocols,
-		Qlogger:             qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG", conn.Perspective().String(), moqt.Schema),
+		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
+		Implementation:          "Eyevinn/moqlivemock",
 	}
-	if err := session.Run(conn); err != nil {
+	if err := session.Run(ctx, conn); err != nil {
 		return nil, err
 	}
+	slog.Info("MoQ session established", "version", session.Version())
 	return session, nil
 }
 
 func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection) {
-	session, err := h.startSession(conn)
+	session, err := h.startSession(ctx, conn)
 	if err != nil {
 		slog.Error("MoQ Session initialization failed", "error", err)
 		err = conn.CloseWithError(0, "session initialization error")
@@ -433,44 +403,61 @@ func (h *Handler) joiningCatalog(ctx context.Context, s *moqtransport.Session, n
 	if err != nil {
 		return err
 	}
-	largest, hasLargest := rs.LargestLocation()
+	largest, hasLargest := rs.LargestObject()
 	if !hasLargest {
-		rs.Close()
+		_ = rs.Close()
 		return fmt.Errorf("catalog subscription reported no content; cannot perform joining fetch")
 	}
 
-	// Relative joining FETCH, offset 0: namespace and track are derived by the
-	// publisher from the subscription, so they must be empty here.
-	rt, err := s.Fetch(ctx, nil, "", moqtransport.WithJoiningFetchRelative(rs.RequestID(), 0))
+	// Relative joining FETCH, offset 0. The namespace and track are the
+	// subscription's: naming it is the whole point, and the publisher derives
+	// the range from its Joining Location so the fetch and the subscription
+	// are contiguous.
+	rt, err := s.FetchRelative(ctx, rs, 0)
 	if err != nil {
-		rs.Close()
+		_ = rs.Close()
 		return err
 	}
-	// Read the complete catalog from the joining fetch. Object 0 of the group is
-	// the full catalog. mlmpub publishes a single static catalog object (no
-	// deltas), so one read suffices. We deliberately do not drain to EOF:
-	// moqtransport's RemoteTrack.ReadObject has no fetch-complete signal and
-	// would block once the buffer empties. Draining deltas is future work that
-	// needs a fetch-done signal in moqtransport.
-	o, rerr := rt.ReadObject(ctx)
-	if rerr != nil {
-		rt.Close()
-		rs.Close()
-		return fmt.Errorf("joining fetch: reading catalog: %w", rerr)
+
+	// Drain the fetch to its end. Object 0 of the group is the full catalog and
+	// anything after it is a delta; draining used to be impossible because
+	// there was no fetch-complete signal to stop on, so only the first object
+	// was read. ErrFetchComplete is that signal.
+	applied := 0
+	for {
+		o, rerr := rt.ReadObject(ctx)
+		if rerr != nil {
+			if !errors.Is(rerr, moqtransport.ErrFetchComplete) {
+				_ = rt.Close()
+				_ = rs.Close()
+				return fmt.Errorf("joining fetch: reading catalog: %w", rerr)
+			}
+			break
+		}
+		if o.EndOfRange != 0 {
+			// A gap the publisher chose to mark rather than fill.
+			slog.Debug("joining fetch reported a gap", "upTo", o.GroupID, "object", o.ObjectID)
+			continue
+		}
+		if aerr := h.applyCatalog(o.Payload, "catalog (joining fetch)"); aerr != nil {
+			_ = rt.Close()
+			_ = rs.Close()
+			return aerr
+		}
+		applied++
+		slog.Info("fetched catalog via joining fetch",
+			"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
 	}
-	if aerr := h.applyCatalog(o.Payload, "catalog (joining fetch)"); aerr != nil {
-		rt.Close()
-		rs.Close()
-		return aerr
+	_ = rt.Close()
+	if applied == 0 {
+		_ = rs.Close()
+		return fmt.Errorf("joining fetch returned no catalog objects")
 	}
-	slog.Info("fetched catalog via joining fetch",
-		"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
-	rt.Close()
 
 	// Continue reading catalog updates on the subscription, skipping anything
 	// already covered by the FETCH (location <= largest).
 	go func() {
-		defer rs.Close()
+		defer func() { _ = rs.Close() }()
 		for {
 			o, rerr := rs.ReadObject(ctx)
 			if rerr != nil {
@@ -511,7 +498,7 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 
 	slog.Info("received catalog",
 		"groupID", o.GroupID,
-		"subGroupID", o.SubGroupID,
+		"subGroupID", o.SubgroupID,
 		"payloadLength", len(o.Payload),
 	)
 	slog.Debug("raw catalog payload", "data", string(o.Payload))
@@ -547,7 +534,7 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 
 	// Continue reading catalog updates in background
 	go func() {
-		defer rs.Close()
+		defer func() { _ = rs.Close() }()
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
@@ -565,7 +552,7 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 			h.catalog = &cat
 			slog.Info("received catalog update",
 				"groupID", o.GroupID,
-				"subGroupID", o.SubGroupID,
+				"subGroupID", o.SubgroupID,
 				"payloadLength", len(o.Payload),
 			)
 			if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
@@ -593,27 +580,31 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 }
 
 func (h *Handler) fetchCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	rt, err := s.Fetch(ctx, namespace, h.CatalogTrack)
+	// The catalog is one object at {0, 0}. A standalone FETCH names its range
+	// explicitly, and an End Location whose Object is 0 asks for the whole of
+	// that group.
+	rt, err := s.Fetch(ctx, namespace, h.CatalogTrack,
+		moqtransport.Location{Group: 0, Object: 0},
+		moqtransport.Location{Group: 0, Object: 0})
 	if err != nil {
 		return err
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }()
 
 	o, err := rt.ReadObject(ctx)
 	if err != nil {
-		if err == io.EOF {
-			return nil
+		if errors.Is(err, moqtransport.ErrFetchComplete) {
+			return fmt.Errorf("catalog fetch returned no objects")
 		}
 		return err
 	}
 
-	err = json.Unmarshal(o.Payload, &h.catalog)
-	if err != nil {
+	if err := json.Unmarshal(o.Payload, &h.catalog); err != nil {
 		return err
 	}
 	slog.Info("fetched catalog",
 		"groupID", o.GroupID,
-		"subGroupID", o.SubGroupID,
+		"subGroupID", o.SubgroupID,
 		"payloadLength", len(o.Payload),
 	)
 	if slog.Default().Enabled(context.Background(), slog.LevelInfo) {
@@ -665,19 +656,24 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 		for {
 			o, err := rs.ReadObject(ctx)
 			if err != nil {
-				if err == io.EOF {
-					slog.Info("got last object")
+				// A subscription ending is worth saying out loud. draft-18
+				// gives the reason a name: PUBLISH_DONE if the publisher
+				// finished, and the request's context cause otherwise.
+				if done, ok := rs.PublishDone(); ok {
+					slog.Info("publisher finished track", "track", trackname,
+						"code", done.Code, "reason", done.Reason, "streams", done.StreamCount)
 					return
 				}
+				slog.Info("subscription ended", "track", trackname, "error", err)
 				return
 			}
-			locTsUs, hasLOCTs := locTimestampMicros(o.ExtensionHeaders)
+			locTsUs, hasLOCTs := locTimestampMicros(o.Properties)
 			if o.ObjectID == 0 {
 				locmafState = locmaf.NewState()
 				attrs := []any{
 					"track", trackname,
 					"groupID", o.GroupID,
-					"subGroupID", o.SubGroupID,
+					"subGroupID", o.SubgroupID,
 					"payloadLength", len(o.Payload),
 				}
 				if hasLOCTs {
@@ -689,7 +685,7 @@ func (h *Handler) subscribeAndRead(ctx context.Context, s *moqtransport.Session,
 					"track", trackname,
 					"objectID", o.ObjectID,
 					"groupID", o.GroupID,
-					"subGroupID", o.SubGroupID,
+					"subGroupID", o.SubgroupID,
 					"payloadLength", len(o.Payload),
 				}
 				if hasLOCTs {
