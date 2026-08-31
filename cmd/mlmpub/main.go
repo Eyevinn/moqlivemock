@@ -38,7 +38,9 @@ var usg = `%s acts as a MoQ server and publisher using MSF/CMSF to send
 mocked live video and audio tracks, synchronized with wall-clock time.
 It is intended to be a test-bed for MoQ and MSF/CMSF.
 
-The qlog logs are currently massive, and written to
+A qlog is always written -- there is no way to turn it off -- to the file
+named by -qlog, or to stderr with -qlog -. Object payloads are truncated in
+it, so it records what was sent without being a copy of the media.
 
 Usage of %s:
 `
