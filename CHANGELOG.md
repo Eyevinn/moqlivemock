@@ -22,9 +22,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   publisher (mlmpub) so the relay can sit between mlmpub and mlmsub, and
   `-pending-wait` optionally holds a SUBSCRIBE for a not-yet-announced
   namespace instead of rejecting it. All six moq-interop-runner relay test
-  cases pass. Fanout (several subscribers sharing one upstream subscription)
-  and FETCH relaying are still to come; until then mlmsub needs
-  `-catalog-mode subscribe` behind the relay. New package `internal/relay`.
+  cases pass.
+
+  One upstream subscription per (namespace, track) is fanned out to any
+  number of subscribers through a cache of recent groups (`-cache-groups`),
+  which also gives a late joiner a group-aligned start; a subscriber that
+  cannot keep up has its open subgroups reset and skips ahead at a group
+  boundary instead of stalling the upstream read loop (`-queue`), and the
+  upstream subscription is dropped a linger (`-linger`) after the last
+  subscriber leaves. FETCHes are served from the cache when it fully covers
+  the range -- recent media groups become fetchable through the relay even
+  though mlmpub serves only the catalog via FETCH -- and proxied upstream
+  otherwise, so mlmsub's default joining-FETCH catalog flow works unchanged
+  behind the relay. SUBSCRIBE_NAMESPACE is answered with replay and live
+  updates, and announcements are re-announced to every connected session.
+  New package `internal/relay`.
+- `-qlog-events` on mlmpub, mlmsub and mlmrel. qlog has no levels -- every
+  event is written unconditionally -- so verbosity control means selecting
+  event classes: `all` (the default, unchanged behavior) or a comma-separated
+  subset of `control`, `datagram`, `fetch`, `object`, `stream`. Selecting
+  `control,stream` reduces a media session's qlog from a record per object to
+  the control-plane story. Implemented as a JSON-SEQ filter on the qlog
+  writer (`internal/qlogfilter`), since moqtransport takes the concrete
+  `*qlog.Logger` and the writer is the seam an application has.
+- `-loglevel` on mlmpub, matching mlmsub and mlmrel.
 - `internal/testconn`: the in-memory `moqtransport.Connection` pair from the
   integration tests, promoted to a package so relay tests (and future ones)
   can share it.

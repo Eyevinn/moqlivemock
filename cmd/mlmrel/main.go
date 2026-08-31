@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqlivemock/internal/relay"
 )
 
@@ -25,13 +26,15 @@ const (
 var usg = `%s is a MoQ Transport relay. It accepts publisher and subscriber
 sessions over raw QUIC or WebTransport (endpoint /moq) on one port, takes any
 announced namespace, and forwards subscriptions and their objects from the
-session that announced the namespace. With -upstream it also dials a
-publisher (e.g. mlmpub) as a client, so that it can sit between mlmpub and
-mlmsub:
+session that announced the namespace. One upstream subscription per track is
+fanned out to any number of subscribers through a cache of recent groups;
+FETCHes are served from that cache or proxied upstream. With -upstream it
+also dials a publisher (e.g. mlmpub) as a client, so that it can sit between
+mlmpub and mlmsub:
 
   mlmpub -addr 0.0.0.0:4443
   %s -addr 0.0.0.0:4444 -upstream moqt://localhost:4443
-  mlmsub -addr localhost:4444 -catalog-mode subscribe -muxout - | ffplay -
+  mlmsub -addr localhost:4444 -muxout - | ffplay -
 
 A qlog is always written -- there is no way to turn it off -- to the file
 named by -qlog, or to stderr with -qlog -.
@@ -45,7 +48,11 @@ type options struct {
 	addr        string
 	upstream    string
 	pendingWait time.Duration
+	cacheGroups int
+	queueLen    int
+	linger      time.Duration
 	qlogfile    string
+	qlogEvents  string
 	loglevel    string
 	version     bool
 }
@@ -65,7 +72,16 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		"upstream publisher to dial: moqt://host[:port] (QUIC) or https://host[:port][/path] (WebTransport)")
 	fs.DurationVar(&opts.pendingWait, "pending-wait", 0,
 		"how long a SUBSCRIBE for an unannounced namespace waits for an announcement before rejection")
+	fs.IntVar(&opts.cacheGroups, "cache-groups", 3,
+		"recent groups cached per track, for late joins and cache-served FETCHes")
+	fs.IntVar(&opts.queueLen, "queue", 256,
+		"per-subscriber object queue length; on overflow the subscriber skips to the next group boundary")
+	fs.DurationVar(&opts.linger, "linger", 2*time.Second,
+		"how long an upstream subscription survives its last downstream subscriber")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
+	fs.StringVar(&opts.qlogEvents, "qlog-events", "all",
+		fmt.Sprintf("qlog event classes to write: all, or a comma-separated subset of %s",
+			strings.Join(qlogfilter.ClassNames(), ",")))
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	err := fs.Parse(args[1:])
@@ -150,9 +166,17 @@ func runServer(ctx context.Context, opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
+	keep, err := qlogfilter.ParseClasses(opts.qlogEvents)
+	if err != nil {
+		return err
+	}
+	logfh = qlogfilter.New(logfh, keep)
 
 	h := relay.NewHandler(logfh)
 	h.PendingWait = opts.pendingWait
+	h.CacheGroups = opts.cacheGroups
+	h.QueueLen = opts.queueLen
+	h.Linger = opts.linger
 	if opts.upstream != "" {
 		go runUpstream(ctx, h, opts.upstream)
 	}
