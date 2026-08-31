@@ -1,13 +1,12 @@
 // Package relay implements a MoQ Transport relay. It accepts sessions from
 // publishers and subscribers alike, keeps a table of announced namespaces,
-// and forwards a subscription to the session that announced its namespace:
-// any PUBLISH_NAMESPACE is accepted and registered, withdrawal (the request
-// stream ending) and session death deregister it, a SUBSCRIBE for an unknown
-// namespace is rejected promptly (or after PendingWait, when configured), and
-// a SUBSCRIBE for an announced one is subscribed upstream and its objects
-// relayed. Fanout -- several subscribers sharing one upstream subscription
-// through a cache -- is the next phase; today each subscription is forwarded
-// individually.
+// and forwards subscriptions to the session that announced the namespace:
+// one upstream subscription per (namespace, track) is fanned out to any
+// number of downstream subscribers through a small cache of recent groups,
+// which also gives a late subscriber a group-aligned start. FETCHes are
+// served from that cache when it covers the range and proxied upstream
+// otherwise. Announcements are propagated to every other session and to
+// SUBSCRIBE_NAMESPACE subscribers.
 package relay
 
 import (
@@ -23,7 +22,8 @@ import (
 )
 
 // Handler handles MoQ relay sessions. One Handler serves every connection of
-// a relay instance; the announcement table is what its sessions share.
+// a relay instance; the announcement and track tables are what its sessions
+// share.
 type Handler struct {
 	// Logfh receives the qlog for every session.
 	Logfh io.Writer
@@ -31,18 +31,59 @@ type Handler struct {
 	// for an announcement before it is rejected. Zero rejects immediately,
 	// which is also a valid answer to a subscribe-before-announce race.
 	PendingWait time.Duration
+	// CacheGroups is how many recent groups are kept per track, for
+	// group-aligned late joins and cache-served FETCHes.
+	CacheGroups int
+	// QueueLen is each subscriber's object queue length. A subscriber whose
+	// queue overflows has its open subgroups reset and skips to the next
+	// group boundary rather than stalling the upstream read loop.
+	QueueLen int
+	// Linger is how long an upstream subscription survives its last
+	// downstream subscriber, so bouncing clients do not thrash the upstream.
+	Linger time.Duration
 
 	mu            sync.Mutex
 	announcements map[nsKey]*announcement
 	waiters       map[nsKey][]chan *announcement
+	tracks        map[trackKey]*relayTrack
+	sessions      map[*moqtransport.Session]*sessionState
+	announcers    map[*nsAnnouncer]struct{}
+
+	// nsMu serializes namespace fan-out (replays to new sessions and
+	// announcers, and live announce/withdraw notifications) so nobody sees a
+	// duplicate or missed announcement. Fan-out writes wait for the peer's
+	// answer, so a stalled peer slows announcement propagation -- never
+	// object forwarding.
+	nsMu sync.Mutex
+}
+
+// sessionState is what the relay tracks per connected session.
+type sessionState struct {
+	session *moqtransport.Session
+	// pubs are this relay's own announcements toward the session, one per
+	// namespace some other session announced.
+	pubs map[nsKey]*moqtransport.NamespacePublication
+}
+
+// nsAnnouncer is one accepted SUBSCRIBE_NAMESPACE.
+type nsAnnouncer struct {
+	prefix    []string
+	announcer *moqtransport.NamespaceAnnouncer
+	announced map[nsKey]bool
 }
 
 // NewHandler creates a relay session handler writing its qlog to logfh.
 func NewHandler(logfh io.Writer) *Handler {
 	return &Handler{
 		Logfh:         logfh,
+		CacheGroups:   3,
+		QueueLen:      256,
+		Linger:        2 * time.Second,
 		announcements: make(map[nsKey]*announcement),
 		waiters:       make(map[nsKey][]chan *announcement),
+		tracks:        make(map[trackKey]*relayTrack),
+		sessions:      make(map[*moqtransport.Session]*sessionState),
+		announcers:    make(map[*nsAnnouncer]struct{}),
 	}
 }
 
@@ -52,6 +93,19 @@ type nsKey string
 
 func keyForNamespace(namespace []string) nsKey {
 	return nsKey(strings.Join(namespace, "\x1f"))
+}
+
+// prefixMatches reports whether the namespace starts with the prefix tuple.
+func prefixMatches(prefix, namespace []string) bool {
+	if len(prefix) > len(namespace) {
+		return false
+	}
+	for i, p := range prefix {
+		if namespace[i] != p {
+			return false
+		}
+	}
+	return true
 }
 
 // announcement is a namespace some session has announced and not withdrawn.
@@ -72,6 +126,8 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	}
 	session.PublishNamespaceHandler = h.publishNamespaceHandler(session)
 	session.SubscribeHandler = h.subscribeHandler()
+	session.FetchHandler = h.fetchHandler()
+	session.SubscribeNamespaceHandler = h.subscribeNamespaceHandler()
 
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
 	if err := session.Run(ctx, conn); err != nil {
@@ -82,6 +138,7 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		return
 	}
 	slog.Info("MoQ session established", "version", session.Version())
+	h.addSession(session)
 
 	select {
 	case <-ctx.Done():
@@ -107,10 +164,12 @@ func (h *Handler) publishNamespaceHandler(session *moqtransport.Session) moqtran
 		}
 		h.register(session, r)
 		slog.Info("registered announcement", "namespace", r.Namespace())
+		h.announceToAll(r.Namespace(), session)
 
 		<-r.Context().Done()
 		if h.deregister(r) {
 			slog.Info("announcement withdrawn", "namespace", r.Namespace())
+			h.withdrawFromAll(r.Namespace())
 		}
 	})
 }
@@ -128,7 +187,40 @@ func (h *Handler) subscribeHandler() moqtransport.SubscribeHandler {
 			}
 			return
 		}
-		forward(r, ann.session)
+		rt := h.trackFor(ann, r.Namespace(), r.Track())
+		select {
+		case <-rt.ready:
+		case <-r.Context().Done():
+			rt.release()
+			return
+		}
+		if rt.err != nil {
+			rt.release()
+			rejectWithUpstreamError(r, rt.err)
+			return
+		}
+		rt.serveSubscriber(r)
+	})
+}
+
+// subscribeNamespaceHandler accepts SUBSCRIBE_NAMESPACE, replays the matching
+// known namespaces, and keeps the subscriber posted on later changes.
+func (h *Handler) subscribeNamespaceHandler() moqtransport.SubscribeNamespaceHandler {
+	return moqtransport.SubscribeNamespaceHandlerFunc(func(r *moqtransport.SubscribeNamespaceRequest) {
+		announcer, err := r.Accept()
+		if err != nil {
+			slog.Error("failed to accept namespace subscription", "prefix", r.Prefix(), "error", err)
+			return
+		}
+		slog.Info("namespace subscription", "prefix", r.Prefix())
+		na := &nsAnnouncer{
+			prefix:    r.Prefix(),
+			announcer: announcer,
+			announced: make(map[nsKey]bool),
+		}
+		h.addAnnouncer(na)
+		<-r.Context().Done()
+		h.removeAnnouncer(na)
 	})
 }
 
@@ -185,6 +277,13 @@ func (h *Handler) removeWaiter(key nsKey, ch chan *announcement) {
 	}
 }
 
+// lookupAnnouncement returns the announcement covering the namespace, or nil.
+func (h *Handler) lookupAnnouncement(namespace []string) *announcement {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.announcements[keyForNamespace(namespace)]
+}
+
 // register adds the announcement to the table. A namespace announced again
 // replaces the previous announcement: with per-request cleanup keyed on the
 // request, the stale entry would otherwise linger if its withdrawal signal
@@ -223,13 +322,158 @@ func (h *Handler) deregister(r *moqtransport.PublishNamespaceRequest) bool {
 	return false
 }
 
-// dropSession removes every announcement the session owns.
+// dropSession removes every announcement the session owns, withdraws them
+// from the other sessions and announcers, and forgets the session.
 func (h *Handler) dropSession(session *moqtransport.Session) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	var dropped [][]string
 	for key, a := range h.announcements {
 		if a.session == session {
 			delete(h.announcements, key)
+			dropped = append(dropped, a.namespace)
 		}
 	}
+	delete(h.sessions, session)
+	h.mu.Unlock()
+	for _, namespace := range dropped {
+		h.withdrawFromAll(namespace)
+	}
+}
+
+// addSession registers a newly established session and replays the known
+// namespaces to it, so clients that wait for announcements (warp-player)
+// work behind the relay. Peers that take no announcements (a bare publisher)
+// reject them, which is harmless.
+func (h *Handler) addSession(session *moqtransport.Session) {
+	h.nsMu.Lock()
+	defer h.nsMu.Unlock()
+	state := &sessionState{
+		session: session,
+		pubs:    make(map[nsKey]*moqtransport.NamespacePublication),
+	}
+	h.mu.Lock()
+	h.sessions[session] = state
+	existing := make([]*announcement, 0, len(h.announcements))
+	for _, a := range h.announcements {
+		if a.session != session {
+			existing = append(existing, a)
+		}
+	}
+	h.mu.Unlock()
+	for _, a := range existing {
+		h.announceLocked(state, a.namespace)
+	}
+}
+
+// announceToAll tells every other session and every matching announcer about
+// a newly announced namespace.
+func (h *Handler) announceToAll(namespace []string, from *moqtransport.Session) {
+	h.nsMu.Lock()
+	defer h.nsMu.Unlock()
+	h.mu.Lock()
+	states := make([]*sessionState, 0, len(h.sessions))
+	for session, state := range h.sessions {
+		if session != from {
+			states = append(states, state)
+		}
+	}
+	announcers := make([]*nsAnnouncer, 0, len(h.announcers))
+	for na := range h.announcers {
+		announcers = append(announcers, na)
+	}
+	h.mu.Unlock()
+
+	for _, state := range states {
+		h.announceLocked(state, namespace)
+	}
+	key := keyForNamespace(namespace)
+	for _, na := range announcers {
+		if !na.announced[key] && prefixMatches(na.prefix, namespace) {
+			if err := na.announcer.Announce(namespace); err != nil {
+				slog.Debug("failed to announce to namespace subscriber", "error", err)
+				continue
+			}
+			na.announced[key] = true
+		}
+	}
+}
+
+// announceLocked announces one namespace on one session and keeps the handle
+// for withdrawal. Called with nsMu held.
+func (h *Handler) announceLocked(state *sessionState, namespace []string) {
+	key := keyForNamespace(namespace)
+	if _, ok := state.pubs[key]; ok {
+		return
+	}
+	publication, err := state.session.PublishNamespace(state.session.Context(), namespace)
+	if err != nil {
+		// A peer that takes no announcements answers every one this way.
+		slog.Debug("session did not take announcement", "namespace", namespace, "error", err)
+		return
+	}
+	state.pubs[key] = publication
+}
+
+// withdrawFromAll closes the relay's announcements of a withdrawn namespace
+// toward every session and notifies matching announcers.
+func (h *Handler) withdrawFromAll(namespace []string) {
+	h.nsMu.Lock()
+	defer h.nsMu.Unlock()
+	key := keyForNamespace(namespace)
+	h.mu.Lock()
+	states := make([]*sessionState, 0, len(h.sessions))
+	for _, state := range h.sessions {
+		states = append(states, state)
+	}
+	announcers := make([]*nsAnnouncer, 0, len(h.announcers))
+	for na := range h.announcers {
+		announcers = append(announcers, na)
+	}
+	h.mu.Unlock()
+
+	for _, state := range states {
+		if publication, ok := state.pubs[key]; ok {
+			if err := publication.Close(); err != nil {
+				slog.Debug("failed to withdraw announcement", "error", err)
+			}
+			delete(state.pubs, key)
+		}
+	}
+	for _, na := range announcers {
+		if na.announced[key] {
+			if err := na.announcer.Done(namespace); err != nil {
+				slog.Debug("failed to notify namespace subscriber", "error", err)
+			}
+			delete(na.announced, key)
+		}
+	}
+}
+
+// addAnnouncer registers a namespace subscriber and replays the matching
+// known namespaces to it.
+func (h *Handler) addAnnouncer(na *nsAnnouncer) {
+	h.nsMu.Lock()
+	defer h.nsMu.Unlock()
+	h.mu.Lock()
+	h.announcers[na] = struct{}{}
+	matches := make([][]string, 0)
+	for _, a := range h.announcements {
+		if prefixMatches(na.prefix, a.namespace) {
+			matches = append(matches, a.namespace)
+		}
+	}
+	h.mu.Unlock()
+	for _, namespace := range matches {
+		if err := na.announcer.Announce(namespace); err != nil {
+			slog.Debug("failed to announce to namespace subscriber", "error", err)
+			continue
+		}
+		na.announced[keyForNamespace(namespace)] = true
+	}
+}
+
+func (h *Handler) removeAnnouncer(na *nsAnnouncer) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.announcers, na)
 }
