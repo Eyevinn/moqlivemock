@@ -386,16 +386,18 @@ func PublishTrack(ctx context.Context, publisher *moqtransport.Subscription,
 	}
 }
 
-// LOC extension header property IDs from draft-ietf-moq-loc-03 §2.3.1.
+// LOC Object Property IDs from draft-ietf-moq-loc-04 §2.3.1.
 const (
 	// locPropTimestamp is the LOC Timestamp property: microseconds since the
 	// Unix epoch when no Timescale property is present.
 	//
-	// draft-ietf-moq-loc-03 moved it from 0x06 to 0x0A. It had to: MOQT's
-	// Properties registry allocates 0x06 to SUBGROUP_DELIVERY_TIMEOUT, which
-	// is Track scope only, so a 0x06 Object Property is a malformed track from
-	// draft-18 onwards and gets the session closed.
-	locPropTimestamp = 0x0A
+	// The codepoint has moved twice. draft-ietf-moq-loc-03 moved it from 0x06
+	// to 0x0A because MOQT's Properties registry allocates 0x06 to
+	// SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a 0x06 Object
+	// Property is a malformed track from draft-18 onwards. draft-04 then moved
+	// it again to 0x10, publishing a settled registry table where -03 still
+	// carried "IANA, please assign" on its neighbours.
+	locPropTimestamp = 0x10
 )
 
 // PublishLOCTrack publishes LOC media track data (one raw frame per object) in MoQ groups,

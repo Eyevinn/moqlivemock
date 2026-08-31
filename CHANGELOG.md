@@ -16,12 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   streams whose closing replaces UNANNOUNCE, and a publisher now sees a
   subscriber leave -- publish loops end on the subscription's context rather
   than the session's. `InitialMaxRequestID` is gone with MAX_REQUEST_ID.
-- **The LOC Timestamp Object Property moves from `0x06` to `0x0A`**, per
-  draft-ietf-moq-loc-03. MOQT's Properties registry allocates `0x06` to
-  SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a `0x06` Object
-  Property makes the track malformed from draft-18 onwards and the subscription
-  is refused. draft-16 had no scope rule for extension headers, so the collision
-  was silently tolerated until the new parser enforced it.
+- **The LOC Timestamp Object Property moves from `0x06` to `0x10`**, per
+  draft-ietf-moq-loc-04. `0x06` became unusable under draft-18: MOQT's
+  Properties registry allocates it to SUBGROUP_DELIVERY_TIMEOUT, which is Track
+  scope only, so a `0x06` Object Property makes the track malformed and the
+  subscription is refused. draft-16 had no scope rule for extension headers, so
+  the collision was silently tolerated until the new parser enforced it.
+  The codepoint moved twice on the way: draft-03 assigned `0x0A` and draft-04
+  reassigned it to `0x10` as the registry table settled. `0x0A` was briefly on
+  `main` and in no release, so only a build from that window speaks it.
 - The ALPN lists are no longer hard-coded -- `moqtransport.SupportedALPNs` is the
   single source, and `mlmtest`'s table runs over it rather than a literal list.
 - moq-mi header construction moves in from `moqtransport` to `internal/moqmi`.
