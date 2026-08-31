@@ -2,6 +2,7 @@ package relay_test
 
 import (
 	"io"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -234,5 +235,278 @@ func TestNoStaleStateAcrossSessions(t *testing.T) {
 		requireRequestError(t, err, moqtransport.RequestErrorDoesNotExist)
 
 		shutdown(sConn, cConn)
+	})
+}
+
+// fanoutPublisher is a controllable publisher client: it accepts any
+// SUBSCRIBE, hands the subscription to the test to drive, counts accepts,
+// and signals when a subscription's request ends.
+type fanoutPublisher struct {
+	session      *moqtransport.Session
+	accepts      atomic.Int32
+	subs         chan *moqtransport.Subscription
+	unsubscribed chan struct{}
+}
+
+func newFanoutPublisher() *fanoutPublisher {
+	p := &fanoutPublisher{
+		subs:         make(chan *moqtransport.Subscription, 4),
+		unsubscribed: make(chan struct{}, 4),
+	}
+	p.session = &moqtransport.Session{
+		Implementation: "mlmrel-test-publisher",
+		SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
+			p.accepts.Add(1)
+			sub, err := r.Accept()
+			if err != nil {
+				return
+			}
+			p.subs <- sub
+			<-r.Context().Done()
+			p.unsubscribed <- struct{}{}
+		}),
+	}
+	return p
+}
+
+// TestFanoutSharedUpstream is the heart of phase 3: two subscribers share one
+// upstream subscription, the late joiner starts at the newest cached group,
+// and the upstream subscription goes away a linger after the last subscriber.
+func TestFanoutSharedUpstream(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		h.Linger = 100 * time.Millisecond
+
+		pub := newFanoutPublisher()
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subA, asConn, acConn := connect(t, h)
+		subB, bsConn, bcConn := connect(t, h)
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		remoteA, err := subA.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		sg1, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(0, []byte("g1o0"))
+		require.NoError(t, err)
+		obj, err := remoteA.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []byte("g1o0"), obj.Payload)
+
+		// B joins late: still exactly one upstream subscription, SUBSCRIBE_OK
+		// carries the relay's largest location, and delivery starts at the
+		// beginning of the newest cached group.
+		remoteB, err := subB.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		require.Equal(t, int32(1), pub.accepts.Load())
+		largest, ok := remoteB.LargestObject()
+		require.True(t, ok)
+		require.Equal(t, moqtransport.Location{Group: 1, Object: 0}, largest)
+		obj, err = remoteB.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), obj.GroupID)
+		require.Equal(t, []byte("g1o0"), obj.Payload)
+
+		// A new group reaches both.
+		require.NoError(t, sg1.Close())
+		sg2, err := upSub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = sg2.WriteObject(0, []byte("g2o0"))
+		require.NoError(t, err)
+		for _, remote := range []*moqtransport.RemoteTrack{remoteA, remoteB} {
+			obj, err := remote.ReadObject(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, uint64(2), obj.GroupID)
+			require.Equal(t, []byte("g2o0"), obj.Payload)
+		}
+
+		// Both leave; the upstream subscription survives the linger, no
+		// longer.
+		require.NoError(t, remoteA.Close())
+		require.NoError(t, remoteB.Close())
+		time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
+		select {
+		case <-pub.unsubscribed:
+			t.Fatal("upstream unsubscribed before the linger elapsed")
+		default:
+		}
+		time.Sleep(100 * time.Millisecond)
+		synctest.Wait()
+		select {
+		case <-pub.unsubscribed:
+		default:
+			t.Fatal("upstream not unsubscribed after the linger")
+		}
+
+		shutdown(psConn, pcConn, asConn, acConn, bsConn, bcConn)
+	})
+}
+
+// TestFetchProxied: a FETCH for a range the cache does not cover is proxied
+// to the announcing session and pumped through losslessly.
+func TestFetchProxied(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pubSession := &moqtransport.Session{
+			Implementation: "mlmrel-test-publisher",
+			FetchHandler: moqtransport.FetchHandlerFunc(func(r *moqtransport.FetchRequest) {
+				response, err := r.Accept()
+				if err != nil {
+					return
+				}
+				_ = response.WriteObject(moqtransport.Object{
+					GroupID: 0, ObjectID: 0, Priority: 128, Payload: []byte("fetched"),
+				})
+				_ = response.Close()
+			}),
+		}
+		psConn, pcConn := connectSession(t, h, pubSession)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		fs, err := subSession.Fetch(t.Context(), testNamespace, "test-track",
+			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+		require.NoError(t, err)
+		fo, err := fs.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []byte("fetched"), fo.Payload)
+		_, err = fs.ReadObject(t.Context())
+		require.ErrorIs(t, err, moqtransport.ErrFetchComplete)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestFetchFromCache: a FETCH range fully covered by an active track's group
+// cache is served by the relay itself. The publisher has no FetchHandler, so
+// a proxied fetch would fail with NOT_SUPPORTED -- success proves the cache.
+func TestFetchFromCache(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pub := newFanoutPublisher() // no FetchHandler
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+		remote, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		sg1, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(0, []byte("a"))
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(1, []byte("b"))
+		require.NoError(t, err)
+		require.NoError(t, sg1.Close())
+		sg2, err := upSub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = sg2.WriteObject(0, []byte("c")) // completes group 1 in the cache
+		require.NoError(t, err)
+
+		// Drain the subscription so the relay has seen everything.
+		for range 3 {
+			_, err := remote.ReadObject(t.Context())
+			require.NoError(t, err)
+		}
+
+		fs, err := subSession.Fetch(t.Context(), testNamespace, "test-track",
+			moqtransport.Location{Group: 1, Object: 0}, moqtransport.Location{Group: 1, Object: 2})
+		require.NoError(t, err)
+		var payloads []string
+		for {
+			fo, err := fs.ReadObject(t.Context())
+			if err != nil {
+				require.ErrorIs(t, err, moqtransport.ErrFetchComplete)
+				break
+			}
+			require.Equal(t, uint64(1), fo.GroupID)
+			payloads = append(payloads, string(fo.Payload))
+		}
+		require.Equal(t, []string{"a", "b"}, payloads)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestSubscribeNamespacePropagation: SUBSCRIBE_NAMESPACE gets live
+// announcements, withdrawals, and replay of already-known namespaces.
+func TestSubscribeNamespacePropagation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		observer, osConn, ocConn := connect(t, h)
+		nsSub, err := observer.SubscribeNamespace(t.Context(), []string{"moq-test"})
+		require.NoError(t, err)
+
+		pubSession, psConn, pcConn := connect(t, h)
+		publication, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		ev := <-nsSub.Namespaces()
+		require.True(t, ev.Available)
+		require.Equal(t, testNamespace, ev.Namespace)
+
+		// A second observer arriving now gets the namespace replayed.
+		observer2, o2sConn, o2cConn := connect(t, h)
+		nsSub2, err := observer2.SubscribeNamespace(t.Context(), []string{"moq-test"})
+		require.NoError(t, err)
+		ev = <-nsSub2.Namespaces()
+		require.True(t, ev.Available)
+		require.Equal(t, testNamespace, ev.Namespace)
+
+		// Withdrawal reaches both.
+		require.NoError(t, publication.Close())
+		ev = <-nsSub.Namespaces()
+		require.False(t, ev.Available)
+		ev = <-nsSub2.Namespaces()
+		require.False(t, ev.Available)
+
+		shutdown(osConn, ocConn, psConn, pcConn, o2sConn, o2cConn)
+	})
+}
+
+// TestAnnouncementForwardedToSessions: the relay re-announces known
+// namespaces to sessions that take announcements, and withdraws them when
+// the origin goes.
+func TestAnnouncementForwardedToSessions(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pubSession, psConn, pcConn := connect(t, h)
+		publication, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		received := make(chan []string, 4)
+		withdrawn := make(chan []string, 4)
+		observer := &moqtransport.Session{
+			Implementation: "mlmrel-test-observer",
+			PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
+				func(r *moqtransport.PublishNamespaceRequest) {
+					if err := r.Accept(); err != nil {
+						return
+					}
+					received <- r.Namespace()
+					<-r.Context().Done()
+					withdrawn <- r.Namespace()
+				}),
+		}
+		osConn, ocConn := connectSession(t, h, observer)
+
+		require.Equal(t, testNamespace, <-received)
+		require.NoError(t, publication.Close())
+		require.Equal(t, testNamespace, <-withdrawn)
+
+		shutdown(psConn, pcConn, osConn, ocConn)
 	})
 }

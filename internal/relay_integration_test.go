@@ -79,3 +79,60 @@ func TestRelayedVideoAudioReceive(t *testing.T) {
 		compare("audio", directAudio, relayAudio)
 	})
 }
+
+// TestRelayedTwoLateJoiningSubscribers is the phase 3 acceptance: two
+// subscribers with the default joining-FETCH catalog flow (no workaround
+// flags) behind one relay, the second joining seconds late, both receiving
+// media. The joining FETCH is proxied upstream; the media tracks share one
+// upstream subscription per track.
+func TestRelayedTwoLateJoiningSubscribers(t *testing.T) {
+	asset, catalog := loadTestAsset(t)
+
+	synctest.Test(t, func(t *testing.T) {
+		ph := newPubHandler(asset, catalog)
+		upServer, upClient := testconn.Pair()
+		go ph.Handle(t.Context(), upServer)
+		rh := relay.NewHandler(io.Discard)
+		go rh.Handle(t.Context(), upClient)
+		synctest.Wait() // the publisher's announcements land in the relay's table
+
+		newJoiningSub := func(video, audio io.Writer) *sub.Handler {
+			return &sub.Handler{
+				Namespace: []string{testNamespace},
+				Outs:      map[string]io.Writer{"video": video, "audio": audio},
+				Logfh:     io.Discard,
+				VideoName: "_avc",
+				AudioName: "_aac",
+				// CatalogMode empty: the default joining-FETCH flow.
+			}
+		}
+
+		aServer, aClient := testconn.Pair()
+		go rh.Handle(t.Context(), aServer)
+		videoA, audioA := newSyncBuffer(), newSyncBuffer()
+		go func() { _ = newJoiningSub(videoA, audioA).RunWithConn(t.Context(), aClient) }()
+
+		// A plays for a while before B joins late.
+		videoA.WaitForLen(50_000)
+
+		bServer, bClient := testconn.Pair()
+		go rh.Handle(t.Context(), bServer)
+		videoB, audioB := newSyncBuffer(), newSyncBuffer()
+		go func() { _ = newJoiningSub(videoB, audioB).RunWithConn(t.Context(), bClient) }()
+
+		aBefore := videoA.Len()
+		videoB.WaitForLen(50_000)
+		audioA.WaitForLen(10_000)
+		audioB.WaitForLen(10_000)
+
+		// A kept receiving while B joined and played.
+		require.Greater(t, videoA.Len(), aBefore, "first subscriber stalled when the second joined")
+
+		for _, c := range []*testconn.Conn{
+			upServer, upClient, aServer, aClient, bServer, bClient,
+		} {
+			_ = c.CloseWithError(0, "")
+		}
+		synctest.Wait()
+	})
+}
