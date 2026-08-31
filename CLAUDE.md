@@ -36,9 +36,12 @@ Consequences worth knowing:
   long as its stream, and ending that stream is the message. A publisher learns
   a subscriber has gone from `Subscription.Context()` being cancelled.
 - Extension headers are now Object Properties, with a registry and per-property
-  scope. The LOC Timestamp property is **0x0A** (draft-ietf-moq-loc-03), not
-  0x06: MOQT allocates 0x06 to SUBGROUP_DELIVERY_TIMEOUT, which is Track scope
-  only, so a 0x06 Object Property makes the track malformed.
+  scope. The LOC Timestamp property is **0x10** (draft-ietf-moq-loc-04). It has
+  moved twice: 0x06 was unusable because MOQT allocates it to
+  SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a 0x06 Object
+  Property makes the track malformed; draft-03 moved it to 0x0A and draft-04
+  moved it again to 0x10 as the registry table settled. Check the draft before
+  assuming this one.
 - The PROPERTIES bit lives in the subgroup header and covers every Object on
   the stream, so a subgroup carrying properties must be opened with
   `moqtransport.WithObjectProperties()`.
