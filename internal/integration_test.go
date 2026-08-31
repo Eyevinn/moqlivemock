@@ -12,6 +12,7 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
+	"github.com/Eyevinn/moqlivemock/internal/testconn"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/assert"
@@ -117,7 +118,7 @@ func newSubHandler(outs map[string]io.Writer) *sub.Handler {
 }
 
 // shutdown closes both connections and waits for goroutines to drain.
-func shutdown(sConn, cConn *memConn) {
+func shutdown(sConn, cConn *testconn.Conn) {
 	_ = sConn.CloseWithError(0, "")
 	_ = cConn.CloseWithError(0, "")
 	time.Sleep(time.Millisecond)
@@ -127,7 +128,7 @@ func TestCatalogExchange(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -153,7 +154,7 @@ func TestJoiningCatalog(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -189,7 +190,7 @@ func TestSubscribeCatalogLegacy(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -217,7 +218,7 @@ func TestFetchCatalog(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -246,7 +247,7 @@ func TestVideoAudioReceive(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -270,7 +271,7 @@ func TestSubtitleReceive(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -298,7 +299,7 @@ func TestMuxedOutput(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
 	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := memConnPair()
+		sConn, cConn := testconn.Pair()
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)

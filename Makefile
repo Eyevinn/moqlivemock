@@ -6,9 +6,9 @@ LDFLAGS = -X github.com/Eyevinn/moqlivemock/internal.commitVersion=$$(git descri
 all: check build test
 
 # Add programs to build here. Should be placed in the cmd/ directory.
-build: mlmpub mlmsub
+build: mlmpub mlmsub mlmrel
 
-mlmpub mlmsub:
+mlmpub mlmsub mlmrel:
 	go build -ldflags "$(LDFLAGS)" -o out/$@ ./cmd/$@
 
 build-linux:
@@ -50,6 +50,7 @@ clean:
 install:
 	go install -ldflags "$(LDFLAGS)" ./cmd/mlmpub
 	go install -ldflags "$(LDFLAGS)" ./cmd/mlmsub
+	go install -ldflags "$(LDFLAGS)" ./cmd/mlmrel
 
 update:
 	go get -t -u ./...

@@ -1,11 +1,10 @@
-package internal_test
-
-// memconn provides an in-memory implementation of moqtransport.Connection
-// for deterministic integration testing without QUIC networking.
+// Package testconn provides an in-memory implementation of
+// moqtransport.Connection for deterministic integration testing without QUIC
+// networking.
 //
 // Architecture:
 //
-//	memConnPair() creates two memConn instances (server + client) wired together.
+//	Pair() creates two Conn instances (server + client) wired together.
 //	Streams opened on one side are delivered to the other via buffered channels.
 //	Each stream uses asyncPipe for data transfer — an asynchronous, buffered pipe
 //	where writes never block and reads block until data arrives.
@@ -29,6 +28,7 @@ package internal_test
 //	CloseWithError closes all tracked pipes (unblocking goroutines stuck in
 //	asyncPipe.Read) and cancels both the local and peer contexts. This is required
 //	by synctest, which panics if the test bubble exits with blocked goroutines.
+package testconn
 
 import (
 	"bytes"
@@ -111,15 +111,15 @@ func (p *asyncPipe) CloseWithError(err error) error {
 	return nil
 }
 
-// memConnPair creates a pair of in-memory connections (server, client)
+// Pair creates a pair of in-memory connections (server, client)
 // wired together. Streams opened on one side appear on the other's
 // Accept calls. Both connections share contexts so that closing either
 // side cancels both.
-func memConnPair() (*memConn, *memConn) {
+func Pair() (*Conn, *Conn) {
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 	clientCtx, clientCancel := context.WithCancel(context.Background())
 
-	server := &memConn{
+	server := &Conn{
 		perspective: moqtransport.PerspectiveServer,
 		ctx:         serverCtx,
 		cancel:      serverCancel,
@@ -127,7 +127,7 @@ func memConnPair() (*memConn, *memConn) {
 		biAccept:    make(chan moqtransport.Stream, 16),
 		uniAccept:   make(chan moqtransport.ReceiveStream, 16),
 	}
-	client := &memConn{
+	client := &Conn{
 		perspective: moqtransport.PerspectiveClient,
 		ctx:         clientCtx,
 		cancel:      clientCancel,
@@ -142,13 +142,13 @@ func memConnPair() (*memConn, *memConn) {
 	return server, client
 }
 
-// memConn implements moqtransport.Connection using in-memory pipes.
-type memConn struct {
+// Conn implements moqtransport.Connection using in-memory pipes.
+type Conn struct {
 	perspective moqtransport.Perspective
 	ctx         context.Context
 	cancel      context.CancelFunc
 	cancelPeer  context.CancelFunc
-	peer        *memConn
+	peer        *Conn
 	biAccept    chan moqtransport.Stream        // peer-opened bidirectional streams
 	uniAccept   chan moqtransport.ReceiveStream // peer-opened unidirectional streams
 	streamID    atomic.Uint64
@@ -158,7 +158,7 @@ type memConn struct {
 	closed bool
 }
 
-func (c *memConn) AcceptStream(ctx context.Context) (moqtransport.Stream, error) {
+func (c *Conn) AcceptStream(ctx context.Context) (moqtransport.Stream, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -169,7 +169,7 @@ func (c *memConn) AcceptStream(ctx context.Context) (moqtransport.Stream, error)
 	}
 }
 
-func (c *memConn) AcceptUniStream(ctx context.Context) (moqtransport.ReceiveStream, error) {
+func (c *Conn) AcceptUniStream(ctx context.Context) (moqtransport.ReceiveStream, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -180,13 +180,13 @@ func (c *memConn) AcceptUniStream(ctx context.Context) (moqtransport.ReceiveStre
 	}
 }
 
-func (c *memConn) OpenStream() (moqtransport.Stream, error) {
+func (c *Conn) OpenStream() (moqtransport.Stream, error) {
 	return c.OpenStreamSync(context.Background())
 }
 
 // OpenStreamSync creates a bidirectional stream with two async pipes (one per
 // direction) and delivers the remote end to the peer's biAccept channel.
-func (c *memConn) OpenStreamSync(ctx context.Context) (moqtransport.Stream, error) {
+func (c *Conn) OpenStreamSync(ctx context.Context) (moqtransport.Stream, error) {
 	id := c.streamID.Add(1)
 	pipeAtoB := newAsyncPipe() // local writes, remote reads
 	pipeBtoA := newAsyncPipe() // remote writes, local reads
@@ -197,8 +197,8 @@ func (c *memConn) OpenStreamSync(ctx context.Context) (moqtransport.Stream, erro
 	c.peer.trackPipe(pipeAtoB)
 	c.peer.trackPipe(pipeBtoA)
 
-	local := &memStream{id: id, r: pipeBtoA, w: pipeAtoB}
-	remote := &memStream{id: id, r: pipeAtoB, w: pipeBtoA}
+	local := &stream{id: id, r: pipeBtoA, w: pipeAtoB}
+	remote := &stream{id: id, r: pipeAtoB, w: pipeBtoA}
 
 	select {
 	case <-ctx.Done():
@@ -210,21 +210,21 @@ func (c *memConn) OpenStreamSync(ctx context.Context) (moqtransport.Stream, erro
 	}
 }
 
-func (c *memConn) OpenUniStream() (moqtransport.SendStream, error) {
+func (c *Conn) OpenUniStream() (moqtransport.SendStream, error) {
 	return c.OpenUniStreamSync(context.Background())
 }
 
 // OpenUniStreamSync creates a unidirectional stream with a single async pipe
 // and delivers the receive end to the peer's uniAccept channel.
-func (c *memConn) OpenUniStreamSync(ctx context.Context) (moqtransport.SendStream, error) {
+func (c *Conn) OpenUniStreamSync(ctx context.Context) (moqtransport.SendStream, error) {
 	id := c.streamID.Add(1)
 	pipe := newAsyncPipe()
 
 	c.trackPipe(pipe)
 	c.peer.trackPipe(pipe)
 
-	local := &memSendStream{id: id, w: pipe}
-	remote := &memReceiveStream{id: id, r: pipe}
+	local := &sendStream{id: id, w: pipe}
+	remote := &receiveStream{id: id, r: pipe}
 
 	select {
 	case <-ctx.Done():
@@ -237,18 +237,18 @@ func (c *memConn) OpenUniStreamSync(ctx context.Context) (moqtransport.SendStrea
 }
 
 // SendDatagram is a no-op; MoQ does not use datagrams in these tests.
-func (c *memConn) SendDatagram([]byte) error {
+func (c *Conn) SendDatagram([]byte) error {
 	return nil
 }
 
 // ReceiveDatagram blocks until the context is cancelled. Returning an error
 // immediately would kill the MoQ session's errgroup, so we block instead.
-func (c *memConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+func (c *Conn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (c *memConn) trackPipe(p *asyncPipe) {
+func (c *Conn) trackPipe(p *asyncPipe) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.pipes = append(c.pipes, p)
@@ -256,7 +256,7 @@ func (c *memConn) trackPipe(p *asyncPipe) {
 
 // CloseWithError closes all tracked pipes (unblocking readers), then cancels
 // both the local and peer contexts so all goroutines can exit cleanly.
-func (c *memConn) CloseWithError(uint64, string) error {
+func (c *Conn) CloseWithError(uint64, string) error {
 	c.mu.Lock()
 	if !c.closed {
 		c.closed = true
@@ -270,19 +270,19 @@ func (c *memConn) CloseWithError(uint64, string) error {
 	return nil
 }
 
-func (c *memConn) Context() context.Context {
+func (c *Conn) Context() context.Context {
 	return c.ctx
 }
 
-func (c *memConn) Protocol() moqtransport.Protocol {
+func (c *Conn) Protocol() moqtransport.Protocol {
 	return moqtransport.ProtocolQUIC
 }
 
-func (c *memConn) Perspective() moqtransport.Perspective {
+func (c *Conn) Perspective() moqtransport.Perspective {
 	return c.perspective
 }
 
-func (c *memConn) NegotiatedALPN() string {
+func (c *Conn) NegotiatedALPN() string {
 	// From draft-17 the negotiated protocol identifier is the whole of version
 	// negotiation, and a session cannot start without one it recognises. An
 	// in-memory connection has no TLS to negotiate it, so it reports what this
@@ -290,37 +290,37 @@ func (c *memConn) NegotiatedALPN() string {
 	return moqtransport.SupportedALPNs()[0]
 }
 
-// memStream implements moqtransport.Stream (bidirectional).
-type memStream struct {
+// stream implements moqtransport.Stream (bidirectional).
+type stream struct {
 	id uint64
 	r  *asyncPipe // read from peer
 	w  *asyncPipe // write to peer
 }
 
-func (s *memStream) Read(p []byte) (int, error)  { return s.r.Read(p) }
-func (s *memStream) Write(p []byte) (int, error) { return s.w.Write(p) }
-func (s *memStream) Close() error                { return s.w.Close() }
-func (s *memStream) Stop(uint32)                 { _ = s.r.CloseWithError(io.EOF) }
-func (s *memStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
-func (s *memStream) StreamID() uint64            { return s.id }
+func (s *stream) Read(p []byte) (int, error)  { return s.r.Read(p) }
+func (s *stream) Write(p []byte) (int, error) { return s.w.Write(p) }
+func (s *stream) Close() error                { return s.w.Close() }
+func (s *stream) Stop(uint32)                 { _ = s.r.CloseWithError(io.EOF) }
+func (s *stream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
+func (s *stream) StreamID() uint64            { return s.id }
 
-// memSendStream implements moqtransport.SendStream (write-only).
-type memSendStream struct {
+// sendStream implements moqtransport.SendStream (write-only).
+type sendStream struct {
 	id uint64
 	w  *asyncPipe
 }
 
-func (s *memSendStream) Write(p []byte) (int, error) { return s.w.Write(p) }
-func (s *memSendStream) Close() error                { return s.w.Close() }
-func (s *memSendStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
-func (s *memSendStream) StreamID() uint64            { return s.id }
+func (s *sendStream) Write(p []byte) (int, error) { return s.w.Write(p) }
+func (s *sendStream) Close() error                { return s.w.Close() }
+func (s *sendStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
+func (s *sendStream) StreamID() uint64            { return s.id }
 
-// memReceiveStream implements moqtransport.ReceiveStream (read-only).
-type memReceiveStream struct {
+// receiveStream implements moqtransport.ReceiveStream (read-only).
+type receiveStream struct {
 	id uint64
 	r  *asyncPipe
 }
 
-func (s *memReceiveStream) Read(p []byte) (int, error) { return s.r.Read(p) }
-func (s *memReceiveStream) Stop(uint32)                { _ = s.r.CloseWithError(io.EOF) }
-func (s *memReceiveStream) StreamID() uint64           { return s.id }
+func (s *receiveStream) Read(p []byte) (int, error) { return s.r.Read(p) }
+func (s *receiveStream) Stop(uint32)                { _ = s.r.CloseWithError(io.EOF) }
+func (s *receiveStream) StreamID() uint64           { return s.id }

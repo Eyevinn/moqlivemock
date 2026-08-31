@@ -11,18 +11,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
-	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/quicmoq"
-	"github.com/Eyevinn/moqtransport/webtransportmoq"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3"
-	"github.com/quic-go/webtransport-go"
 )
 
 type server struct {
@@ -42,58 +35,7 @@ func (s *server) runServer(ctx context.Context) error {
 		go s.startSideServer()
 	}
 
-	slog.Info("Starting MoQ server", "addr", s.addr)
-	listener, err := quic.ListenAddr(s.addr, s.tlsConfig, &quic.Config{
-		EnableDatagrams:                  true,
-		EnableStreamResetPartialDelivery: true,
-	})
-	if err != nil {
-		return err
-	}
-	h3Server := &http3.Server{
-		Addr:      s.addr,
-		TLSConfig: s.tlsConfig,
-		QUICConfig: &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-		},
-	}
-	// ConfigureHTTP3Server (webtransport-go v0.11.0) sends the full set of
-	// WebTransport SETTINGS, including the WT_MAX_SESSIONS and flow-control
-	// codepoints Safari 26.4+ requires. See https://github.com/Eyevinn/warp-player/issues/88
-	webtransport.ConfigureHTTP3Server(h3Server)
-	wt := webtransport.Server{
-		H3: h3Server,
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-		ApplicationProtocols: moqtransport.SupportedALPNs(),
-	}
-	http.HandleFunc("/moq", func(w http.ResponseWriter, r *http.Request) {
-		session, err := wt.Upgrade(w, r)
-		if err != nil {
-			slog.Error("upgrading to webtransport failed", "error", err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		s.handler.Handle(ctx, webtransportmoq.NewServer(session))
-	})
-	for {
-		conn, err := listener.Accept(ctx)
-		if err != nil {
-			return err
-		}
-		alpn := conn.ConnectionState().TLS.NegotiatedProtocol
-		switch {
-		case alpn == "h3":
-			go serveQUICConn(&wt, conn)
-		case slices.Contains(moqtransport.SupportedALPNs(), alpn):
-			go s.handler.Handle(ctx, quicmoq.NewServer(conn))
-		default:
-			slog.Warn("unknown ALPN, closing connection", "alpn", alpn)
-			_ = conn.CloseWithError(0, "unsupported protocol")
-		}
-	}
+	return internal.RunMoQServer(ctx, s.addr, s.tlsConfig, s.handler)
 }
 
 func (s *server) startSideServer() {
@@ -280,11 +222,4 @@ func (s *server) validateCertificateForWebTransport() error {
 		"self_signed", true)
 
 	return nil
-}
-
-func serveQUICConn(wt *webtransport.Server, conn *quic.Conn) {
-	err := wt.ServeQUICConn(conn)
-	if err != nil {
-		slog.Error("failed to serve QUIC connection", "error", err)
-	}
 }

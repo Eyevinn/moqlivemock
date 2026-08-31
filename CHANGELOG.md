@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **mlmrel**, a MoQ Transport relay (phase 1: session setup and control
+  plane). It accepts publisher and subscriber sessions over raw QUIC and
+  WebTransport on one port, takes any announced namespace, deregisters it on
+  withdrawal or session end, and answers a SUBSCRIBE for an unknown namespace
+  with a prompt REQUEST_ERROR. Of the moq-interop-runner relay test cases,
+  `setup-only`, `announce-only`, `publish-namespace-done`, `subscribe-error`
+  and `subscribe-before-announce` pass; `announce-subscribe` needs the
+  object-forwarding phase. New package `internal/relay`.
+- `internal/testconn`: the in-memory `moqtransport.Connection` pair from the
+  integration tests, promoted to a package so relay tests (and future ones)
+  can share it.
+
+### Changed
+
+- The dual raw-QUIC/WebTransport listener and the server TLS-config setup
+  moved from `cmd/mlmpub` into `internal` (`RunMoQServer`, `ServerTLSConfig`)
+  so `mlmpub` and `mlmrel` share them. The WebTransport endpoint now hangs on
+  a dedicated `http.ServeMux` instead of `http.DefaultServeMux`.
+
 ## [0.14.0] - 2026-08-31
 
 MoQ Transport draft-18, and drafts 14 and 16 are gone. From draft-17 the ALPN
