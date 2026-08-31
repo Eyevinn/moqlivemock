@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-31
+
+MoQ Transport draft-18, and drafts 14 and 16 are gone. From draft-17 the ALPN
+is the whole of version negotiation, so this release talks to draft-18 peers
+and to nothing else -- `v0.13.x` remains the line for draft-14/16. The LOC
+Timestamp Object Property also moves to `0x10` to follow
+[draft-ietf-moq-loc-04][loc-04].
+
+Both changes are wire changes, and both fail quietly rather than loudly: a
+draft-16 peer cannot complete the ALPN handshake at all, and a peer on an older
+LOC draft simply finds no timestamp where it expects one.
+
 ### Changed
 
 - **Migrated to MoQ Transport draft-18** (`moqtransport` v0.11.0). Drafts 14 and
@@ -17,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subscriber leave -- publish loops end on the subscription's context rather
   than the session's. `InitialMaxRequestID` is gone with MAX_REQUEST_ID.
 - **The LOC Timestamp Object Property moves from `0x06` to `0x10`**, per
-  draft-ietf-moq-loc-04. `0x06` became unusable under draft-18: MOQT's
+  [draft-ietf-moq-loc-04][loc-04]. `0x06` became unusable under draft-18: MOQT's
   Properties registry allocates it to SUBGROUP_DELIVERY_TIMEOUT, which is Track
   scope only, so a `0x06` Object Property makes the track malformed and the
   subscription is refused. draft-16 had no scope rule for extension headers, so
@@ -550,7 +562,7 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - Configuration options for `audiobatch` and `videobatch` to control how many frames should be sent in every MoQ object/CMAF chunk
 - systemd service script and helpers for mlmpub
-- fingerprint endpoint of mlmpub to be used with WebTransport browser clients like [warp-player[wp]
+- fingerprint endpoint of mlmpub to be used with WebTransport browser clients like [warp-player][wp]
 - Certificate validation and auto-generation for WebTransport-compatible certificates (ECDSA, 14-day validity)
 
 ## [0.2.0] - 2025-04-28
@@ -581,27 +593,29 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.13.0...HEAD
-[0.13.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.1...v0.12.0
-[0.11.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.11.0...v0.11.1
-[0.11.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.1...v0.7.0
-[0.6.1]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0...v0.2.0
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.11.1...v0.12.0
+[0.11.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.11.0...v0.11.1
+[0.11.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Eyevinn/moqlivemock/releases/tag/v0.1.0
 
 [catalog]: https://moq-wg.github.io/warp-streaming-format/draft-ietf-moq-warp.html
 [msf-00]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/00/
 [msf-01]: https://datatracker.ietf.org/doc/draft-ietf-moq-msf/01/
 [loc]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
+[loc-04]: https://datatracker.ietf.org/doc/draft-ietf-moq-loc/04/
 [moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
