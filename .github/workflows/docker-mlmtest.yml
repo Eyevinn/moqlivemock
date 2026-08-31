@@ -26,6 +26,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The last tag entry moves :latest on every push to the default branch.
+      #
+      # metadata-action's default latest=auto only moves :latest for a semver
+      # tag, so a single failed release push strands it until the next release.
+      # That is what happened at v0.13.0: GHCR secondary rate limiting aborted
+      # the push part-way -- after :0.13.0, before :0.13 and :latest -- and
+      # :latest then sat on v0.12.0 for 25 days with nothing to report it. The
+      # interop runner pulls :latest, so a stale tag there silently decides what
+      # the matrix actually tests.
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -36,6 +45,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push
         uses: docker/build-push-action@v6
