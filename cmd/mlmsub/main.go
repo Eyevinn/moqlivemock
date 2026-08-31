@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
 	"github.com/Eyevinn/moqtransport"
 )
@@ -48,6 +49,7 @@ type options struct {
 	subsOut      string
 	catalogOut   string
 	qlogfile     string
+	qlogEvents   string
 	videoname    string
 	audioname    string
 	subsname     string
@@ -79,6 +81,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.subsOut, "subsout", "", "Output file for subtitles or stdout (-)")
 	fs.StringVar(&opts.catalogOut, "catalogout", "", "Output file for catalog JSON or stdout (-)")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
+	fs.StringVar(&opts.qlogEvents, "qlog-events", "all",
+		fmt.Sprintf("qlog event classes to write: all, or a comma-separated subset of %s",
+			strings.Join(qlogfilter.ClassNames(), ",")))
 	fs.StringVar(&opts.videoname, "videoname", "_avc", "Substring to match for video track (default AVC)")
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
@@ -175,6 +180,11 @@ func runClient(ctx context.Context, opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
+	keep, err := qlogfilter.ParseClasses(opts.qlogEvents)
+	if err != nil {
+		return err
+	}
+	logfh = qlogfilter.New(logfh, keep)
 
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")

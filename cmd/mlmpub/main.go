@@ -16,6 +16,7 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/cc608"
 	"github.com/Eyevinn/moqlivemock/internal/pub"
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 )
 
 const (
@@ -43,6 +44,8 @@ type options struct {
 	addr             string
 	asset            string
 	qlogfile         string
+	qlogEvents       string
+	loglevel         string
 	audioSampleBatch int
 	videoSampleBatch int
 	sidePort         int
@@ -72,6 +75,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen or connect address")
 	fs.StringVar(&opts.asset, "asset", "../../assets/test10s", "Asset to serve")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
+	fs.StringVar(&opts.qlogEvents, "qlog-events", "all",
+		fmt.Sprintf("qlog event classes to write: all, or a comma-separated subset of %s",
+			strings.Join(qlogfilter.ClassNames(), ",")))
+	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.IntVar(&opts.audioSampleBatch, "audiobatch", 1, "Nr audio samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.videoSampleBatch, "videobatch", 1, "Nr video samples per MoQ object/CMAF chunk")
 	fs.IntVar(&opts.sidePort, "sideport", 0, "Port for HTTP side server serving /fingerprint and /clearkey (0 to disable)")
@@ -120,11 +127,33 @@ func run(args []string) error {
 	return runServer(opts)
 }
 
+// parseLogLevel converts a string log level to slog.Level
+func parseLogLevel(level string) slog.Level {
+	switch strings.ToLower(level) {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warning", "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown log level: %s, using 'info'\n", level)
+		return slog.LevelInfo
+	}
+}
+
 func runServer(opts *options) error {
 	if opts.version {
 		fmt.Printf("%s %s\n", appName, internal.GetVersion())
 		return nil
 	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: parseLogLevel(opts.loglevel),
+	}))
+	slog.SetDefault(logger)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -286,6 +315,11 @@ func runServer(opts *options) error {
 		logfh = fh
 		defer fh.Close()
 	}
+	keep, err := qlogfilter.ParseClasses(opts.qlogEvents)
+	if err != nil {
+		return err
+	}
+	logfh = qlogfilter.New(logfh, keep)
 	h := &pub.Handler{
 		Namespaces: namespaces,
 		Asset:      asset,
