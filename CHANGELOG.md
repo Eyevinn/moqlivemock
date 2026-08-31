@@ -21,7 +21,7 @@ LOC draft simply finds no timestamp where it expects one.
 
 ### Changed
 
-- **Migrated to MoQ Transport draft-18** (`moqtransport` v0.11.0). Drafts 14 and
+- **Migrated to MoQ Transport draft-18** (`moqtransport` v0.11.1). Drafts 14 and
   16 are no longer supported: from draft-17 the ALPN is the whole of version
   negotiation, so `mlmsub`/`mlmtest` offer `moqt-18` only and `-draft` accepts
   18. Sessions take a context and typed request handlers, announcements are
@@ -45,6 +45,11 @@ LOC draft simply finds no timestamp where it expects one.
 
 ### Fixed
 
+- **qlog no longer writes whole Object payloads** (`moqtransport` v0.11.1).
+  They are capped at 20 bytes, with `object_payload_length` still reporting the
+  true size, which shrinks a publisher's qlog by roughly 25x.
+- `mlmpub -h` now describes the qlog accurately: always written, cannot be
+  turned off, and which flag names the file.
 - The joining-fetch catalog path drains the whole response. The old code read a
   single object because `moqtransport` had no fetch-complete signal to stop on;
   `ErrFetchComplete` is that signal, so deltas after object 0 are no longer
