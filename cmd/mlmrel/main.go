@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/relay"
@@ -23,8 +24,14 @@ const (
 
 var usg = `%s is a MoQ Transport relay. It accepts publisher and subscriber
 sessions over raw QUIC or WebTransport (endpoint /moq) on one port, takes any
-announced namespace, and routes subscriptions to the session that announced
-the namespace. Object forwarding between sessions is not implemented yet.
+announced namespace, and forwards subscriptions and their objects from the
+session that announced the namespace. With -upstream it also dials a
+publisher (e.g. mlmpub) as a client, so that it can sit between mlmpub and
+mlmsub:
+
+  mlmpub -addr 0.0.0.0:4443
+  %s -addr 0.0.0.0:4444 -upstream moqt://localhost:4443
+  mlmsub -addr localhost:4444 -catalog-mode subscribe -muxout - | ffplay -
 
 A qlog is always written -- there is no way to turn it off -- to the file
 named by -qlog, or to stderr with -qlog -.
@@ -33,17 +40,19 @@ Usage of %s:
 `
 
 type options struct {
-	certFile string
-	keyFile  string
-	addr     string
-	qlogfile string
-	loglevel string
-	version  bool
+	certFile    string
+	keyFile     string
+	addr        string
+	upstream    string
+	pendingWait time.Duration
+	qlogfile    string
+	loglevel    string
+	version     bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, usg, appName, appName)
+		fmt.Fprintf(os.Stderr, usg, appName, appName, appName)
 		fmt.Fprintf(os.Stderr, "%s [options]\n\noptions:\n", appName)
 		fs.PrintDefaults()
 	}
@@ -52,6 +61,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.certFile, "cert", "cert.pem", "TLS certificate file")
 	fs.StringVar(&opts.keyFile, "key", "key.pem", "TLS key file")
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen address")
+	fs.StringVar(&opts.upstream, "upstream", "",
+		"upstream publisher to dial: moqt://host[:port] (QUIC) or https://host[:port][/path] (WebTransport)")
+	fs.DurationVar(&opts.pendingWait, "pending-wait", 0,
+		"how long a SUBSCRIBE for an unannounced namespace waits for an announcement before rejection")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
@@ -139,6 +152,10 @@ func runServer(ctx context.Context, opts *options) error {
 	}
 
 	h := relay.NewHandler(logfh)
+	h.PendingWait = opts.pendingWait
+	if opts.upstream != "" {
+		go runUpstream(ctx, h, opts.upstream)
+	}
 	err = internal.RunMoQServer(ctx, opts.addr, tlsConfig, h)
 	// A signal cancels the context and takes the listener down with it; that
 	// is a clean shutdown, and the interop-runner requires exit code 0 on

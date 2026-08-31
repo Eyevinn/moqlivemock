@@ -1,12 +1,13 @@
 // Package relay implements a MoQ Transport relay. It accepts sessions from
 // publishers and subscribers alike, keeps a table of announced namespaces,
-// and routes subscriptions to the session that announced the namespace.
-//
-// Phase 1 (this code) covers session setup and the control plane: any
-// PUBLISH_NAMESPACE is accepted and registered, withdrawal (the request
-// stream ending) and session death deregister it, and a SUBSCRIBE for an
-// unknown namespace is rejected promptly. Forwarding objects between
-// sessions is the next phase.
+// and forwards a subscription to the session that announced its namespace:
+// any PUBLISH_NAMESPACE is accepted and registered, withdrawal (the request
+// stream ending) and session death deregister it, a SUBSCRIBE for an unknown
+// namespace is rejected promptly (or after PendingWait, when configured), and
+// a SUBSCRIBE for an announced one is subscribed upstream and its objects
+// relayed. Fanout -- several subscribers sharing one upstream subscription
+// through a cache -- is the next phase; today each subscription is forwarded
+// individually.
 package relay
 
 import (
@@ -15,6 +16,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Eyevinn/moqtransport"
 	"github.com/mengelbart/qlog"
@@ -25,9 +27,14 @@ import (
 type Handler struct {
 	// Logfh receives the qlog for every session.
 	Logfh io.Writer
+	// PendingWait is how long a SUBSCRIBE for an unannounced namespace waits
+	// for an announcement before it is rejected. Zero rejects immediately,
+	// which is also a valid answer to a subscribe-before-announce race.
+	PendingWait time.Duration
 
 	mu            sync.Mutex
 	announcements map[nsKey]*announcement
+	waiters       map[nsKey][]chan *announcement
 }
 
 // NewHandler creates a relay session handler writing its qlog to logfh.
@@ -35,6 +42,7 @@ func NewHandler(logfh io.Writer) *Handler {
 	return &Handler{
 		Logfh:         logfh,
 		announcements: make(map[nsKey]*announcement),
+		waiters:       make(map[nsKey][]chan *announcement),
 	}
 }
 
@@ -109,7 +117,7 @@ func (h *Handler) publishNamespaceHandler(session *moqtransport.Session) moqtran
 
 func (h *Handler) subscribeHandler() moqtransport.SubscribeHandler {
 	return moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
-		ann := h.lookup(r.Namespace())
+		ann := h.awaitAnnouncement(r.Context(), r.Namespace())
 		if ann == nil {
 			// A prompt REQUEST_ERROR: a relay that sits silent here fails the
 			// interop-runner's subscribe-error case.
@@ -120,15 +128,61 @@ func (h *Handler) subscribeHandler() moqtransport.SubscribeHandler {
 			}
 			return
 		}
-		// Phase 1: the table resolves the announcing session, but forwarding
-		// objects between sessions is not implemented yet.
-		slog.Info("rejecting subscription: forwarding not implemented yet",
-			"namespace", r.Namespace(), "track", r.Track())
-		if err := r.Reject(moqtransport.RequestErrorNotSupported,
-			"subscription forwarding not implemented yet"); err != nil {
-			slog.Error("failed to reject subscription", "error", err)
-		}
+		forward(r, ann.session)
 	})
+}
+
+// awaitAnnouncement returns the announcement covering the namespace. When
+// none exists and PendingWait is positive, it waits that long for one to
+// arrive (the rendezvous a subscribe-before-announce race needs) before
+// giving up.
+func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string) *announcement {
+	key := keyForNamespace(namespace)
+	h.mu.Lock()
+	if a, ok := h.announcements[key]; ok {
+		h.mu.Unlock()
+		return a
+	}
+	if h.PendingWait <= 0 {
+		h.mu.Unlock()
+		return nil
+	}
+	ch := make(chan *announcement, 1)
+	h.waiters[key] = append(h.waiters[key], ch)
+	h.mu.Unlock()
+
+	timer := time.NewTimer(h.PendingWait)
+	defer timer.Stop()
+	select {
+	case a := <-ch:
+		return a
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	h.removeWaiter(key, ch)
+	// register may have won a race with the timeout; the channel is buffered,
+	// so a notification sent before removal is still there.
+	select {
+	case a := <-ch:
+		return a
+	default:
+		return nil
+	}
+}
+
+func (h *Handler) removeWaiter(key nsKey, ch chan *announcement) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	waiters := h.waiters[key]
+	for i, w := range waiters {
+		if w == ch {
+			h.waiters[key] = append(waiters[:i], waiters[i+1:]...)
+			break
+		}
+	}
+	if len(h.waiters[key]) == 0 {
+		delete(h.waiters, key)
+	}
 }
 
 // register adds the announcement to the table. A namespace announced again
@@ -143,11 +197,16 @@ func (h *Handler) register(session *moqtransport.Session, r *moqtransport.Publis
 		slog.Warn("namespace announced again, replacing previous announcement",
 			"namespace", r.Namespace(), "sameSession", prev.session == session)
 	}
-	h.announcements[key] = &announcement{
+	a := &announcement{
 		namespace: r.Namespace(),
 		session:   session,
 		request:   r,
 	}
+	h.announcements[key] = a
+	for _, ch := range h.waiters[key] {
+		ch <- a // buffered, one per waiter
+	}
+	delete(h.waiters, key)
 }
 
 // deregister removes the announcement created by r and reports whether it was
@@ -173,11 +232,4 @@ func (h *Handler) dropSession(session *moqtransport.Session) {
 			delete(h.announcements, key)
 		}
 	}
-}
-
-// lookup returns the announcement covering the namespace, or nil.
-func (h *Handler) lookup(namespace []string) *announcement {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.announcements[keyForNamespace(namespace)]
 }

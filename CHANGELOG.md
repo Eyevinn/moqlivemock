@@ -9,14 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **mlmrel**, a MoQ Transport relay (phase 1: session setup and control
-  plane). It accepts publisher and subscriber sessions over raw QUIC and
-  WebTransport on one port, takes any announced namespace, deregisters it on
-  withdrawal or session end, and answers a SUBSCRIBE for an unknown namespace
-  with a prompt REQUEST_ERROR. Of the moq-interop-runner relay test cases,
-  `setup-only`, `announce-only`, `publish-namespace-done`, `subscribe-error`
-  and `subscribe-before-announce` pass; `announce-subscribe` needs the
-  object-forwarding phase. New package `internal/relay`.
+- **mlmrel**, a MoQ Transport relay. It accepts publisher and subscriber
+  sessions over raw QUIC and WebTransport on one port, takes any announced
+  namespace, deregisters it on withdrawal or session end, and answers a
+  SUBSCRIBE for an unknown namespace with a prompt REQUEST_ERROR. A SUBSCRIBE
+  for an announced namespace is forwarded to the announcing session and its
+  objects relayed with group/subgroup/object IDs, priorities, statuses and
+  object properties preserved (subgroup ends are inferred: a group's
+  subgroups close when a newer group starts, since moqtransport does not
+  surface the upstream FIN). SUBSCRIBE_OK metadata, rejections, PUBLISH_DONE
+  and unsubscribes propagate in both directions. `-upstream` dials a
+  publisher (mlmpub) so the relay can sit between mlmpub and mlmsub, and
+  `-pending-wait` optionally holds a SUBSCRIBE for a not-yet-announced
+  namespace instead of rejecting it. All six moq-interop-runner relay test
+  cases pass. Fanout (several subscribers sharing one upstream subscription)
+  and FETCH relaying are still to come; until then mlmsub needs
+  `-catalog-mode subscribe` behind the relay. New package `internal/relay`.
 - `internal/testconn`: the in-memory `moqtransport.Connection` pair from the
   integration tests, promoted to a package so relay tests (and future ones)
   can share it.
