@@ -34,9 +34,7 @@ type subscriber struct {
 	behindGroup uint64
 
 	// Writer-goroutine state.
-	open        map[sgKey]*moqtransport.Subgroup
-	newestGroup uint64
-	haveGroup   bool
+	open map[sgKey]*moqtransport.Subgroup
 }
 
 func newSubscriber(sub *moqtransport.Subscription, queueLen int) *subscriber {
@@ -55,7 +53,10 @@ func newSubscriber(sub *moqtransport.Subscription, queueLen int) *subscriber {
 // open subgroups. Called with the track's mutex held.
 func (s *subscriber) enqueue(obj *moqtransport.Object) {
 	if s.behind {
-		if obj.GroupID <= s.behindGroup || obj.ObjectID != 0 {
+		// Resync only at a real group start; an end-of-subgroup marker for a
+		// subgroup this subscriber dropped means nothing to it.
+		if obj.GroupID <= s.behindGroup || obj.ObjectID != 0 ||
+			obj.EndsSubgroup || obj.SubgroupReset {
 			return
 		}
 		select {
@@ -166,10 +167,10 @@ func (s *subscriber) finish(end publishEnd) {
 }
 
 // writeObject re-emits one object, reconstructing subgroups from the (group,
-// subgroup) IDs. Subgroup ends are inferred: when a newer group starts, every
-// subgroup of an older group is closed (Eyevinn/moqtransport#19 tracks
-// surfacing the real FIN/RESET). It reports false when the downstream is
-// gone and forwarding should stop.
+// subgroup) IDs. Subgroup ends arrive as synthetic marker objects (the
+// session runs with SubgroupEndEvents), so a downstream subgroup is closed
+// exactly when the upstream one FINs and reset exactly when it resets. It
+// reports false when the downstream is gone and forwarding should stop.
 func (s *subscriber) writeObject(obj *moqtransport.Object) bool {
 	if obj.ForwardingPreference == moqtransport.ObjectForwardingPreferenceDatagram {
 		if err := s.sub.SendDatagram(*obj); err != nil {
@@ -178,28 +179,37 @@ func (s *subscriber) writeObject(obj *moqtransport.Object) bool {
 		return true
 	}
 
-	if !s.haveGroup || obj.GroupID > s.newestGroup {
-		for key, sg := range s.open {
-			if key.group < obj.GroupID {
-				if err := sg.Close(); err != nil {
-					slog.Debug("failed to close subgroup", "error", err)
-				}
-				delete(s.open, key)
-			}
+	key := sgKey{group: obj.GroupID, subgroup: obj.SubgroupID}
+	if obj.EndsSubgroup || obj.SubgroupReset {
+		sg, ok := s.open[key]
+		if !ok {
+			return true // nothing of this subgroup reached the subscriber
 		}
-		s.newestGroup = obj.GroupID
-		s.haveGroup = true
+		delete(s.open, key)
+		if obj.SubgroupReset {
+			// The upstream reset says objects are missing; the code is not
+			// surfaced, so the honest downstream signal is a generic one.
+			sg.Reset(moqtransport.StreamErrorInternal)
+			return true
+		}
+		if err := sg.Close(); err != nil {
+			slog.Debug("failed to close subgroup", "error", err)
+		}
+		return true
 	}
 
-	key := sgKey{group: obj.GroupID, subgroup: obj.SubgroupID}
 	sg, ok := s.open[key]
 	if !ok {
 		// The PROPERTIES bit is per stream, so the subgroup's first
-		// forwarded object decides it. moqlivemock never mixes objects with
-		// and without properties within a subgroup.
+		// forwarded object decides it -- moqlivemock never mixes objects
+		// with and without properties within a subgroup -- and the upstream
+		// END_OF_GROUP bit is forwarded the same way.
 		var opts []moqtransport.SubgroupOption
 		if len(obj.Properties) > 0 {
 			opts = append(opts, moqtransport.WithObjectProperties())
+		}
+		if obj.EndOfGroup {
+			opts = append(opts, moqtransport.WithEndOfGroup())
 		}
 		var err error
 		sg, err = s.sub.OpenSubgroup(obj.GroupID, obj.SubgroupID, obj.Priority, opts...)

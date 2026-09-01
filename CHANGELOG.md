@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   namespace, deregisters it on withdrawal or session end, and answers a
   SUBSCRIBE for an unknown namespace with a prompt REQUEST_ERROR. A SUBSCRIBE
   for an announced namespace is forwarded to the announcing session and its
-  objects relayed with group/subgroup/object IDs, priorities, statuses and
-  object properties preserved (subgroup ends are inferred: a group's
-  subgroups close when a newer group starts, since moqtransport does not
-  surface the upstream FIN). SUBSCRIBE_OK metadata, rejections, PUBLISH_DONE
-  and unsubscribes propagate in both directions. `-upstream` dials a
+  objects relayed with group/subgroup/object IDs, priorities, statuses,
+  object properties and the END_OF_GROUP bit preserved. Subgroups end
+  downstream exactly as they ended upstream -- a FIN as a FIN, a reset as a
+  reset -- via moqtransport v0.12.0's SubgroupEndEvents. SUBSCRIBE_OK
+  metadata, rejections, PUBLISH_DONE and unsubscribes propagate in both
+  directions. `-upstream` dials a
   publisher (mlmpub) so the relay can sit between mlmpub and mlmsub, and
   `-pending-wait` optionally holds a SUBSCRIBE for a not-yet-announced
   namespace instead of rejecting it. All six moq-interop-runner relay test
@@ -61,6 +62,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **moqtransport v0.12.0** ("receive-side fixes for relays"). The bump lets
+  mlmrel forward the real end of every subgroup instead of inferring ends
+  from group numbering, closes two fast-end delivery races the relay tests
+  had to pace around (their paced-publisher workaround is gone -- the abrupt
+  publisher is now the standing regression test), and guarantees that
+  objects on data streams overtaken by PUBLISH_DONE reach the subscriber.
 - The dual raw-QUIC/WebTransport listener and the server TLS-config setup
   moved from `cmd/mlmpub` into `internal` (`RunMoQServer`, `ServerTLSConfig`)
   so `mlmpub` and `mlmrel` share them. The WebTransport endpoint now hangs on

@@ -224,9 +224,13 @@ func (rt *relayTrack) dispatch(obj *moqtransport.Object) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.cache.add(obj)
-	loc := moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID}
-	if !rt.haveLargest || locationLess(rt.largest, loc) {
-		rt.largest, rt.haveLargest = loc, true
+	if !obj.EndsSubgroup && !obj.SubgroupReset {
+		// A marker's Object ID is meaningless, so only real objects advance
+		// the largest location.
+		loc := moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID}
+		if !rt.haveLargest || locationLess(rt.largest, loc) {
+			rt.largest, rt.haveLargest = loc, true
+		}
 	}
 	for s := range rt.subs {
 		s.enqueue(obj)
@@ -279,9 +283,11 @@ func locationLess(a, b moqtransport.Location) bool {
 }
 
 // groupCache keeps the objects of the last maxGroups groups of a track, in
-// arrival order per group. A group counts as complete once a newer group has
-// started -- the same inference the forwarding uses, since moqtransport does
-// not surface subgroup ends (Eyevinn/moqtransport#19).
+// arrival order per group -- end-of-subgroup markers included, so replaying
+// a group to a late joiner reproduces the subgroup ends exactly. A group
+// counts as complete once a subgroup carrying the END_OF_GROUP bit has
+// finished, or a newer group has started (the fallback for publishers that
+// do not set the bit).
 type groupCache struct {
 	maxGroups int
 	groups    map[uint64]*cachedGroup
@@ -292,6 +298,9 @@ type cachedGroup struct {
 	objects   []*moqtransport.Object
 	maxObject uint64
 	complete  bool
+	// damaged says a subgroup of this group was reset: objects are missing,
+	// so the group must not be served from cache.
+	damaged bool
 }
 
 func newGroupCache(maxGroups int) *groupCache {
@@ -320,7 +329,14 @@ func (c *groupCache) add(obj *moqtransport.Object) {
 		}
 	}
 	cg.objects = append(cg.objects, obj)
-	if obj.ObjectID > cg.maxObject {
+	switch {
+	case obj.SubgroupReset:
+		cg.damaged = true
+	case obj.EndsSubgroup:
+		if obj.EndOfGroup {
+			cg.complete = true
+		}
+	case obj.ObjectID > cg.maxObject:
 		cg.maxObject = obj.ObjectID
 	}
 }
@@ -352,7 +368,7 @@ func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtrans
 	newest := c.order[len(c.order)-1]
 	for g := start.Group; g <= end.Group; g++ {
 		cg, ok := c.groups[g]
-		if !ok {
+		if !ok || cg.damaged {
 			return nil, false
 		}
 		if cg.complete {
@@ -370,6 +386,9 @@ func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtrans
 			continue
 		}
 		for _, obj := range c.groups[g].objects {
+			if obj.EndsSubgroup || obj.SubgroupReset {
+				continue // markers are subgroup bookkeeping, not FETCH records
+			}
 			loc := moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID}
 			if locationInFetchRange(loc, start, end) {
 				out = append(out, obj)
