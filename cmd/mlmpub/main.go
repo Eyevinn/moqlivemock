@@ -319,8 +319,8 @@ func runServer(opts *options) error {
 	if err != nil {
 		return err
 	}
-	logfh = qlogfilter.New(logfh, keep)
 	h := &pub.Handler{
+		QlogFilter: keep,
 		Namespaces: namespaces,
 		Asset:      asset,
 		Logfh:      logfh,

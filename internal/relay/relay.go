@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqtransport"
 	"github.com/mengelbart/qlog"
 )
@@ -27,6 +28,9 @@ import (
 type Handler struct {
 	// Logfh receives the qlog for every session.
 	Logfh io.Writer
+	// QlogFilter selects which qlog events reach Logfh; nil writes them all.
+	// Build one with qlogfilter.ParseClasses.
+	QlogFilter func(qlog.Event) bool
 	// PendingWait is how long a SUBSCRIBE for an unannounced namespace waits
 	// for an announcement before it is rejected. Zero rejects immediately,
 	// which is also a valid answer to a subscribe-before-announce race.
@@ -121,8 +125,8 @@ type announcement struct {
 func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	session := &moqtransport.Session{
 		Implementation: "Eyevinn/moqlivemock/mlmrel",
-		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
-			conn.Perspective().String(), moqtransport.QlogSchema),
+		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
+			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
 		// The relay re-emits subgroups, so it needs the real end of each
 		// upstream subgroup stream -- FIN or RESET -- rather than inferring
 		// ends from group numbering.

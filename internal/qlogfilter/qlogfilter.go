@@ -1,28 +1,25 @@
-// Package qlogfilter narrows a qlog JSON-SEQ stream to selected event
-// classes.
+// Package qlogfilter narrows a session's qlog to selected event classes.
 //
-// qlog has no notion of levels -- it is an event log, and both the qlog
-// library and moqtransport write every event unconditionally. moqtransport
-// also takes the concrete *qlog.Logger, so the io.Writer handed to it is the
-// application's one seam: the slog JSON handler underneath emits exactly one
-// record per Write, and this writer drops the records whose event name
-// belongs to an unselected class. The file header (the only record without a
-// name) always passes.
+// qlog has no notion of levels -- it is an event log, and moqtransport
+// writes every event unconditionally -- so verbosity control means selecting
+// event classes. Handler implements moqtransport.QlogHandler and drops
+// unselected events before anything is serialized. The qlog file header is
+// written by qlog.NewQLOGHandler itself when the logger is built, so it is
+// never subject to filtering.
 package qlogfilter
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
+
+	"github.com/Eyevinn/moqtransport"
+	"github.com/mengelbart/qlog"
 )
 
-// classes maps a selectable class to the event-name prefixes it covers, with
-// the "moqt:" category already stripped. The object class covers subgroup
-// headers and objects; datagram and fetch cover their status/header variants
-// through the shared prefix.
+// classes maps a selectable class to the event-name prefixes it covers. The
+// object class covers subgroup headers and objects; datagram and fetch cover
+// their status/header variants through the shared prefix.
 var classes = map[string][]string{
 	"control":  {"control_message_"},
 	"stream":   {"stream_type_set"},
@@ -42,10 +39,9 @@ func ClassNames() []string {
 }
 
 // ParseClasses turns a comma-separated class list into a keep predicate over
-// full event names (e.g. "moqt:subgroup_object_created"). The spec "all" (or
-// an empty one) selects everything and returns a nil predicate, meaning no
-// filtering is needed at all.
-func ParseClasses(spec string) (func(name string) bool, error) {
+// qlog events. The spec "all" (or an empty one) selects everything and
+// returns a nil predicate, meaning no filtering is needed at all.
+func ParseClasses(spec string) (func(qlog.Event) bool, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" || spec == "all" {
 		return nil, nil
@@ -60,11 +56,8 @@ func ParseClasses(spec string) (func(name string) bool, error) {
 		}
 		prefixes = append(prefixes, p...)
 	}
-	return func(name string) bool {
-		// Strip the category ("moqt:...") before matching.
-		if i := strings.IndexByte(name, ':'); i >= 0 {
-			name = name[i+1:]
-		}
+	return func(e qlog.Event) bool {
+		name := e.Name()
 		for _, p := range prefixes {
 			if strings.HasPrefix(name, p) {
 				return true
@@ -74,30 +67,23 @@ func ParseClasses(spec string) (func(name string) bool, error) {
 	}, nil
 }
 
-// recordSeparator starts every JSON-SEQ record (RFC 7464).
-var recordSeparator = []byte{0x1e}
+// Handler filters the events bound for Next.
+type Handler struct {
+	Next moqtransport.QlogHandler
+	Keep func(qlog.Event) bool
+}
 
-// New wraps w so that qlog records failing the keep predicate are dropped.
-// A nil keep returns w unchanged.
-func New(w io.Writer, keep func(name string) bool) io.Writer {
+func (h Handler) Log(e qlog.Event) {
+	if h.Keep == nil || h.Keep(e) {
+		h.Next.Log(e)
+	}
+}
+
+// Wrap returns next filtered by keep. A nil keep selects everything and
+// returns next unchanged.
+func Wrap(next moqtransport.QlogHandler, keep func(qlog.Event) bool) moqtransport.QlogHandler {
 	if keep == nil {
-		return w
+		return next
 	}
-	return &writer{w: w, keep: keep}
-}
-
-type writer struct {
-	w    io.Writer
-	keep func(string) bool
-}
-
-func (f *writer) Write(p []byte) (int, error) {
-	var record struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(bytes.TrimPrefix(p, recordSeparator), &record); err == nil &&
-		record.Name != "" && !f.keep(record.Name) {
-		return len(p), nil
-	}
-	return f.w.Write(p)
+	return Handler{Next: next, Keep: keep}
 }

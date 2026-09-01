@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event classes: `all` (the default, unchanged behavior) or a comma-separated
   subset of `control`, `datagram`, `fetch`, `object`, `stream`. Selecting
   `control,stream` reduces a media session's qlog from a record per object to
-  the control-plane story. Implemented as a JSON-SEQ filter on the qlog
-  writer (`internal/qlogfilter`), since moqtransport takes the concrete
-  `*qlog.Logger` and the writer is the seam an application has.
+  the control-plane story. Implemented as a pre-serialization event filter:
+  moqtransport v0.12.0's `Session.Qlogger` is an interface, so
+  `internal/qlogfilter` wraps the logger and drops unselected events before
+  any JSON exists, and the pub, sub and relay handlers take the predicate as
+  a `QlogFilter` field.
 - `-loglevel` on mlmpub, matching mlmsub and mlmrel.
 
 ### Fixed

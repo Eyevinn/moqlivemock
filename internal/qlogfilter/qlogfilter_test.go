@@ -1,20 +1,25 @@
 package qlogfilter_test
 
 import (
-	"bytes"
+	"log/slog"
 	"testing"
 
 	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
+	"github.com/mengelbart/qlog"
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	headerRecord  = "\x1e{\"file_schema\":\"urn:ietf:params:qlog:file:sequential\",\"title\":\"MoQ QLOG\"}\n"
-	controlRecord = "\x1e{\"time\":1.2,\"name\":\"moqt:control_message_created\",\"data\":{}}\n"
-	objectRecord  = "\x1e{\"time\":1.3,\"name\":\"moqt:subgroup_object_created\",\"data\":{}}\n"
-	sgHeadRecord  = "\x1e{\"time\":1.4,\"name\":\"moqt:subgroup_header_parsed\",\"data\":{}}\n"
-	fetchRecord   = "\x1e{\"time\":1.5,\"name\":\"moqt:fetch_object_parsed\",\"data\":{}}\n"
-)
+// stubEvent is a minimal qlog.Event for exercising the filter.
+type stubEvent struct{ name string }
+
+func (e stubEvent) Category() string     { return "moqt" }
+func (e stubEvent) Name() string         { return e.name }
+func (e stubEvent) LogValue() slog.Value { return slog.StringValue(e.name) }
+
+// recorder is a QlogHandler that remembers what reached it.
+type recorder struct{ names []string }
+
+func (r *recorder) Log(e qlog.Event) { r.names = append(r.names, e.Name()) }
 
 func TestParseClassesAll(t *testing.T) {
 	for _, spec := range []string{"", "all"} {
@@ -29,33 +34,29 @@ func TestParseClassesUnknown(t *testing.T) {
 	require.ErrorContains(t, err, "bogus")
 }
 
-func TestFilterKeepsSelectedClasses(t *testing.T) {
+func TestHandlerKeepsSelectedClasses(t *testing.T) {
 	keep, err := qlogfilter.ParseClasses("control,fetch")
 	require.NoError(t, err)
 	require.NotNil(t, keep)
 
-	var buf bytes.Buffer
-	w := qlogfilter.New(&buf, keep)
-	for _, record := range []string{
-		headerRecord, controlRecord, objectRecord, sgHeadRecord, fetchRecord,
+	sink := &recorder{}
+	h := qlogfilter.Wrap(sink, keep)
+	for _, name := range []string{
+		"control_message_created",
+		"subgroup_object_created",
+		"subgroup_header_parsed",
+		"fetch_object_parsed",
+		"object_datagram_created",
+		"stream_type_set",
 	} {
-		n, err := w.Write([]byte(record))
-		require.NoError(t, err)
-		require.Equal(t, len(record), n, "a dropped record still reports full length")
+		h.Log(stubEvent{name: name})
 	}
 
-	out := buf.String()
-	require.Contains(t, out, "file_schema", "the header record always passes")
-	require.Contains(t, out, "control_message_created")
-	require.Contains(t, out, "fetch_object_parsed")
-	require.NotContains(t, out, "subgroup_object_created")
-	require.NotContains(t, out, "subgroup_header_parsed")
+	require.Equal(t, []string{"control_message_created", "fetch_object_parsed"}, sink.names)
 }
 
-func TestNewWithoutPredicateIsPassthrough(t *testing.T) {
-	var buf bytes.Buffer
-	w := qlogfilter.New(&buf, nil)
-	_, err := w.Write([]byte(objectRecord))
-	require.NoError(t, err)
-	require.Equal(t, objectRecord, buf.String())
+func TestWrapWithoutPredicateIsPassthrough(t *testing.T) {
+	sink := &recorder{}
+	h := qlogfilter.Wrap(sink, nil)
+	require.Equal(t, sink, h, "a nil predicate must not add a layer")
 }
