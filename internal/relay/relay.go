@@ -166,12 +166,17 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 // its request stream, so it blocks here until withdrawal.
 func (h *Handler) publishNamespaceHandler(session *moqtransport.Session) moqtransport.PublishNamespaceHandler {
 	return moqtransport.PublishNamespaceHandlerFunc(func(r *moqtransport.PublishNamespaceRequest) {
-		if err := r.Accept(); err != nil {
-			slog.Error("failed to accept announcement", "namespace", r.Namespace(), "error", err)
-			return
-		}
+		// Register before answering: the moment REQUEST_OK reaches the
+		// publisher it may tell a subscriber to come, and a SUBSCRIBE that
+		// observed the OK must resolve. Accepting first left a window in
+		// which the relay rejected a namespace it had just acknowledged.
 		h.register(session, r)
 		slog.Info("registered announcement", "namespace", r.Namespace())
+		if err := r.Accept(); err != nil {
+			slog.Error("failed to accept announcement", "namespace", r.Namespace(), "error", err)
+			h.deregister(r)
+			return
+		}
 		h.announceToAll(r.Namespace(), session)
 
 		<-r.Context().Done()
