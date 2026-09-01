@@ -46,6 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writer (`internal/qlogfilter`), since moqtransport takes the concrete
   `*qlog.Logger` and the writer is the seam an application has.
 - `-loglevel` on mlmpub, matching mlmsub and mlmrel.
+
+### Fixed
+
+- mlmrel: a subscriber whose attach raced the end of its track -- the
+  upstream finishing between the subscription resolving the shared track and
+  registering with it -- joined a dead track and never received PUBLISH_DONE,
+  leaving the downstream subscription accepted but silent. The track's end is
+  now recorded under the same lock as registration, so a late attacher serves
+  its backlog and closes with the recorded end.
 - `internal/testconn`: the in-memory `moqtransport.Connection` pair from the
   integration tests, promoted to a package so relay tests (and future ones)
   can share it.

@@ -103,7 +103,7 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 	}
 
 	s := newSubscriber(subscription, rt.h.QueueLen)
-	backlog := rt.attach(s)
+	backlog, ended := rt.attach(s)
 	defer rt.detach(s)
 	slog.Info("forwarding subscription", "namespace", rt.namespace, "track", rt.track,
 		"backlogObjects", len(backlog))
@@ -112,6 +112,12 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 		if !s.writeObject(obj) {
 			return
 		}
+	}
+	if ended != nil {
+		// The track finished before this subscriber attached; the backlog is
+		// all there is.
+		s.finish(*ended)
+		return
 	}
 	for {
 		select {
