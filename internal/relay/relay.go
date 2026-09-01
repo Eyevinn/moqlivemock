@@ -123,6 +123,10 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		Implementation: "Eyevinn/moqlivemock/mlmrel",
 		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqtransport.QlogSchema),
+		// The relay re-emits subgroups, so it needs the real end of each
+		// upstream subgroup stream -- FIN or RESET -- rather than inferring
+		// ends from group numbering.
+		SubgroupEndEvents: true,
 	}
 	session.PublishNamespaceHandler = h.publishNamespaceHandler(session)
 	session.SubscribeHandler = h.subscribeHandler()

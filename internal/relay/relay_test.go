@@ -36,14 +36,11 @@ func connect(t *testing.T, h *relay.Handler) (*moqtransport.Session, *testconn.C
 
 // oneObjectPublisher is a client session that accepts any SUBSCRIBE, serves a
 // single object at {7, 0} with the given payload, and ends the subscription
-// with PUBLISH_DONE TrackEnded.
-//
-// The sleep before PUBLISH_DONE stands in for a real publisher's pacing, and
-// under synctest it is deterministic: fake time only advances once the whole
-// chain has gone idle, i.e. the object has been forwarded and read. Without
-// it, PUBLISH_DONE races the object's subgroup stream (moqtransport exposes
-// PublishDone.StreamCount but does not wait for the streams itself) and
-// SUBSCRIBE_OK races the stream end in awaitEstablished.
+// with PUBLISH_DONE TrackEnded -- all in one breath. Serving and closing
+// this fast used to race SUBSCRIBE_OK against the stream end and
+// PUBLISH_DONE against the object's subgroup stream; moqtransport v0.12.0
+// fixed both, and running the relay tests against a publisher this abrupt is
+// what keeps them fixed.
 func oneObjectPublisher(payload []byte) *moqtransport.Session {
 	return &moqtransport.Session{
 		Implementation: "mlmrel-test-publisher",
@@ -58,7 +55,6 @@ func oneObjectPublisher(payload []byte) *moqtransport.Session {
 			}
 			_, _ = sg.WriteObject(0, payload)
 			_ = sg.Close()
-			time.Sleep(10 * time.Millisecond)
 			_ = sub.Close(moqtransport.PublishDoneTrackEnded, "one object is all there is")
 		}),
 	}
@@ -190,9 +186,6 @@ func TestPendingWait(t *testing.T) {
 
 		require.NoError(t, <-subscribed)
 
-		// Let the publisher's pacing sleep elapse and the subscription wind
-		// down before tearing the bubble down.
-		time.Sleep(50 * time.Millisecond)
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})
 }
@@ -508,5 +501,89 @@ func TestAnnouncementForwardedToSessions(t *testing.T) {
 		require.Equal(t, testNamespace, <-withdrawn)
 
 		shutdown(psConn, pcConn, osConn, ocConn)
+	})
+}
+
+// TestResetPropagation: an upstream subgroup reset reaches the downstream
+// subscriber as a reset, not as a clean end. The downstream test session
+// turns on SubgroupEndEvents to observe exactly what the relay emitted.
+func TestResetPropagation(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pub := newFanoutPublisher()
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subSession := &moqtransport.Session{
+			Implementation:    "mlmrel-test-client",
+			SubgroupEndEvents: true,
+		}
+		ssConn, scConn := connectSession(t, h, subSession)
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+		remote, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		sg, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		_, err = sg.WriteObject(0, []byte("before the reset"))
+		require.NoError(t, err)
+
+		obj, err := remote.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []byte("before the reset"), obj.Payload)
+
+		// The upstream publisher abandons the subgroup; the relay must reset
+		// its downstream counterpart rather than pretend it completed.
+		sg.Reset(moqtransport.StreamErrorTooFarBehind)
+		marker, err := remote.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.True(t, marker.SubgroupReset, "the downstream subgroup must be reset, not FINed")
+		require.False(t, marker.EndsSubgroup)
+		require.Equal(t, uint64(1), marker.GroupID)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestEndOfGroupBitForwarded: the END_OF_GROUP bit on an upstream subgroup
+// (the catalog track uses it) survives the relay, and its FIN arrives as a
+// clean end-of-subgroup downstream.
+func TestEndOfGroupBitForwarded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pub := newFanoutPublisher()
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subSession := &moqtransport.Session{
+			Implementation:    "mlmrel-test-client",
+			SubgroupEndEvents: true,
+		}
+		ssConn, scConn := connectSession(t, h, subSession)
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+		remote, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		sg, err := upSub.OpenSubgroup(0, 0, 128, moqtransport.WithEndOfGroup())
+		require.NoError(t, err)
+		_, err = sg.WriteObject(0, []byte("catalog-like"))
+		require.NoError(t, err)
+		require.NoError(t, sg.Close())
+
+		obj, err := remote.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []byte("catalog-like"), obj.Payload)
+		require.True(t, obj.EndOfGroup, "the END_OF_GROUP bit must survive the relay")
+
+		marker, err := remote.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.True(t, marker.EndsSubgroup, "the upstream FIN must arrive as a clean end")
+		require.True(t, marker.EndOfGroup)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
 	})
 }
