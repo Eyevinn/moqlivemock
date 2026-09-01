@@ -13,6 +13,7 @@ import (
 
 	"github.com/Eyevinn/locmaf"
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
@@ -34,6 +35,9 @@ type Handler struct {
 	Discover     bool     // Discovery mode: list namespaces and exit
 	CatalogTrack string   // Catalog track name (default "catalog")
 	Protocols    []string // Application protocols offered to the peer (ALPN / WT subprotocol)
+	// QlogFilter selects which qlog events reach Logfh; nil writes them all.
+	// Build one with qlogfilter.ParseClasses.
+	QlogFilter func(qlog.Event) bool
 
 	catalog    *internal.Catalog
 	mux        *CmafMux
@@ -104,8 +108,8 @@ func (h *Handler) startSession(ctx context.Context, conn moqtransport.Connection
 	session := &moqtransport.Session{
 		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
 		Implementation:          "Eyevinn/moqlivemock",
-		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
-			conn.Perspective().String(), moqtransport.QlogSchema),
+		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
+			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
 	}
 	if err := session.Run(ctx, conn); err != nil {
 		return nil, err

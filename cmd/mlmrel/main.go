@@ -170,9 +170,9 @@ func runServer(ctx context.Context, opts *options) error {
 	if err != nil {
 		return err
 	}
-	logfh = qlogfilter.New(logfh, keep)
 
 	h := relay.NewHandler(logfh)
+	h.QlogFilter = keep
 	h.PendingWait = opts.pendingWait
 	h.CacheGroups = opts.cacheGroups
 	h.QueueLen = opts.queueLen

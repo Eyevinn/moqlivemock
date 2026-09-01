@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal"
+	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqtransport"
 	"github.com/mengelbart/qlog"
 )
@@ -35,6 +36,9 @@ type Handler struct {
 	Namespaces []NamespaceEntry
 	Asset      *internal.Asset
 	Logfh      io.Writer
+	// QlogFilter selects which qlog events reach Logfh; nil writes them all.
+	// Build one with qlogfilter.ParseClasses.
+	QlogFilter func(qlog.Event) bool
 }
 
 // Handle runs a MoQ session on the given connection, announces all namespaces,
@@ -45,8 +49,8 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		SubscribeHandler:        h.getSubscribeHandler(ctx),
 		FetchHandler:            h.getFetchHandler(),
 		Implementation:          "Eyevinn/moqlivemock",
-		Qlogger: qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
-			conn.Perspective().String(), moqtransport.QlogSchema),
+		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
+			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
 	}
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
 	if err := session.Run(ctx, conn); err != nil {

@@ -184,7 +184,6 @@ func runClient(ctx context.Context, opts *options) error {
 	if err != nil {
 		return err
 	}
-	logfh = qlogfilter.New(logfh, keep)
 
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
@@ -195,6 +194,7 @@ func runClient(ctx context.Context, opts *options) error {
 	}
 
 	h := &sub.Handler{
+		QlogFilter:   keep,
 		Namespace:    namespace,
 		Logfh:        logfh,
 		VideoName:    opts.videoname,
