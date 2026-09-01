@@ -54,6 +54,11 @@ type relayTrack struct {
 	haveLargest bool
 	lingerTimer *time.Timer
 	tornDown    bool
+	// endInfo is the PUBLISH_DONE recorded by finish, for a subscriber whose
+	// acquire won the race with the track's end but whose attach lost it:
+	// it gets the end from here instead of from a done channel nobody sends
+	// to any more.
+	endInfo *publishEnd
 }
 
 func newRelayTrack(h *Handler, key trackKey, ann *announcement) *relayTrack {
@@ -134,13 +139,15 @@ func (rt *relayTrack) release() {
 // attach turns a reservation into a live subscriber and returns the cached
 // objects of the newest group, the group-aligned join point. Registration
 // and snapshot happen under one lock with dispatch, so the backlog and the
-// queue never overlap and never leave a gap.
-func (rt *relayTrack) attach(s *subscriber) []*moqtransport.Object {
+// queue never overlap and never leave a gap. A non-nil ended means the track
+// finished before the attach: the caller serves the backlog and closes with
+// it, since finish's fan-out has already run.
+func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, ended *publishEnd) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.pending--
 	rt.subs[s] = struct{}{}
-	return rt.cache.newestGroupObjects()
+	return rt.cache.newestGroupObjects(), rt.endInfo
 }
 
 func (rt *relayTrack) detach(s *subscriber) {
@@ -236,6 +243,9 @@ func (rt *relayTrack) finish() {
 	}
 	rt.mu.Lock()
 	rt.tornDown = true
+	// Recorded under the same lock as attach, so a subscriber joins either
+	// the snapshot below or reads endInfo -- never neither.
+	rt.endInfo = &end
 	subs := make([]*subscriber, 0, len(rt.subs))
 	for s := range rt.subs {
 		subs = append(subs, s)
