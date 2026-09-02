@@ -97,8 +97,15 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 	}
 	subscription, err := r.Accept(opts...)
 	if err != nil {
+		// Accept decodes the request's parameters, so a SUBSCRIBE the relay
+		// cannot honor -- one naming a filter type draft-18 does not define,
+		// say -- fails here with the request still unanswered. Answer it:
+		// the subscriber should hear of the refusal now, not at its timeout.
 		slog.Error("failed to accept subscription", "error", err,
 			"namespace", rt.namespace, "track", rt.track)
+		if rerr := r.Reject(moqtransport.RequestErrorNotSupported, err.Error()); rerr != nil {
+			slog.Debug("failed to reject subscription", "error", rerr)
+		}
 		rt.release()
 		return
 	}

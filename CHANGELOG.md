@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- mlmrel: a SUBSCRIBE the relay cannot accept -- one carrying a filter type
+  draft-18 does not define, as moxygen's `LargestGroup` (250) is -- is now
+  answered with REQUEST_ERROR NOT_SUPPORTED instead of being left open until
+  the subscriber gives up.
 - mlmrel: a subscriber whose attach raced the end of its track -- the
   upstream finishing between the subscription resolving the shared track and
   registering with it -- joined a dead track and never received PUBLISH_DONE,
