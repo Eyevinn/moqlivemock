@@ -33,10 +33,12 @@ type Handler struct {
 	// QlogFilter selects which qlog events reach Logfh; nil writes them all.
 	// Build one with qlogfilter.ParseClasses.
 	QlogFilter func(qlog.Event) bool
-	// PendingWait is how long a SUBSCRIBE for an unannounced namespace waits
-	// for an announcement before it is rejected. Zero rejects immediately,
-	// which is also a valid answer to a subscribe-before-announce race.
-	PendingWait time.Duration
+	// MaxRendezvous caps how long a SUBSCRIBE for a namespace nobody has
+	// announced is held waiting for a publisher. The subscriber asks with
+	// RENDEZVOUS_TIMEOUT (Section 10.2.6) and the hold is the shorter of the
+	// two; a hold that runs out is answered with TIMEOUT. A SUBSCRIBE without
+	// the parameter wants an immediate answer and gets DOES_NOT_EXIST at once.
+	MaxRendezvous time.Duration
 	// CacheGroups is how many recent groups are kept per track, for
 	// group-aligned late joins and cache-served FETCHes.
 	CacheGroups int
@@ -92,6 +94,7 @@ func NewHandler(logfh io.Writer) *Handler {
 		QueueLen:        256,
 		Linger:          2 * time.Second,
 		UpstreamTimeout: 5 * time.Second,
+		MaxRendezvous:   10 * time.Second,
 		announcements:   make(map[nsKey]*announcement),
 		waiters:         make(map[nsKey][]chan *announcement),
 		tracks:          make(map[trackKey]*relayTrack),
@@ -222,13 +225,20 @@ func (h *Handler) publishNamespaceHandler(session *moqtransport.Session) moqtran
 
 func (h *Handler) subscribeHandler() moqtransport.SubscribeHandler {
 	return moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
-		ann := h.awaitAnnouncement(r.Context(), r.Namespace())
+		hold := h.rendezvousHold(r)
+		ann := h.awaitAnnouncement(r.Context(), r.Namespace(), hold)
 		if ann == nil {
-			// A prompt REQUEST_ERROR: a relay that sits silent here fails the
-			// interop-runner's subscribe-error case.
+			// Answer promptly either way: a relay that sits silent here fails
+			// the interop-runner's subscribe-error case. Section 10.2.6 wants
+			// DOES_NOT_EXIST for a subscriber that did not ask to wait and
+			// TIMEOUT for one whose wait ran out.
+			code, reason := moqtransport.RequestErrorDoesNotExist, "unknown namespace"
+			if hold > 0 {
+				code, reason = moqtransport.RequestErrorTimeout, fmt.Sprintf("no publisher within %v", hold)
+			}
 			slog.Info("rejecting subscription to unknown namespace",
-				"namespace", r.Namespace(), "track", r.Track())
-			if err := r.Reject(moqtransport.RequestErrorDoesNotExist, "unknown namespace"); err != nil {
+				"namespace", r.Namespace(), "track", r.Track(), "held", hold)
+			if err := r.Reject(code, reason); err != nil {
 				slog.Error("failed to reject subscription", "error", err)
 			}
 			return
@@ -270,18 +280,28 @@ func (h *Handler) subscribeNamespaceHandler() moqtransport.SubscribeNamespaceHan
 	})
 }
 
+// rendezvousHold is how long a SUBSCRIBE may wait for a publisher: the
+// subscriber's RENDEZVOUS_TIMEOUT capped by MaxRendezvous, since Section
+// 10.2.6 lets the relay use a shorter timeout than requested.
+func (h *Handler) rendezvousHold(r *moqtransport.SubscribeRequest) time.Duration {
+	hold, _ := r.RendezvousTimeout()
+	if hold > h.MaxRendezvous {
+		hold = h.MaxRendezvous
+	}
+	return hold
+}
+
 // awaitAnnouncement returns the announcement covering the namespace. When
-// none exists and PendingWait is positive, it waits that long for one to
-// arrive (the rendezvous a subscribe-before-announce race needs) before
-// giving up.
-func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string) *announcement {
+// none exists and hold is positive, it waits that long for one to arrive
+// (the rendezvous a subscribe-before-announce race needs) before giving up.
+func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string, hold time.Duration) *announcement {
 	key := keyForNamespace(namespace)
 	h.mu.Lock()
 	if a, ok := h.announcements[key]; ok {
 		h.mu.Unlock()
 		return a
 	}
-	if h.PendingWait <= 0 {
+	if hold <= 0 {
 		h.mu.Unlock()
 		return nil
 	}
@@ -289,7 +309,7 @@ func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string) *an
 	h.waiters[key] = append(h.waiters[key], ch)
 	h.mu.Unlock()
 
-	timer := time.NewTimer(h.PendingWait)
+	timer := time.NewTimer(hold)
 	defer timer.Stop()
 	select {
 	case a := <-ch:

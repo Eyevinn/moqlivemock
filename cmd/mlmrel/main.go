@@ -43,19 +43,19 @@ Usage of %s:
 `
 
 type options struct {
-	certFile    string
-	keyFile     string
-	addr        string
-	upstream    string
-	pendingWait time.Duration
-	cacheGroups int
-	queueLen    int
-	linger      time.Duration
-	upstreamTO  time.Duration
-	qlogfile    string
-	qlogEvents  string
-	loglevel    string
-	version     bool
+	certFile      string
+	keyFile       string
+	addr          string
+	upstream      string
+	maxRendezvous time.Duration
+	cacheGroups   int
+	queueLen      int
+	linger        time.Duration
+	upstreamTO    time.Duration
+	qlogfile      string
+	qlogEvents    string
+	loglevel      string
+	version       bool
 }
 
 func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
@@ -71,8 +71,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen address")
 	fs.StringVar(&opts.upstream, "upstream", "",
 		"upstream publisher to dial: moqt://host[:port] (QUIC) or https://host[:port][/path] (WebTransport)")
-	fs.DurationVar(&opts.pendingWait, "pending-wait", 0,
-		"how long a SUBSCRIBE for an unannounced namespace waits for an announcement before rejection")
+	fs.DurationVar(&opts.maxRendezvous, "max-rendezvous", 10*time.Second,
+		"longest a SUBSCRIBE asking with RENDEZVOUS_TIMEOUT is held for its publisher to appear; "+
+			"the subscriber's own value applies when shorter")
 	fs.IntVar(&opts.cacheGroups, "cache-groups", 3,
 		"recent groups cached per track, for late joins and cache-served FETCHes")
 	fs.IntVar(&opts.queueLen, "queue", 256,
@@ -177,7 +178,7 @@ func runServer(ctx context.Context, opts *options) error {
 
 	h := relay.NewHandler(logfh)
 	h.QlogFilter = keep
-	h.PendingWait = opts.pendingWait
+	h.MaxRendezvous = opts.maxRendezvous
 	h.CacheGroups = opts.cacheGroups
 	h.QueueLen = opts.queueLen
 	h.Linger = opts.linger

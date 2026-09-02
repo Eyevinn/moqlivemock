@@ -77,13 +77,17 @@ func requireRequestError(t *testing.T, err error, code moqtransport.RequestError
 
 // TestSubscribeUnknownNamespace is the subscribe-error interop case: a
 // SUBSCRIBE for a namespace nobody announced gets a prompt REQUEST_ERROR.
+// Without RENDEZVOUS_TIMEOUT the subscriber wants no wait at all (Section
+// 10.2.6), so the answer is DOES_NOT_EXIST and it comes at once.
 func TestSubscribeUnknownNamespace(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := relay.NewHandler(io.Discard)
 		session, sConn, cConn := connect(t, h)
 
+		start := time.Now()
 		_, err := session.Subscribe(t.Context(), []string{"nonexistent", "namespace"}, "test-track")
 		requireRequestError(t, err, moqtransport.RequestErrorDoesNotExist)
+		require.Zero(t, time.Since(start), "no RENDEZVOUS_TIMEOUT, no hold")
 
 		shutdown(sConn, cConn)
 	})
@@ -161,13 +165,12 @@ func TestRejectPropagation(t *testing.T) {
 	})
 }
 
-// TestPendingWait is the subscribe-before-announce rendezvous: with a
-// positive PendingWait, a SUBSCRIBE arriving before the announcement is held
-// and answered once the announcement lands.
-func TestPendingWait(t *testing.T) {
+// TestRendezvous is the subscribe-before-announce rendezvous a subscriber
+// asks for: with RENDEZVOUS_TIMEOUT on the SUBSCRIBE, a request arriving
+// before the announcement is held and answered once the announcement lands.
+func TestRendezvous(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := relay.NewHandler(io.Discard)
-		h.PendingWait = time.Second
 
 		pubSession := oneObjectPublisher([]byte("late but present"))
 		psConn, pcConn := connectSession(t, h, pubSession)
@@ -175,7 +178,8 @@ func TestPendingWait(t *testing.T) {
 
 		subscribed := make(chan error, 1)
 		go func() {
-			_, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+			_, err := subSession.Subscribe(t.Context(), testNamespace, "test-track",
+				moqtransport.WithRendezvousTimeout(time.Second))
 			subscribed <- err
 		}()
 
@@ -190,18 +194,36 @@ func TestPendingWait(t *testing.T) {
 	})
 }
 
-// TestPendingWaitTimeout: with PendingWait set and no announcement, the
-// rejection comes after the wait rather than never.
-func TestPendingWaitTimeout(t *testing.T) {
+// TestRendezvousExpires: when no publisher appears within the asked wait,
+// the answer is TIMEOUT, at the end of the wait rather than never.
+func TestRendezvousExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := relay.NewHandler(io.Discard)
-		h.PendingWait = time.Second
 
 		session, sConn, cConn := connect(t, h)
 		start := time.Now()
-		_, err := session.Subscribe(t.Context(), testNamespace, "test-track")
-		requireRequestError(t, err, moqtransport.RequestErrorDoesNotExist)
-		require.GreaterOrEqual(t, time.Since(start), time.Second)
+		_, err := session.Subscribe(t.Context(), testNamespace, "test-track",
+			moqtransport.WithRendezvousTimeout(time.Second))
+		requireRequestError(t, err, moqtransport.RequestErrorTimeout)
+		require.Equal(t, time.Second, time.Since(start))
+
+		shutdown(sConn, cConn)
+	})
+}
+
+// TestRendezvousCapped: the relay may wait less than asked (Section 10.2.6);
+// MaxRendezvous is that cap.
+func TestRendezvousCapped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		h.MaxRendezvous = time.Second
+
+		session, sConn, cConn := connect(t, h)
+		start := time.Now()
+		_, err := session.Subscribe(t.Context(), testNamespace, "test-track",
+			moqtransport.WithRendezvousTimeout(5*time.Second))
+		requireRequestError(t, err, moqtransport.RequestErrorTimeout)
+		require.Equal(t, time.Second, time.Since(start))
 
 		shutdown(sConn, cConn)
 	})
