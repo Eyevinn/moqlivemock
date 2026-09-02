@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any JSON exists, and the pub, sub and relay handlers take the predicate as
   a `QlogFilter` field.
 - `-loglevel` on mlmpub, matching mlmsub and mlmrel.
+- `Dockerfile.mlmrel` and `entrypoint-relay.sh`: an mlmrel image for the
+  moq-interop-runner's relay role, following its conventions (`MOQT_ROLE`,
+  `MOQT_PORT`, `MOQT_CERT`, `MOQT_KEY`, `MOQT_MLOG_DIR`; non-root, `ss`-based
+  health check), published by CI as `ghcr.io/eyevinn/mlmrel` like mlmtest.
+  The qlog goes into the mlog directory when the container can write there,
+  and to stderr otherwise.
 
 ### Fixed
 
