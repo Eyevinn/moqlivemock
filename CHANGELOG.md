@@ -20,10 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reset -- via moqtransport v0.12.0's SubgroupEndEvents. SUBSCRIBE_OK
   metadata, rejections, PUBLISH_DONE and unsubscribes propagate in both
   directions. `-upstream` dials a
-  publisher (mlmpub) so the relay can sit between mlmpub and mlmsub, and
-  `-pending-wait` optionally holds a SUBSCRIBE for a not-yet-announced
-  namespace instead of rejecting it. All six moq-interop-runner relay test
-  cases pass.
+  publisher (mlmpub) so the relay can sit between mlmpub and mlmsub. A
+  SUBSCRIBE for a namespace nobody has announced is held for the
+  subscriber's RENDEZVOUS_TIMEOUT, capped by `-max-rendezvous`, and answered
+  DOES_NOT_EXIST at once without one, as draft-18 Section 10.2.6 asks. All
+  six moq-interop-runner relay test cases pass.
 
   One upstream subscription per (namespace, track) is fanned out to any
   number of subscribers through a cache of recent groups (`-cache-groups`),
