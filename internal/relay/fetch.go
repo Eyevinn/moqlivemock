@@ -104,8 +104,13 @@ func reorderGroupsDescending(objects []*moqtransport.Object) {
 // markers all survive.
 func (h *Handler) proxyFetch(r *moqtransport.FetchRequest, upstream *moqtransport.Session) {
 	start, end := r.Range()
-	fs, err := upstream.Fetch(r.Context(), r.Namespace(), r.Track(), start, end,
+	ctx, cancel := h.upstreamContext(r.Context())
+	fs, err := upstream.Fetch(ctx, r.Namespace(), r.Track(), start, end,
 		moqtransport.WithFetchGroupOrder(r.GroupOrder()))
+	if err != nil {
+		err = h.upstreamError(ctx, err)
+	}
+	cancel()
 	if err != nil {
 		code := moqtransport.RequestErrorDoesNotExist
 		reason := "upstream fetch failed"

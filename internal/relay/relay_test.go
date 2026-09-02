@@ -587,3 +587,68 @@ func TestEndOfGroupBitForwarded(t *testing.T) {
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})
 }
+
+// TestUpstreamTimeout: a publisher that never answers the forwarded SUBSCRIBE
+// costs the subscriber UpstreamTimeout, not its own patience. It gets a
+// TIMEOUT, the upstream request is cancelled, and the failed attempt leaves
+// no track behind, so the next SUBSCRIBE tries upstream afresh.
+func TestUpstreamTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		h.UpstreamTimeout = time.Second
+
+		var cancelled atomic.Int32
+		pubSession := &moqtransport.Session{
+			Implementation: "mlmrel-test-publisher",
+			SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
+				<-r.Context().Done() // never answers
+				cancelled.Add(1)
+			}),
+		}
+		psConn, pcConn := connectSession(t, h, pubSession)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		for attempt := range 2 {
+			start := time.Now()
+			_, err = subSession.Subscribe(t.Context(), testNamespace, "test-track")
+			requireRequestError(t, err, moqtransport.RequestErrorTimeout)
+			require.Equal(t, time.Second, time.Since(start), "attempt %d", attempt)
+			synctest.Wait()
+			require.Equal(t, int32(attempt+1), cancelled.Load(), "upstream request not cancelled")
+		}
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestFetchProxiedUpstreamTimeout: the same bound applies to a proxied FETCH
+// whose upstream never answers.
+func TestFetchProxiedUpstreamTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		h.UpstreamTimeout = time.Second
+
+		pubSession := &moqtransport.Session{
+			Implementation: "mlmrel-test-publisher",
+			FetchHandler: moqtransport.FetchHandlerFunc(func(r *moqtransport.FetchRequest) {
+				<-r.Context().Done() // never answers
+			}),
+		}
+		psConn, pcConn := connectSession(t, h, pubSession)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		start := time.Now()
+		_, err = subSession.Fetch(t.Context(), testNamespace, "test-track",
+			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+		requireRequestError(t, err, moqtransport.RequestErrorTimeout)
+		require.Equal(t, time.Second, time.Since(start))
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
