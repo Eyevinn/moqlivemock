@@ -79,6 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **moqtransport v0.13.0** ("RENDEZVOUS_TIMEOUT on SUBSCRIBE"): exposes the
+  subscriber's RENDEZVOUS_TIMEOUT, which mlmrel now honors instead of holding
+  every SUBSCRIBE for an unannounced namespace for a fixed time.
 - **moqtransport v0.12.0** ("receive-side fixes for relays"). The bump lets
   mlmrel forward the real end of every subgroup instead of inferring ends
   from group numbering, closes two fast-end delivery races the relay tests
