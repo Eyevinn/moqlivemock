@@ -183,7 +183,12 @@ func (rt *relayTrack) lingerFire() {
 // run subscribes upstream and fans every received object out to the
 // subscribers and into the cache. It is the only writer of rt.remote/rt.err.
 func (rt *relayTrack) run() {
-	remote, err := rt.upstream.Subscribe(rt.ctx, rt.namespace, rt.track)
+	ctx, cancel := rt.h.upstreamContext(rt.ctx)
+	remote, err := rt.upstream.Subscribe(ctx, rt.namespace, rt.track)
+	if err != nil {
+		err = rt.h.upstreamError(ctx, err)
+	}
+	cancel()
 	if err != nil {
 		rt.err = err
 		rt.mu.Lock()

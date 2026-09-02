@@ -51,6 +51,7 @@ type options struct {
 	cacheGroups int
 	queueLen    int
 	linger      time.Duration
+	upstreamTO  time.Duration
 	qlogfile    string
 	qlogEvents  string
 	loglevel    string
@@ -78,6 +79,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		"per-subscriber object queue length; on overflow the subscriber skips to the next group boundary")
 	fs.DurationVar(&opts.linger, "linger", 2*time.Second,
 		"how long an upstream subscription survives its last downstream subscriber")
+	fs.DurationVar(&opts.upstreamTO, "upstream-timeout", 5*time.Second,
+		"how long a forwarded SUBSCRIBE or proxied FETCH waits for the upstream's answer "+
+			"before the requester gets a TIMEOUT error; 0 waits indefinitely")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.StringVar(&opts.qlogEvents, "qlog-events", "all",
 		fmt.Sprintf("qlog event classes to write: all, or a comma-separated subset of %s",
@@ -177,6 +181,7 @@ func runServer(ctx context.Context, opts *options) error {
 	h.CacheGroups = opts.cacheGroups
 	h.QueueLen = opts.queueLen
 	h.Linger = opts.linger
+	h.UpstreamTimeout = opts.upstreamTO
 	if opts.upstream != "" {
 		go runUpstream(ctx, h, opts.upstream)
 	}

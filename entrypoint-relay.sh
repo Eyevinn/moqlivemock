@@ -56,12 +56,16 @@ case "$ROLE" in
 
     # -pending-wait lets subscribe-before-announce succeed: the SUBSCRIBE
     # arrives before the publisher's PUBLISH_NAMESPACE and is held briefly
-    # instead of being rejected outright.
+    # instead of being rejected outright. -upstream-timeout keeps a publisher
+    # that never answers the forwarded SUBSCRIBE from taking the subscriber
+    # down with it: that case gives the whole exchange 3.5 s and accepts a
+    # REQUEST_ERROR, so the answer has to come well inside that.
     exec mlmrel \
       -addr "0.0.0.0:$PORT" \
       -cert "$CERT" \
       -key "$KEY" \
       -pending-wait 1s \
+      -upstream-timeout 1s \
       -qlog "$QLOG"
     ;;
 

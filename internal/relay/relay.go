@@ -11,6 +11,8 @@ package relay
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -45,6 +47,12 @@ type Handler struct {
 	// Linger is how long an upstream subscription survives its last
 	// downstream subscriber, so bouncing clients do not thrash the upstream.
 	Linger time.Duration
+	// UpstreamTimeout bounds how long a forwarded SUBSCRIBE or a proxied FETCH
+	// waits for the upstream's answer. When it expires the downstream request
+	// is rejected with TIMEOUT rather than left open for as long as the
+	// subscriber cares to wait: a publisher that never answers must not take
+	// its subscribers down with it. Zero waits indefinitely.
+	UpstreamTimeout time.Duration
 
 	mu            sync.Mutex
 	announcements map[nsKey]*announcement
@@ -79,16 +87,41 @@ type nsAnnouncer struct {
 // NewHandler creates a relay session handler writing its qlog to logfh.
 func NewHandler(logfh io.Writer) *Handler {
 	return &Handler{
-		Logfh:         logfh,
-		CacheGroups:   3,
-		QueueLen:      256,
-		Linger:        2 * time.Second,
-		announcements: make(map[nsKey]*announcement),
-		waiters:       make(map[nsKey][]chan *announcement),
-		tracks:        make(map[trackKey]*relayTrack),
-		sessions:      make(map[*moqtransport.Session]*sessionState),
-		announcers:    make(map[*nsAnnouncer]struct{}),
+		Logfh:           logfh,
+		CacheGroups:     3,
+		QueueLen:        256,
+		Linger:          2 * time.Second,
+		UpstreamTimeout: 5 * time.Second,
+		announcements:   make(map[nsKey]*announcement),
+		waiters:         make(map[nsKey][]chan *announcement),
+		tracks:          make(map[trackKey]*relayTrack),
+		sessions:        make(map[*moqtransport.Session]*sessionState),
+		announcers:      make(map[*nsAnnouncer]struct{}),
 	}
+}
+
+// upstreamContext bounds a wait for an upstream answer by UpstreamTimeout. In
+// moqtransport the context passed to Subscribe or Fetch governs only the
+// request's establishment -- an established subscription or fetch lives on
+// the session -- so the caller cancels it as soon as the answer is in.
+func (h *Handler) upstreamContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if h.UpstreamTimeout <= 0 {
+		return context.WithCancel(parent)
+	}
+	return context.WithTimeout(parent, h.UpstreamTimeout)
+}
+
+// upstreamError maps the expiry of an upstreamContext to the REQUEST_ERROR
+// the downstream request should carry and leaves any other error alone. It
+// must run before the context is cancelled, which replaces the deadline error.
+func (h *Handler) upstreamError(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &moqtransport.RequestError{
+			Code:   moqtransport.RequestErrorTimeout,
+			Reason: fmt.Sprintf("upstream did not answer within %v", h.UpstreamTimeout),
+		}
+	}
+	return err
 }
 
 // nsKey is a namespace tuple flattened to a comparable map key. The separator
