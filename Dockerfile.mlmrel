@@ -1,0 +1,31 @@
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /mlmrel ./cmd/mlmrel
+
+# The runner's healthcheck and entrypoint need a shell and ss (iproute2),
+# so the runtime image is debian-slim rather than distroless.
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /mlmrel /usr/local/bin/mlmrel
+COPY entrypoint-relay.sh /usr/local/bin/run_endpoint.sh
+RUN chmod +x /usr/local/bin/run_endpoint.sh && mkdir -p /mlog /certs
+
+ENV MOQT_ROLE=relay
+ENV MOQT_PORT=4443
+
+EXPOSE 4443/udp
+
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s \
+  CMD sh -c 'ss -uln | grep -q ":${MOQT_PORT:-4443}" || exit 1'
+
+RUN useradd -r -u 1000 -g nogroup moq
+USER moq
+
+ENTRYPOINT ["/usr/local/bin/run_endpoint.sh"]

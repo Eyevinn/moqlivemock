@@ -1,0 +1,6 @@
+.git
+venv
+out
+**/*.log
+**/*.mlog
+**/*.qlog
