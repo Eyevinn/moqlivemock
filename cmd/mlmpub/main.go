@@ -38,7 +38,25 @@ const (
 	defaultQlogFileName = "mlmpub.log"
 )
 
+// defaultNamespacePrefix is the leading field of every content namespace
+// mlmpub serves. It exists so that a subscriber behind a relay carrying many
+// publishers can ask for this publisher's namespaces with a single
+// SUBSCRIBE_NAMESPACE, rather than one per packaging, and so that two mlmpub
+// instances on one relay can be told apart by setting -nsprefix.
+//
+// The interop namespace is deliberately not prefixed: moq-interop-runner
+// addresses it as ("moq-test", "interop") and nothing else will do.
+const defaultNamespacePrefix = "mlm"
+
+// contentNamespace builds the tuple for one of mlmpub's content namespaces
+// under the publisher prefix. An empty prefix contributes no field, since a
+// namespace field must carry at least one byte.
+func contentNamespace(prefix, name string) []string {
+	return internal.NamespaceTuple(prefix + "/" + name)
+}
+
 type options struct {
+	nsprefix         string
 	certFile         string
 	keyFile          string
 	addr             string
@@ -73,6 +91,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.certFile, "cert", "cert.pem", "TLS certificate file (only used for server)")
 	fs.StringVar(&opts.keyFile, "key", "key.pem", "TLS key file (only used for server)")
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen or connect address")
+	fs.StringVar(&opts.nsprefix, "nsprefix", defaultNamespacePrefix,
+		"leading namespace field identifying this publisher; empty leaves the namespaces unprefixed")
 	fs.StringVar(&opts.asset, "asset", "../../assets/test10s", "Asset to serve")
 	fs.StringVar(&opts.qlogfile, "qlog", defaultQlogFileName, "qlog file to write to. Use '-' for stderr")
 	fs.StringVar(&opts.qlogEvents, "qlog-events", "all",
@@ -233,7 +253,7 @@ func runServer(opts *options) error {
 	}
 	if len(locCatalog.Tracks) > 0 {
 		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{"msf/clear"},
+			Namespace: contentNamespace(opts.nsprefix, "msf/clear"),
 			Catalog:   locCatalog,
 			Packaging: "loc",
 		})
@@ -245,7 +265,7 @@ func runServer(opts *options) error {
 		slog.Info("skipping moq-mi namespace", "reason", mmErr)
 	} else {
 		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace:   []string{"moq-mi/clear"},
+			Namespace:   contentNamespace(opts.nsprefix, "moq-mi/clear"),
 			Packaging:   "moqmi",
 			MoqMITracks: mmTracks,
 		})
@@ -256,24 +276,30 @@ func runServer(opts *options) error {
 	// The serve path picks the encoding per track (pub.PublishTrack), so the
 	// NamespaceEntry.Packaging is informational only here.
 
-	// Always create the clear namespace
-	clearCatalog, err := asset.GenCMAFCatalogEntry("cmsf/clear", internal.ProtectionNone, now)
+	// Always create the clear namespace. A CMSF catalog names the namespace of
+	// each track as a string, and that has to be the namespace actually
+	// announced -- prefix included -- or a player resolves tracks under a
+	// namespace nobody publishes.
+	clearNS := contentNamespace(opts.nsprefix, "cmsf/clear")
+	clearCatalog, err := asset.GenCMAFCatalogEntry(internal.NamespaceString(clearNS),
+		internal.ProtectionNone, now)
 	if err != nil {
 		return err
 	}
 	namespaces = append(namespaces, pub.NamespaceEntry{
-		Namespace: []string{"cmsf/clear"}, Catalog: clearCatalog, Packaging: "cmaf",
+		Namespace: clearNS, Catalog: clearCatalog, Packaging: "cmaf",
 	})
 
 	// Add commercial DRM namespace if configured
 	if drm != nil {
-		drmCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("cmsf/drm-%s", opts.scheme),
+		drmNS := contentNamespace(opts.nsprefix, fmt.Sprintf("cmsf/drm-%s", opts.scheme))
+		drmCatalog, err := asset.GenCMAFCatalogEntry(internal.NamespaceString(drmNS),
 			internal.ProtectionDRM, now)
 		if err != nil {
 			return err
 		}
 		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{fmt.Sprintf("cmsf/drm-%s", opts.scheme)},
+			Namespace: drmNS,
 			Catalog:   drmCatalog,
 			Packaging: "cmaf",
 		})
@@ -281,13 +307,14 @@ func runServer(opts *options) error {
 
 	// Add ClearKey/ECCP namespace if configured
 	if eccp != nil {
-		eccpCatalog, err := asset.GenCMAFCatalogEntry(fmt.Sprintf("cmsf/eccp-%s", opts.scheme),
+		eccpNS := contentNamespace(opts.nsprefix, fmt.Sprintf("cmsf/eccp-%s", opts.scheme))
+		eccpCatalog, err := asset.GenCMAFCatalogEntry(internal.NamespaceString(eccpNS),
 			internal.ProtectionECCP, now)
 		if err != nil {
 			return err
 		}
 		namespaces = append(namespaces, pub.NamespaceEntry{
-			Namespace: []string{fmt.Sprintf("cmsf/eccp-%s", opts.scheme)},
+			Namespace: eccpNS,
 			Catalog:   eccpCatalog,
 			Packaging: "cmaf",
 		})
