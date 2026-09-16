@@ -48,20 +48,50 @@ negotiation (`moqt-16`) and `WT-Available-Protocols` for WebTransport. Draft-14
 
 ## Namespaces
 
-mlmpub announces one or more namespaces depending on the configured packaging
+mlmpub serves one or more namespaces depending on the configured packaging
 and protection modes. Each CMSF/MSF namespace has its own catalog containing
 only the relevant tracks; moq-mi is catalogless and uses fixed track names by
 convention.
 
 | Namespace | Packaging | Condition | Track suffix | Description |
 |-----------|-----------|-----------|--------------|-------------|
-| `cmsf/clear` | CMSF (CMAF chunks) | Always | *(none)* | Unencrypted tracks |
-| `cmsf/drm-{scheme}` | CMSF (CMAF chunks) | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
-| `cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
-| `msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
-| `moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
+| `mlm/cmsf/clear` | CMSF (CMAF chunks) | Always | *(none)* | Unencrypted tracks |
+| `mlm/cmsf/drm-{scheme}` | CMSF (CMAF chunks) | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
+| `mlm/cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
+| `mlm/msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
+| `mlm/moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
+| `moq-test/interop` | — | Always | — | The [moq-interop-runner][interop-runner] test namespace. Never carries the publisher prefix: the runner addresses it as this exact tuple |
 
-There is **no separate `locmaf/*` namespace**. The `cmsf/*` catalogs are
+### Namespaces are tuples
+
+A Track Namespace is an ordered set of fields, not a string
+([draft-ietf-moq-transport][moqt] Section 2.4.1), and a relay matches a prefix
+one field at a time. `mlm/cmsf/clear` is therefore the three fields
+`("mlm", "cmsf", "clear")`; written with slashes it is the same form MSF uses
+for the `namespace` member of a catalog, and the two round-trip.
+
+The leading field names the publisher, so a subscriber behind a relay carrying
+many publishers can ask for all of mlmpub's namespaces with one
+SUBSCRIBE_NAMESPACE for the prefix `("mlm")` — and two mlmpub instances on the
+same relay can be told apart. `-nsprefix` sets it (default `mlm`); an empty
+`-nsprefix` publishes the namespaces unprefixed.
+
+### Discovery
+
+mlmpub does not announce its namespaces unprompted. A peer finds out what is on
+offer by sending SUBSCRIBE_NAMESPACE, which mlmpub answers with every namespace
+under the requested prefix; an empty prefix asks for all of them. This is what
+a relay is obliged to do for its own subscribers, and doing the same in the
+publisher means a prefix filter behaves identically whether a client is talking
+to mlmpub directly or through a relay.
+
+`mlmsub -discover` lists what a peer has:
+
+```sh
+go run ./cmd/mlmsub -addr localhost:4443 -discover
+```
+
+There is **no separate `locmaf/*` namespace**. The `mlm/cmsf/*` catalogs are
 unified: each rendition is listed twice — as a CMAF track (`packaging: "cmaf"`)
 and as a LOCMAF track `<name>_locmaf` (`packaging: "locmaf"`) sharing one
 init-data entry. See [LOCMAF](#locmaf-within-the-cmsf-namespaces) below.
@@ -72,7 +102,7 @@ and produce separate sets of protected tracks.
 Subtitle tracks are only included in the CMSF namespaces; LOC and moq-mi carry
 video and audio only.
 
-### LOC (`msf/clear`)
+### LOC (`mlm/msf/clear`)
 
 The LOC namespace uses MSF with `packaging=loc` per
 [draft-ietf-moq-msf-00][MSF] and [draft-mzanaty-moq-loc][LOC]. Objects carry
@@ -84,7 +114,7 @@ On the subscriber side, `mlmsub` reframes LOC video (length-prefixed NALUs
 to ffplay. Only AAC-LC (`mp4a.40.2`) is supported for LOC audio at the
 moment; HE-AAC and other object types are rejected.
 
-### moq-mi (`moq-mi/clear`)
+### moq-mi (`mlm/moq-mi/clear`)
 
 The moq-mi namespace implements
 [draft-cenzano-moq-media-interop][moq-mi]. It has no catalog: the subscriber
@@ -94,19 +124,19 @@ the codec bitstream as defined by moqmi (AVCC length-prefixed NALUs for
 video, raw frames for AAC/Opus) and are written through unchanged by `mlmsub`
 — this namespace is intended for interop testing, not direct ffplay playback.
 
-### LOCMAF (within the `cmsf/*` namespaces)
+### LOCMAF (within the CMSF namespaces)
 
 LOCMAF (Low Overhead CMAF) is a compact CMAF packaging in which only the
 non-derivable `moof` fields are sent on the wire; the receiver reconstructs
 standard CMAF media fragments so the normal CMAF playback path is reused
-unchanged. LOCMAF is **not** a separate namespace: within each `cmsf/*` catalog
+unchanged. LOCMAF is **not** a separate namespace: within each `mlm/cmsf/*` catalog
 every rendition is offered both as a CMAF track `<name>` (`packaging: "cmaf"`)
 and as a LOCMAF track `<name>_locmaf` (`packaging: "locmaf"`), listed as
 alternates in the same `altGroup`. The two variants share one init-data entry
 (the raw CMAF init segment) referenced by `initRef`. Because all fields needed
 for playback — including per-sample encryption metadata — are carried, the
-LOCMAF variant is offered for the encrypted `cmsf/drm-{scheme}` and
-`cmsf/eccp-{scheme}` catalogs too (`<name>_drm_locmaf` / `<name>_eccp_locmaf`).
+LOCMAF variant is offered for the encrypted `mlm/cmsf/drm-{scheme}` and
+`mlm/cmsf/eccp-{scheme}` catalogs too (`<name>_drm_locmaf` / `<name>_eccp_locmaf`).
 
 The codec is **not** implemented in this repository. Encode/decode comes from
 the reusable Go module
@@ -126,7 +156,8 @@ fidelity/overhead tool live in the `locmaf` module's CLI, alongside the codec.
 
 ## Session setup
 
-After session establishment, the server announces all configured namespaces.
+After session establishment the client discovers the namespaces it is
+interested in with SUBSCRIBE_NAMESPACE, or subscribes to a known one directly.
 For CMSF and LOC namespaces the client retrieves the catalog track first, then
 subscribes to the media tracks listed in that catalog. For moq-mi there is no
 catalog, so the client subscribes directly to the fixed track names.
@@ -138,8 +169,9 @@ aligned to the live edge in a single round-trip. The `mlmsub -catalog-mode` flag
 selects the strategy: `joining` (default), `subscribe` (legacy plain SUBSCRIBE),
 or `fetch` (legacy standalone FETCH).
 
-The bundled `mlmsub` client connects to a single namespace (default: `cmsf/clear`,
-configurable via `-namespace`). It subscribes to the first video and audio track
+The bundled `mlmsub` client connects to a single namespace (default:
+`mlm/cmsf/clear`, configurable via `-namespace`, whose `/` separates the fields
+of the namespace tuple). It subscribes to the first video and audio track
 from the catalog or tracks that match `-videoname`, `-audioname`.
 For subtitles, see below.
 
@@ -403,7 +435,7 @@ go run . -kid 39112233445566778899aabbccddeeff -iv 41112233445566778899aabbccdde
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces the `cmsf/eccp-cbcs` namespace with tracks like `video_400kbps_avc_eccp` (each also offered as a `_locmaf` variant).
+This serves the `mlm/cmsf/eccp-cbcs` namespace with tracks like `video_400kbps_avc_eccp` (each also offered as a `_locmaf` variant).
 
 #### Commercial DRM (CPIX)
 
@@ -414,7 +446,7 @@ Supported systems: Widevine, PlayReady, FairPlay.
 go run . -drmpath ../../assets/testdrm/drm_config_test.json
 ```
 
-This announces the `cmsf/drm-{scheme}` namespace with tracks like `video_400kbps_avc_drm` (each also offered as a `_locmaf` variant).
+This serves the `mlm/cmsf/drm-{scheme}` namespace with tracks like `video_400kbps_avc_drm` (each also offered as a `_locmaf` variant).
 
 #### Both simultaneously
 
@@ -426,7 +458,7 @@ go run . -drmpath ../../assets/drm/drm_config.json \
          -sideport 8081 -laurl https://moqlivemock.demo.osaas.io/clearkey
 ```
 
-This announces three CMSF namespaces: `cmsf/clear`, `cmsf/drm-cbcs`, and `cmsf/eccp-cbcs`. Each catalog carries both the CMAF and the LOCMAF (`_locmaf`) track variants.
+This serves three CMSF namespaces: `mlm/cmsf/clear`, `mlm/cmsf/drm-cbcs`, and `mlm/cmsf/eccp-cbcs`. Each catalog carries both the CMAF and the LOCMAF (`_locmaf`) track variants.
 
 #### Subscriber examples
 
@@ -438,21 +470,21 @@ so no extra flags are needed except choosing the right namespace and track names
 go run . -muxout - | ffplay -
 
 # ECCP-protected content
-go run . -namespace cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - | ffplay -
+go run . -namespace mlm/cmsf/eccp-cbcs -videoname _eccp -audioname _eccp -muxout - | ffplay -
 
 # DRM-protected content
-go run . -namespace cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
+go run . -namespace mlm/cmsf/drm-cbcs -videoname _drm -audioname _drm -muxout - | ffplay -
 
 # LOC packaging — AVC reframed to AnnexB, AAC reframed to ADTS
-go run . -namespace msf/clear -videoout video.h264 -audioout audio.aac
+go run . -namespace mlm/msf/clear -videoout video.h264 -audioout audio.aac
 ffplay video.h264
 ffplay audio.aac
 
 # moq-mi packaging — raw moqmi payloads written through unchanged
-go run . -namespace moq-mi/clear -videoout video0.bin -audioout audio0.bin
+go run . -namespace mlm/moq-mi/clear -videoout video0.bin -audioout audio0.bin
 
-# LOCMAF variant (inside cmsf/clear) — select the _locmaf tracks
-go run . -namespace cmsf/clear -videoname _avc_locmaf -audioname _aac_locmaf -muxout - | ffplay -
+# LOCMAF variant (inside mlm/cmsf/clear) — select the _locmaf tracks
+go run . -namespace mlm/cmsf/clear -videoname _avc_locmaf -audioname _aac_locmaf -muxout - | ffplay -
 ```
 
 ### LOCMAF test assets and round-trip tooling
