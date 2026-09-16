@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-16
+
+Track Namespaces are tuples, and namespace discovery is something a peer asks
+for rather than something it is told. Both are wire changes, and both are
+breaking.
+
+A namespace is an ordered set of fields ([draft-ietf-moq-transport-18][moqt-d18]
+Section 2.4.1) matched a field at a time, so the old single field `cmsf/clear`
+never matched the prefix `("cmsf")`. The content namespaces are now
+`("mlm", "cmsf", "clear")` and friends, with `-nsprefix` naming the leading
+publisher field so one SUBSCRIBE_NAMESPACE covers a whole publisher on a shared
+relay. `("moq-test", "interop")` keeps no prefix -- the interop runner addresses
+it by that exact tuple.
+
+mlmpub no longer announces anything unprompted; it answers SUBSCRIBE_NAMESPACE.
+mlmrel announces only to peers that asked and asks its own upstream, which is
+what lets a relay sit in front of another relay at all. A subscriber that only
+listens now sees nothing until it asks -- which fails quietly, like the
+draft-18 change before it.
+
 ### Added
 
 - **mlmrel**, a MoQ Transport relay. It accepts publisher and subscriber
@@ -741,7 +761,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.11.1...v0.12.0
@@ -767,6 +788,7 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqt-d11]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/11/
 [moqt-d14]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/
+[moqt-d18]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/18/
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [moqtransport-eyevinn]: https://github.com/Eyevinn/moqtransport
 [interop-runner]: https://github.com/englishm/moq-interop-runner
