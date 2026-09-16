@@ -136,18 +136,40 @@ func (rt *relayTrack) release() {
 	rt.maybeLingerLocked()
 }
 
-// attach turns a reservation into a live subscriber and returns the cached
-// objects of the newest group, the group-aligned join point. Registration
-// and snapshot happen under one lock with dispatch, so the backlog and the
-// queue never overlap and never leave a gap. A non-nil ended means the track
-// finished before the attach: the caller serves the backlog and closes with
-// it, since finish's fan-out has already run.
-func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, ended *publishEnd) {
+// attachment is what a subscriber learns at the instant it joins: the cached
+// objects of the newest group (the group-aligned join point), the largest
+// location to acknowledge, and any end that already happened.
+type attachment struct {
+	backlog     []*moqtransport.Object
+	largest     moqtransport.Location
+	haveLargest bool
+	// ended is non-nil when the track finished before the attach: the caller
+	// serves the backlog and closes with it, since finish's fan-out has
+	// already run.
+	ended *publishEnd
+}
+
+// attach turns a reservation into a live subscriber. Registration, the
+// backlog snapshot and the largest location all happen under one lock with
+// dispatch, so the backlog and the queue never overlap and never leave a gap,
+// and the acknowledged largest matches the join point exactly.
+//
+// The caller attaches before it accepts the subscription. Accepting first
+// left a window in which the subscriber had been told SUBSCRIBE_OK but was
+// not yet in rt.subs: objects dispatched in it reached only the cache, and
+// since the backlog is the newest group alone, anything from an earlier group
+// was never delivered to that subscriber at all.
+func (rt *relayTrack) attach(s *subscriber) attachment {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.pending--
 	rt.subs[s] = struct{}{}
-	return rt.cache.newestGroupObjects(), rt.endInfo
+	return attachment{
+		backlog:     rt.cache.newestGroupObjects(),
+		largest:     rt.largest,
+		haveLargest: rt.haveLargest,
+		ended:       rt.endInfo,
+	}
 }
 
 func (rt *relayTrack) detach(s *subscriber) {
@@ -270,13 +292,6 @@ func (rt *relayTrack) finish() {
 	}
 	rt.h.removeTrack(rt.key, rt)
 	rt.cancel(nil)
-}
-
-// snapshotLargest returns the largest location seen, for SUBSCRIBE_OK.
-func (rt *relayTrack) snapshotLargest() (moqtransport.Location, bool) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	return rt.largest, rt.haveLargest
 }
 
 // locationLess reports whether a precedes b in (group, object) order.

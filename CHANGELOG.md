@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- mlmrel: a subscriber could be told SUBSCRIBE_OK and then never receive
+  objects the relay already had. `serveSubscriber` accepted the subscription
+  before registering it with the track, and objects dispatched in that window
+  reached only the group cache; since a new subscriber is handed the newest
+  cached group alone, anything from an earlier group in the window was
+  delivered to nobody. It now attaches first, so the join point is fixed at
+  the instant the subscription is acknowledged, and the largest location in
+  SUBSCRIBE_OK is taken in the same critical section as the backlog rather
+  than from a separate, later read.
+
+  This is what made `TestFetchFromCache` fail intermittently on CI with
+  `deadlock: all goroutines in bubble are blocked` -- the test was waiting for
+  objects the relay had dropped on the floor.
+
+
 ## [0.15.0] - 2026-09-16
 
 Track Namespaces are tuples, and namespace discovery is something a peer asks

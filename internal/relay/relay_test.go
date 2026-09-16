@@ -1,6 +1,7 @@
 package relay_test
 
 import (
+	"fmt"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -717,6 +718,81 @@ func TestFetchProxiedUpstreamTimeout(t *testing.T) {
 			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
 		requireRequestError(t, err, moqtransport.RequestErrorTimeout)
 		require.Equal(t, time.Second, time.Since(start))
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// burstPublisher accepts any SUBSCRIBE and immediately writes burstGroups
+// whole groups before returning, one object per group. Writing this fast is
+// the point: it puts every object on the wire while the relay is still
+// answering its own downstream SUBSCRIBE, and spanning many groups means the
+// window is crossed whatever order the goroutines happen to run in.
+const burstGroups = 8
+
+func burstPublisher() *moqtransport.Session {
+	return &moqtransport.Session{
+		Implementation: "mlmrel-test-publisher",
+		SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
+			sub, err := r.Accept()
+			if err != nil {
+				return
+			}
+			for g := uint64(1); g <= burstGroups; g++ {
+				sg, err := sub.OpenSubgroup(g, 0, 128)
+				if err != nil {
+					return
+				}
+				_, _ = sg.WriteObject(0, []byte(fmt.Sprintf("g%d", g)))
+				_ = sg.Close()
+			}
+			<-r.Context().Done()
+		}),
+	}
+}
+
+// TestNoObjectsLostBetweenSubscribeOkAndAttach: a subscriber that has been
+// told SUBSCRIBE_OK receives every object the relay takes from upstream after
+// that point, including across a group boundary.
+//
+// serveSubscriber used to accept the subscription before registering it with
+// the track, so objects dispatched in between reached only the cache. The
+// backlog handed to a new subscriber is the newest group alone, so anything
+// from an earlier group in that window was delivered to nobody, and this test
+// hangs on the objects that never come.
+//
+// The window is a scheduling race, so this reproduces it under `go test` but
+// not under `go test -race`, where the attach reliably wins. It is a guard,
+// not a proof: what actually closes the window is that serveSubscriber now
+// attaches before it accepts.
+func TestNoObjectsLostBetweenSubscribeOkAndAttach(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pub := burstPublisher()
+		psConn, pcConn := connectSession(t, h, pub)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pub.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		remote, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+
+		var payloads []string
+		for range burstGroups {
+			obj, err := remote.ReadObject(t.Context())
+			require.NoError(t, err)
+			payloads = append(payloads, string(obj.Payload))
+		}
+		want := make([]string, 0, burstGroups)
+		for g := 1; g <= burstGroups; g++ {
+			want = append(want, fmt.Sprintf("g%d", g))
+		}
+		// Every object arrives. Each group travels on its own subgroup
+		// stream, and streams carry no ordering guarantee between them, so
+		// the set is what is asserted rather than the sequence.
+		require.ElementsMatch(t, want, payloads)
 
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})

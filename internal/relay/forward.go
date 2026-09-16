@@ -37,9 +37,12 @@ type subscriber struct {
 	open map[sgKey]*moqtransport.Subgroup
 }
 
-func newSubscriber(sub *moqtransport.Subscription, queueLen int) *subscriber {
+// newSubscriber makes a subscriber whose queue is live immediately. The
+// subscription is bound afterwards, once it has been accepted: enqueue only
+// touches the queue, and only the writer goroutine -- which does not run
+// until the subscription exists -- touches s.sub.
+func newSubscriber(queueLen int) *subscriber {
 	return &subscriber{
-		sub:   sub,
 		queue: make(chan fwdItem, queueLen),
 		done:  make(chan publishEnd, 1),
 		open:  make(map[sgKey]*moqtransport.Subgroup),
@@ -88,9 +91,16 @@ func (s *subscriber) end(e publishEnd) {
 // blocks until the subscription ends from either side; the caller holds the
 // track acquired.
 func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
+	// Attach first: from here dispatch enqueues to this subscriber, so
+	// nothing published between the acknowledgement and the attach can be
+	// missed. The largest reported below is the one taken at that same
+	// instant, so it describes the join point rather than some later state.
+	s := newSubscriber(rt.h.QueueLen)
+	at := rt.attach(s)
+
 	var opts []moqtransport.SubscribeOkOption
-	if largest, ok := rt.snapshotLargest(); ok {
-		opts = append(opts, moqtransport.WithLargestObject(largest))
+	if at.haveLargest {
+		opts = append(opts, moqtransport.WithLargestObject(at.largest))
 	}
 	if props := rt.remote.TrackProperties(); len(props) > 0 {
 		opts = append(opts, moqtransport.WithTrackProperties(props))
@@ -106,25 +116,24 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 		if rerr := r.Reject(moqtransport.RequestErrorNotSupported, err.Error()); rerr != nil {
 			slog.Debug("failed to reject subscription", "error", rerr)
 		}
-		rt.release()
+		// attach already consumed the reservation, so the undo is detach.
+		rt.detach(s)
 		return
 	}
-
-	s := newSubscriber(subscription, rt.h.QueueLen)
-	backlog, ended := rt.attach(s)
+	s.sub = subscription
 	defer rt.detach(s)
 	slog.Info("forwarding subscription", "namespace", rt.namespace, "track", rt.track,
-		"backlogObjects", len(backlog))
+		"backlogObjects", len(at.backlog))
 
-	for _, obj := range backlog {
+	for _, obj := range at.backlog {
 		if !s.writeObject(obj) {
 			return
 		}
 	}
-	if ended != nil {
+	if at.ended != nil {
 		// The track finished before this subscriber attached; the backlog is
 		// all there is.
-		s.finish(*ended)
+		s.finish(*at.ended)
 		return
 	}
 	for {
