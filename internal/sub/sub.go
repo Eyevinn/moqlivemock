@@ -72,10 +72,35 @@ func (h *Handler) runDiscover(ctx context.Context, conn moqtransport.Connection)
 	if err != nil {
 		return fmt.Errorf("session init: %w", err)
 	}
-	_ = session
-	slog.Info("connected, waiting for namespace announcements...")
-	<-ctx.Done()
-	return nil
+	// Ask, rather than wait to be told. A relay owes PUBLISH_NAMESPACE only to
+	// subscribers that sent SUBSCRIBE_NAMESPACE (Section 8.4), so listening
+	// alone discovers nothing behind one; an origin publisher that volunteers
+	// its namespaces still reaches the handler set up in startSession.
+	sub, err := session.SubscribeNamespace(ctx, nil)
+	if err != nil {
+		slog.Info("peer took no namespace subscription, listening for announcements instead",
+			"error", err)
+		<-ctx.Done()
+		return nil
+	}
+	defer func() {
+		if err := sub.Close(); err != nil {
+			slog.Debug("failed to close namespace subscription", "error", err)
+		}
+	}()
+	slog.Info("connected, subscribed to all namespaces...")
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev := <-sub.Namespaces():
+			if ev.Available {
+				slog.Info("discovered namespace", "namespace", ev.Namespace)
+			} else {
+				slog.Info("namespace withdrawn", "namespace", ev.Namespace)
+			}
+		}
+	}
 }
 
 func (h *Handler) getPublishNamespaceHandler() moqtransport.PublishNamespaceHandler {

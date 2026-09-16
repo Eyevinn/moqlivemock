@@ -491,10 +491,12 @@ func TestSubscribeNamespacePropagation(t *testing.T) {
 	})
 }
 
-// TestAnnouncementForwardedToSessions: the relay re-announces known
-// namespaces to sessions that take announcements, and withdraws them when
-// the origin goes.
-func TestAnnouncementForwardedToSessions(t *testing.T) {
+// TestAnnouncementNotForwardedToSilentSessions: a session that never sent
+// SUBSCRIBE_NAMESPACE is told nothing. Section 8.4 has a relay forward
+// PUBLISH_NAMESPACE to matching subscribers, and a session that asked for
+// nothing matches none of them -- neither for a namespace announced before it
+// arrived nor for one announced after.
+func TestAnnouncementNotForwardedToSilentSessions(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := relay.NewHandler(io.Discard)
 
@@ -503,7 +505,6 @@ func TestAnnouncementForwardedToSessions(t *testing.T) {
 		require.NoError(t, err)
 
 		received := make(chan []string, 4)
-		withdrawn := make(chan []string, 4)
 		observer := &moqtransport.Session{
 			Implementation: "mlmrel-test-observer",
 			PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
@@ -512,17 +513,63 @@ func TestAnnouncementForwardedToSessions(t *testing.T) {
 						return
 					}
 					received <- r.Namespace()
-					<-r.Context().Done()
-					withdrawn <- r.Namespace()
 				}),
 		}
 		osConn, ocConn := connectSession(t, h, observer)
 
-		require.Equal(t, testNamespace, <-received)
-		require.NoError(t, publication.Close())
-		require.Equal(t, testNamespace, <-withdrawn)
+		// Nothing replayed when the session joins.
+		synctest.Wait()
+		require.Empty(t, received)
 
+		// Nothing when a further namespace is announced either.
+		second := []string{"moq-test", "second"}
+		publication2, err := pubSession.PublishNamespace(t.Context(), second)
+		require.NoError(t, err)
+		synctest.Wait()
+		require.Empty(t, received)
+
+		require.NoError(t, publication.Close())
+		require.NoError(t, publication2.Close())
 		shutdown(psConn, pcConn, osConn, ocConn)
+	})
+}
+
+// TestUpstreamNamespaceDiscovery: the relay asks its upstream for namespaces
+// instead of waiting to be told, so an upstream that announces nothing
+// unprompted -- which is what a conformant relay is -- still fills the table
+// and is routable from downstream.
+func TestUpstreamNamespaceDiscovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		// An upstream that answers SUBSCRIBE_NAMESPACE and volunteers nothing.
+		upstream := &moqtransport.Session{
+			Implementation: "mlmrel-test-upstream",
+			SubscribeNamespaceHandler: moqtransport.SubscribeNamespaceHandlerFunc(
+				func(r *moqtransport.SubscribeNamespaceRequest) {
+					announcer, err := r.Accept()
+					if err != nil {
+						return
+					}
+					if err := announcer.Announce(testNamespace); err != nil {
+						return
+					}
+					<-r.Context().Done()
+				}),
+		}
+		usConn, ucConn := testconn.Pair()
+		go h.HandleUpstream(t.Context(), usConn)
+		require.NoError(t, upstream.Run(t.Context(), ucConn))
+
+		// Downstream learns it the only way it is offered: by asking.
+		observer, osConn, ocConn := connect(t, h)
+		nsSub, err := observer.SubscribeNamespace(t.Context(), []string{"moq-test"})
+		require.NoError(t, err)
+		ev := <-nsSub.Namespaces()
+		require.True(t, ev.Available)
+		require.Equal(t, testNamespace, ev.Namespace)
+
+		shutdown(usConn, ucConn, osConn, ocConn)
 	})
 }
 

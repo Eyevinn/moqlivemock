@@ -45,8 +45,11 @@ func TestRelayedVideoAudioReceive(t *testing.T) {
 		upServer, upClient := testconn.Pair()
 		go ph.Handle(t.Context(), upServer)
 		rh := relay.NewHandler(io.Discard)
-		go rh.Handle(t.Context(), upClient)
-		synctest.Wait() // the publisher's announcements land in the relay's table
+		// HandleUpstream, as mlmrel -upstream does: the publisher answers
+		// namespace discovery rather than announcing unprompted, so the
+		// relay has to ask before it knows anything to route.
+		go rh.HandleUpstream(t.Context(), upClient)
+		synctest.Wait() // the upstream's namespaces land in the relay's table
 
 		downServer, downClient := testconn.Pair()
 		go rh.Handle(t.Context(), downServer)
@@ -93,8 +96,11 @@ func TestRelayedTwoLateJoiningSubscribers(t *testing.T) {
 		upServer, upClient := testconn.Pair()
 		go ph.Handle(t.Context(), upServer)
 		rh := relay.NewHandler(io.Discard)
-		go rh.Handle(t.Context(), upClient)
-		synctest.Wait() // the publisher's announcements land in the relay's table
+		// HandleUpstream, as mlmrel -upstream does: the publisher answers
+		// namespace discovery rather than announcing unprompted, so the
+		// relay has to ask before it knows anything to route.
+		go rh.HandleUpstream(t.Context(), upClient)
+		synctest.Wait() // the upstream's namespaces land in the relay's table
 
 		newJoiningSub := func(video, audio io.Writer) *sub.Handler {
 			return &sub.Handler{

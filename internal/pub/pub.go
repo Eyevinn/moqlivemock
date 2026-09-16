@@ -45,10 +45,11 @@ type Handler struct {
 // and serves subscriptions. The context controls the lifetime of publishing goroutines.
 func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	session := &moqtransport.Session{
-		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
-		SubscribeHandler:        h.getSubscribeHandler(ctx),
-		FetchHandler:            h.getFetchHandler(),
-		Implementation:          "Eyevinn/moqlivemock",
+		PublishNamespaceHandler:   h.getPublishNamespaceHandler(),
+		SubscribeNamespaceHandler: h.getSubscribeNamespaceHandler(),
+		SubscribeHandler:          h.getSubscribeHandler(ctx),
+		FetchHandler:              h.getFetchHandler(),
+		Implementation:            "Eyevinn/moqlivemock",
 		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
 	}
@@ -62,39 +63,11 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 	}
 	slog.Info("MoQ session established", "version", session.Version())
 
-	// An announcement lasts as long as the stream carrying it, so the handles
-	// are held until the session ends rather than dropped. Closing one is what
-	// draft-18 uses in place of UNANNOUNCE.
-	announce := func(namespace []string) *moqtransport.NamespacePublication {
-		publication, err := session.PublishNamespace(ctx, namespace)
-		if err != nil {
-			slog.Error("failed to announce namespace", "namespace", namespace, "error", err)
-			return nil
-		}
-		slog.Info("namespace announced successfully", "namespace", namespace)
-		return publication
-	}
-
-	var publications []*moqtransport.NamespacePublication
-	defer func() {
-		for _, p := range publications {
-			_ = p.Close()
-		}
-	}()
-
-	for _, ns := range h.Namespaces {
-		slog.Info("announcing namespace", "namespace", ns.Namespace)
-		if p := announce(ns.Namespace); p != nil {
-			publications = append(publications, p)
-		} else {
-			return
-		}
-	}
-	// Announce interop test namespace for moq-interop-runner compatibility
-	slog.Info("announcing interop namespace", "namespace", interopNamespace)
-	if p := announce(interopNamespace); p != nil {
-		publications = append(publications, p)
-	}
+	// The namespaces are not pushed at the peer. mlmpub used to open a
+	// PUBLISH_NAMESPACE toward every session that connected, which told a
+	// subscriber about namespaces it had not asked for and made a prefix
+	// filter meaningless; discovery is what SUBSCRIBE_NAMESPACE is for, and
+	// getSubscribeNamespaceHandler answers it.
 
 	// Block until the context is cancelled or the session ends.
 	select {
@@ -105,7 +78,62 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 }
 
 // interopNamespace is the namespace used by the moq-interop-runner test cases.
+// It carries no publisher prefix: the runner addresses it by this exact tuple.
 var interopNamespace = []string{"moq-test", "interop"}
+
+// served returns every namespace this publisher answers for.
+func (h *Handler) served() [][]string {
+	all := make([][]string, 0, len(h.Namespaces)+1)
+	for _, ns := range h.Namespaces {
+		all = append(all, ns.Namespace)
+	}
+	return append(all, interopNamespace)
+}
+
+// prefixMatches reports whether the namespace starts with the prefix tuple.
+// Section 8.4 matches a namespace prefix one field at a time, so ("cmsf")
+// matches ("cmsf", "clear") but never ("cmsfclear").
+func prefixMatches(prefix, namespace []string) bool {
+	if len(prefix) > len(namespace) {
+		return false
+	}
+	for i, p := range prefix {
+		if namespace[i] != p {
+			return false
+		}
+	}
+	return true
+}
+
+// getSubscribeNamespaceHandler answers namespace discovery with the namespaces
+// this publisher serves under the requested prefix. Section 6.1 makes
+// SUBSCRIBE_NAMESPACE the in-band way to find out what is on offer, and an
+// empty prefix asks for all of it.
+func (h *Handler) getSubscribeNamespaceHandler() moqtransport.SubscribeNamespaceHandler {
+	return moqtransport.SubscribeNamespaceHandlerFunc(func(r *moqtransport.SubscribeNamespaceRequest) {
+		announcer, err := r.Accept()
+		if err != nil {
+			slog.Error("failed to accept namespace subscription", "prefix", r.Prefix(), "error", err)
+			return
+		}
+		prefix := r.Prefix()
+		slog.Info("namespace subscription", "prefix", prefix)
+		for _, ns := range h.served() {
+			if !prefixMatches(prefix, ns) {
+				continue
+			}
+			if err := announcer.Announce(ns); err != nil {
+				slog.Error("failed to announce namespace", "namespace", ns, "error", err)
+				return
+			}
+			slog.Info("announced namespace", "namespace", ns)
+		}
+		// mlmpub's namespaces are fixed for the life of the process, so there
+		// is nothing further to send. The subscription lasts until the peer
+		// ends its request stream.
+		<-r.Context().Done()
+	})
+}
 
 func isInteropNamespace(ns []string) bool {
 	return tupleEqual(ns, interopNamespace)
