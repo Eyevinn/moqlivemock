@@ -37,7 +37,11 @@ func runUpstream(ctx context.Context, h *relay.Handler, rawURL string) {
 			slog.Error("failed to dial upstream", "url", rawURL, "error", err)
 		} else {
 			slog.Info("connected to upstream", "url", rawURL)
-			h.Handle(ctx, conn) // blocks until the session ends
+			// HandleUpstream, not Handle: the relay has to ask the upstream
+			// for its namespaces rather than wait to be told, or a conformant
+			// upstream -- one that answers only what it is asked -- leaves it
+			// with an empty table and nothing to route.
+			h.HandleUpstream(ctx, conn) // blocks until the session ends
 			slog.Warn("upstream session ended", "url", rawURL)
 		}
 		select {

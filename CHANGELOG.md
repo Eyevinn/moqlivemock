@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   though mlmpub serves only the catalog via FETCH -- and proxied upstream
   otherwise, so mlmsub's default joining-FETCH catalog flow works unchanged
   behind the relay. SUBSCRIBE_NAMESPACE is answered with replay and live
-  updates, and announcements are re-announced to every connected session.
+  updates, and is the only way a peer is told about a namespace.
   New package `internal/relay`.
 - `-qlog-events` on mlmpub, mlmsub and mlmrel. qlog has no levels -- every
   event is written unconditionally -- so verbosity control means selecting
@@ -90,6 +90,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Namespaces are discovered by asking, not by being told.** mlmpub opened a
+  PUBLISH_NAMESPACE toward every session that connected, and mlmrel re-announced
+  every namespace it knew to every session it had. Section 6.1 makes
+  SUBSCRIBE_NAMESPACE the in-band discovery mechanism and Section 8.4 obliges a
+  relay to forward PUBLISH_NAMESPACE only to *matching* subscribers -- ones that
+  asked. Announcing to everyone cost a bidirectional stream per session and
+  namespace, plus an answer from each peer, for something none of them
+  requested, and it made a subscriber's namespace filter meaningless.
+
+  mlmpub now answers SUBSCRIBE_NAMESPACE with the namespaces matching the
+  requested prefix and pushes nothing. mlmrel announces only to its namespace
+  subscribers, and asks its own upstream (`HandleUpstream`) instead of waiting
+  to be told -- without which a conformant upstream, one that answers only what
+  it is asked, left the relay with an empty table and nothing to route, so
+  relay-behind-relay could not work. mlmsub's `-discover` asks too, falling
+  back to listening when the peer answers NOT_SUPPORTED.
+
+  A namespace learned from a namespace subscription is withdrawn by
+  NAMESPACE_DONE rather than by a PUBLISH_NAMESPACE request, so an
+  announcement's `request` may now be nil.
+
+  This is a breaking change for any subscriber that only listens: it will see
+  no namespaces until it sends SUBSCRIBE_NAMESPACE.
 - **Namespaces are real tuples, under an `mlm` publisher prefix.** mlmpub
   announced `cmsf/clear` as a single namespace field containing a slash.
   Section 2.4.1 of draft-18 makes a Track Namespace an ordered set of fields
