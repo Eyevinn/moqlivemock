@@ -87,7 +87,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.videoname, "videoname", "_avc", "Substring to match for video track (default AVC)")
 	fs.StringVar(&opts.audioname, "audioname", "_aac", "Substring to match for audio track (default AAC)")
 	fs.StringVar(&opts.subsname, "subsname", "", "Substring to match for selecting subtitle track (e.g. 'wvtt' or 'stpp')")
-	fs.StringVar(&opts.namespace, "namespace", "cmsf/clear", "MoQ namespace to use")
+	fs.StringVar(&opts.namespace, "namespace", "mlm/cmsf/clear",
+		"MoQ namespace to use, '/' separating the fields of the tuple")
 	fs.StringVar(&opts.loglevel, "loglevel", "info", "Log level: debug, info, warning, error")
 	fs.StringVar(&opts.catalogMode, "catalog-mode", "joining",
 		"Catalog retrieval: 'joining' (default), 'subscribe' (legacy), or 'fetch' (legacy standalone)")
@@ -188,9 +189,12 @@ func runClient(ctx context.Context, opts *options) error {
 	// Automatically use WebTransport if address starts with https://
 	useWebTransport := strings.HasPrefix(opts.addr, "https://")
 
-	namespace := strings.Fields(opts.namespace)
+	// "/" separates the fields of the namespace tuple, matching how MSF
+	// writes a namespace in the catalog. Sending "cmsf/clear" as one field
+	// would stop any relay from matching the prefix ("cmsf").
+	namespace := internal.NamespaceTuple(opts.namespace)
 	if len(namespace) == 0 {
-		namespace = []string{opts.namespace}
+		return fmt.Errorf("empty namespace")
 	}
 
 	h := &sub.Handler{

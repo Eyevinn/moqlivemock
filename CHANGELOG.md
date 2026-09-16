@@ -90,6 +90,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Namespaces are real tuples, under an `mlm` publisher prefix.** mlmpub
+  announced `cmsf/clear` as a single namespace field containing a slash.
+  Section 2.4.1 of draft-18 makes a Track Namespace an ordered set of fields
+  and Section 8.4 matches it one field at a time, so that one field never
+  matched the prefix `("cmsf")` -- a relay or namespace subscriber could only
+  ask for the whole string or for everything. The namespaces are now
+  `("mlm", "cmsf", "clear")` and friends, and `-nsprefix` (default `mlm`)
+  sets the leading field so a subscriber behind a relay carrying many
+  publishers can ask for one publisher with a single SUBSCRIBE_NAMESPACE, and
+  two mlmpub instances on one relay can be told apart. The interop namespace
+  `("moq-test", "interop")` is deliberately never prefixed: moq-interop-runner
+  addresses it by that exact tuple.
+
+  `internal.NamespaceTuple` / `NamespaceString` are the one mapping between
+  the slash-joined string form -- what MSF puts in a catalog's `namespace`
+  member, what `-namespace` takes, what logs show -- and the wire tuple. A
+  CMSF catalog names each track's namespace as a string, and that string is
+  now built from the tuple actually announced, prefix included, so the two
+  cannot drift.
+
+  This is a breaking change on the wire: mlmsub's `-namespace` default is now
+  `mlm/cmsf/clear` and splits on `/` rather than whitespace, and a subscriber
+  asking for `cmsf/clear` as one field no longer matches.
 - **moqtransport v0.13.0** ("RENDEZVOUS_TIMEOUT on SUBSCRIBE"): exposes the
   subscriber's RENDEZVOUS_TIMEOUT, which mlmrel now honors instead of holding
   every SUBSCRIBE for an unannounced namespace for a fixed time.

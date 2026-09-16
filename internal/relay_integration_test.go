@@ -22,7 +22,7 @@ func TestRelayedVideoAudioReceive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		newMediaSub := func(video, audio io.Writer) *sub.Handler {
 			return &sub.Handler{
-				Namespace:   []string{testNamespace},
+				Namespace:   testNamespace,
 				Outs:        map[string]io.Writer{"video": video, "audio": audio},
 				Logfh:       io.Discard,
 				VideoName:   "_avc",
@@ -98,7 +98,7 @@ func TestRelayedTwoLateJoiningSubscribers(t *testing.T) {
 
 		newJoiningSub := func(video, audio io.Writer) *sub.Handler {
 			return &sub.Handler{
-				Namespace: []string{testNamespace},
+				Namespace: testNamespace,
 				Outs:      map[string]io.Writer{"video": video, "audio": audio},
 				Logfh:     io.Discard,
 				VideoName: "_avc",
