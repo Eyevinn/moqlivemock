@@ -19,9 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SUBSCRIBE_OK is taken in the same critical section as the backlog rather
   than from a separate, later read.
 
-  This is what made `TestFetchFromCache` fail intermittently on CI with
-  `deadlock: all goroutines in bubble are blocked` -- the test was waiting for
-  objects the relay had dropped on the floor.
+  The window is narrow and no test reproduces it: the attach wins the race in
+  every run we could produce. It is closed on the strength of the ordering
+  being wrong, not on a demonstrated loss. Whether it also explains the
+  intermittent `TestFetchFromCache` failures on CI
+  (`deadlock: all goroutines in bubble are blocked`) is unproven -- that
+  remains open.
 
 
 ## [0.15.0] - 2026-09-16

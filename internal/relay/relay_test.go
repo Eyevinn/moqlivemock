@@ -1,7 +1,6 @@
 package relay_test
 
 import (
-	"fmt"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -723,76 +722,53 @@ func TestFetchProxiedUpstreamTimeout(t *testing.T) {
 	})
 }
 
-// burstPublisher accepts any SUBSCRIBE and immediately writes burstGroups
-// whole groups before returning, one object per group. Writing this fast is
-// the point: it puts every object on the wire while the relay is still
-// answering its own downstream SUBSCRIBE, and spanning many groups means the
-// window is crossed whatever order the goroutines happen to run in.
-const burstGroups = 8
-
-func burstPublisher() *moqtransport.Session {
-	return &moqtransport.Session{
-		Implementation: "mlmrel-test-publisher",
-		SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
-			sub, err := r.Accept()
-			if err != nil {
-				return
-			}
-			for g := uint64(1); g <= burstGroups; g++ {
-				sg, err := sub.OpenSubgroup(g, 0, 128)
-				if err != nil {
-					return
-				}
-				_, _ = sg.WriteObject(0, []byte(fmt.Sprintf("g%d", g)))
-				_ = sg.Close()
-			}
-			<-r.Context().Done()
-		}),
-	}
-}
-
-// TestNoObjectsLostBetweenSubscribeOkAndAttach: a subscriber that has been
-// told SUBSCRIBE_OK receives every object the relay takes from upstream after
-// that point, including across a group boundary.
+// TestNoObjectsLostAfterSubscribeOk: every object published after a
+// subscriber has been told SUBSCRIBE_OK reaches it, including across a group
+// boundary.
 //
-// serveSubscriber used to accept the subscription before registering it with
-// the track, so objects dispatched in between reached only the cache. The
-// backlog handed to a new subscriber is the newest group alone, so anything
-// from an earlier group in that window was delivered to nobody, and this test
-// hangs on the objects that never come.
-//
-// The window is a scheduling race, so this reproduces it under `go test` but
-// not under `go test -race`, where the attach reliably wins. It is a guard,
-// not a proof: what actually closes the window is that serveSubscriber now
-// attaches before it accepts.
-func TestNoObjectsLostBetweenSubscribeOkAndAttach(t *testing.T) {
+// This pins the contract serveSubscriber owes a subscriber it has
+// acknowledged. It does not reproduce the narrow window that existed when
+// serveSubscriber accepted before attaching -- the attach won that race in
+// every local run, with and without -race -- so treat it as a statement of
+// the invariant rather than as a regression test with teeth.
+func TestNoObjectsLostAfterSubscribeOk(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		h := relay.NewHandler(io.Discard)
 
-		pub := burstPublisher()
-		psConn, pcConn := connectSession(t, h, pub)
+		pub := newFanoutPublisher()
+		psConn, pcConn := connectSession(t, h, pub.session)
 		subSession, ssConn, scConn := connect(t, h)
 
-		_, err := pub.PublishNamespace(t.Context(), testNamespace)
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
 		require.NoError(t, err)
 
 		remote, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
 		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		// Two groups, so the window -- if there were one -- would span a
+		// group boundary and drop the first group.
+		sg1, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(0, []byte("a"))
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(1, []byte("b"))
+		require.NoError(t, err)
+		require.NoError(t, sg1.Close())
+		sg2, err := upSub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = sg2.WriteObject(0, []byte("c"))
+		require.NoError(t, err)
 
 		var payloads []string
-		for range burstGroups {
+		for range 3 {
 			obj, err := remote.ReadObject(t.Context())
 			require.NoError(t, err)
 			payloads = append(payloads, string(obj.Payload))
 		}
-		want := make([]string, 0, burstGroups)
-		for g := 1; g <= burstGroups; g++ {
-			want = append(want, fmt.Sprintf("g%d", g))
-		}
-		// Every object arrives. Each group travels on its own subgroup
-		// stream, and streams carry no ordering guarantee between them, so
-		// the set is what is asserted rather than the sequence.
-		require.ElementsMatch(t, want, payloads)
+		// Each group travels on its own subgroup stream and streams carry no
+		// ordering guarantee between them, so the set is what is asserted.
+		require.ElementsMatch(t, []string{"a", "b", "c"}, payloads)
 
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})
