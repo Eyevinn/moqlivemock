@@ -59,6 +59,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- mlmrel: an upstream that went away was never noticed, so the relay never
+  redialled it. A session's context is not cancelled when the connection dies
+  under it -- moqtransport's accept loops see the error and return -- so
+  `relay.Handle` now watches the connection as well, and `runUpstream` gets
+  its session back to redial. Every downstream session is released the same
+  way, instead of a vanished peer staying registered forever.
+- mlmrel: `-upstream` now keeps the connection alive (10s keepalive). A
+  relay's upstream carries no traffic while nobody is subscribed, and the
+  connection died at the peer's 30s idle timeout, taking every upstream
+  announcement with it; the relay then sat with an empty namespace table.
 - mlmrel: a SUBSCRIBE the relay cannot accept -- one carrying a filter type
   draft-18 does not define, as moxygen's `LargestGroup` (250) is -- is now
   answered with REQUEST_ERROR NOT_SUPPORTED instead of being left open until

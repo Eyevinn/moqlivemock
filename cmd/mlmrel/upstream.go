@@ -19,6 +19,14 @@ import (
 
 const upstreamRedialDelay = 2 * time.Second
 
+// upstreamKeepAlive keeps the upstream connection warm. A relay's upstream
+// carries no traffic whenever nobody is subscribed, and an idle QUIC
+// connection dies at the peer's idle timeout -- 30s against mlmpub. That took
+// every upstream announcement with it after the first quiet spell, so the
+// relay stood there with an empty namespace table until something restarted
+// it. Redialling recovers from a genuine loss; this stops the quiet ones.
+const upstreamKeepAlive = 10 * time.Second
+
 // runUpstream keeps a session to the static upstream publisher alive. The
 // upstream's announcements land in the relay's table like anyone else's, so
 // routing needs no special case for it. Redials with a delay until ctx ends.
@@ -61,6 +69,7 @@ func dialUpstream(ctx context.Context, rawURL string) (moqtransport.Connection, 
 		}, &quic.Config{
 			EnableDatagrams:                  true,
 			EnableStreamResetPartialDelivery: true,
+			KeepAlivePeriod:                  upstreamKeepAlive,
 		})
 		if err != nil {
 			return nil, err
@@ -77,6 +86,7 @@ func dialUpstream(ctx context.Context, rawURL string) (moqtransport.Connection, 
 			QUICConfig: &quic.Config{
 				EnableDatagrams:                  true,
 				EnableStreamResetPartialDelivery: true,
+				KeepAlivePeriod:                  upstreamKeepAlive,
 			},
 			// quinn doesn't implement the QUIC RESET_STREAM_AT extension that
 			// draft-ietf-webtrans-http3-16 requires, so don't insist the peer
