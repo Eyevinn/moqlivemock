@@ -41,10 +41,16 @@ Container) namespace and a [moq-mi][moq-mi] (MoQ Media Interop) namespace. Each
 CMSF catalog additionally offers a LOCMAF (Low Overhead CMAF) variant of every
 track. See the [Namespaces](#namespaces) section below for details.
 
-This project uses [moqtransport][moqtransport] for the MoQ transport layer,
-supporting both draft-14 and draft-16 of MOQT. Draft-16 uses ALPN-based version
-negotiation (`moqt-16`) and `WT-Available-Protocols` for WebTransport. Draft-14
-(`moq-00`) is supported for backward compatibility.
+This project uses [moqtransport][moqtransport] for the MoQ transport layer and
+speaks [MOQT draft-18][moqt] (`moqt-18`) only. Drafts 14 and 16 are gone:
+draft-17 changed the variable-length integer encoding, moved SETUP onto a pair
+of unidirectional streams and gave every request its own bidirectional stream,
+so nothing of the older wire format survives.
+
+From draft-17 the negotiated protocol identifier *is* the version negotiation —
+SETUP carries no version field — for both native QUIC (TLS ALPN) and
+WebTransport (subprotocol). A peer that offers no identifier mlmpub speaks
+cannot be spoken to at all, rather than falling back.
 
 ## Namespaces
 
@@ -545,7 +551,6 @@ Contact [sales@eyevinn.se](mailto:sales@eyevinn.se) if you are interested.
 Want to know more about Eyevinn and how it is to work here. Contact us at work@eyevinn.se!
 
 [moqt]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
-[moqt-14]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-transport-14
 [MSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
 [CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
 [LOC]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
