@@ -52,14 +52,30 @@ reach main.
 
 ### Multi-Namespace Architecture
 
-mlmpub announces one or more namespaces. The CMSF namespaces carry a unified
+mlmpub serves one or more namespaces. The CMSF namespaces carry a unified
 catalog (draft-ietf-moq-msf-01) filtered by protection type; LOC uses an MSF
 catalog; moq-mi is catalogless.
 
+A Track Namespace is a **tuple**, not a string (draft-18 Section 2.4.1), and a
+relay matches a prefix one field at a time. The names below are written with
+`/` between fields, which is also how MSF writes a namespace in a catalog; the
+two forms round-trip through `internal.NamespaceTuple` / `NamespaceString`.
+Never send a slash-bearing string as a single field — it matches no prefix.
+
+The leading `mlm` field names the publisher, so one SUBSCRIBE_NAMESPACE for
+`("mlm")` covers all of mlmpub's namespaces on a relay carrying many
+publishers. `-nsprefix` sets it (default `mlm`; empty publishes unprefixed).
+The interop namespace `("moq-test", "interop")` is never prefixed —
+moq-interop-runner addresses it by that exact tuple.
+
+Discovery is pull-based: mlmpub announces nothing unprompted and answers
+SUBSCRIBE_NAMESPACE with the namespaces under the requested prefix. mlmrel
+does the same downstream and asks its own upstream via `HandleUpstream`.
+
 CMSF (unified CMAF + LOCMAF catalog):
-- `cmsf/clear` — always present, clear (unencrypted) tracks
-- `cmsf/drm-{scheme}` — when `-drmpath` is set, commercial DRM tracks (`_drm` suffix)
-- `cmsf/eccp-{scheme}` — when `-kid`/`-iv` are set, ClearKey/ECCP tracks (`_eccp` suffix)
+- `mlm/cmsf/clear` — always present, clear (unencrypted) tracks
+- `mlm/cmsf/drm-{scheme}` — when `-drmpath` is set, commercial DRM tracks (`_drm` suffix)
+- `mlm/cmsf/eccp-{scheme}` — when `-kid`/`-iv` are set, ClearKey/ECCP tracks (`_eccp` suffix)
 
 Each rendition appears twice in a CMSF catalog: a CMAF track `<name>`
 (`packaging: "cmaf"`) and a LOCMAF track `<name>_locmaf`
@@ -87,8 +103,8 @@ and the IETF draft revision advance independently — cite the
 version-independent draft URL, not a pinned revision.
 
 LOC (raw codec frames, one per object) and moq-mi (catalogless):
-- `msf/clear` — LOC packaging (AVC, HEVC, and AV1 video + AAC/Opus audio)
-- `moq-mi/clear` — moq-mi packaging with fixed track names `video0` / `audio0`
+- `mlm/msf/clear` — LOC packaging (AVC, HEVC, and AV1 video + AAC/Opus audio)
+- `mlm/moq-mi/clear` — moq-mi packaging with fixed track names `video0` / `audio0`
 
 ### Subtitle Tracks
 
@@ -114,7 +130,7 @@ required for FairPlay DRM compatibility in Safari 26.4+. AV1 similarly carries
 its decoder configuration (the sequence header OBU) in the `av1C` box of the
 init segment (`internal/media.go` `AV1Data`, built via mp4ff's
 `SetAV1Descriptor`). AV1 is offered through the CMSF namespaces (CMAF + LOCMAF variants) and the LOC
-`msf/clear` namespace. For LOC the `av01` codec string is kept as-is (unlike
+`mlm/msf/clear` namespace. For LOC the `av01` codec string is kept as-is (unlike
 AVC/HEVC which switch to `avc3`/`hev1`) because the sequence header OBU already
 travels in each keyframe temporal unit; `AV1Data.GenLOCVideoConfig` returns nil
 when keyframes are self-contained and the sequence header OBU to prepend
