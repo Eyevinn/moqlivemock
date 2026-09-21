@@ -262,8 +262,8 @@ func ResolveMoqMITrack(m MoqMITrackMap, moqmiName string) string {
 // video0 (first AVC track) and audio0 (first AAC-LC track, else first Opus track).
 func BuildMoqMITrackMap(asset *internal.Asset) (MoqMITrackMap, error) {
 	m := MoqMITrackMap{}
-	for _, group := range asset.Groups {
-		for _, ct := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		for _, ct := range ag.Tracks {
 			if ct.Protection != internal.ProtectionNone {
 				continue
 			}
@@ -281,8 +281,8 @@ func BuildMoqMITrackMap(asset *internal.Asset) (MoqMITrackMap, error) {
 	}
 	// Fall back to Opus if no AAC was found.
 	if _, ok := m["audio0"]; !ok {
-		for _, group := range asset.Groups {
-			for _, ct := range group.Tracks {
+		for _, ag := range asset.AltGroups {
+			for _, ct := range ag.Tracks {
 				if ct.Protection != internal.ProtectionNone {
 					continue
 				}

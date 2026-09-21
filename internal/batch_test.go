@@ -11,9 +11,9 @@ import (
 func TestCalcCmafBitrate(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 2, 1)
 	require.NoError(t, err)
-	for _, group := range asset.Groups {
-		for i := range group.Tracks {
-			ct := &group.Tracks[i]
+	for _, ag := range asset.AltGroups {
+		for i := range ag.Tracks {
+			ct := &ag.Tracks[i]
 			rate, err := calcCmafBitrate(ct)
 			require.NoError(t, err, "calcCmafBitrate %s", ct.Name)
 			// Wire bitrate must always exceed the raw sample bitrate (container
@@ -113,8 +113,8 @@ func TestLoadAssetWithBatch(t *testing.T) {
 			require.NotNil(t, asset)
 
 			// Check that all tracks have the correct batch size
-			for _, group := range asset.Groups {
-				for _, track := range group.Tracks {
+			for _, ag := range asset.AltGroups {
+				for _, track := range ag.Tracks {
 					switch track.ContentType {
 					case "audio":
 						require.Equal(t, tc.audioSampleBatch, track.SampleBatch,
@@ -191,8 +191,8 @@ func TestGenCMAFChunkWithBatch(t *testing.T) {
 			require.NotNil(t, asset)
 
 			// Test chunk generation for each track
-			for _, group := range asset.Groups {
-				for _, track := range group.Tracks {
+			for _, ag := range asset.AltGroups {
+				for _, track := range ag.Tracks {
 					// Test with different batch sizes
 					batchSize := track.SampleBatch
 

@@ -23,9 +23,9 @@ func TestLocmafIntegrationSmoke(t *testing.T) {
 		"audio_scale_128kbps_aac": false,
 	}
 
-	for _, group := range asset.Groups {
-		for i := range group.Tracks {
-			ct := &group.Tracks[i]
+	for _, ag := range asset.AltGroups {
+		for i := range ag.Tracks {
+			ct := &ag.Tracks[i]
 			if _, want := wanted[ct.Name]; !want {
 				continue
 			}
@@ -223,9 +223,9 @@ func encryptViaTrack(ct *ContentTrack, frag *mp4.Fragment) (*mp4.Fragment, error
 // the asset, failing the test if there is none.
 func firstProtectedVideoTrack(t *testing.T, asset *Asset) *ContentTrack {
 	t.Helper()
-	for gi := range asset.Groups {
-		for ti := range asset.Groups[gi].Tracks {
-			ct := &asset.Groups[gi].Tracks[ti]
+	for agi := range asset.AltGroups {
+		for ti := range asset.AltGroups[agi].Tracks {
+			ct := &asset.AltGroups[agi].Tracks[ti]
 			if ct.Protection != ProtectionNone && ct.ContentType == "video" {
 				return ct
 			}

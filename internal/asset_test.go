@@ -216,7 +216,7 @@ func TestSetLoopDuration(t *testing.T) {
 			video: []ContentTrack{video("v", 12800, ticks(230_000, 12800))},
 			// One AAC frame short of covering the loop.
 			audio:   []ContentTrack{audio("a", 48000, 10781*1024)},
-			wantErr: "altGroup 1 audio track a is shorter than the loop duration",
+			wantErr: "altGroup 2 audio track a is shorter than the loop duration",
 		},
 		{
 			desc: "video rendition of another duration is rejected",
@@ -225,7 +225,7 @@ func TestSetLoopDuration(t *testing.T) {
 				video("v2", 12800, ticks(230_000, 12800)-1),
 			},
 			audio:   []ContentTrack{audio("a", 48000, ticks(230_000, 48000))},
-			wantErr: "altGroup 0 track v2 not compatible with loop duration",
+			wantErr: "altGroup 1 track v2 not compatible with loop duration",
 		},
 	}
 
@@ -236,7 +236,7 @@ func TestSetLoopDuration(t *testing.T) {
 				if len(tracks) == 0 {
 					continue
 				}
-				a.Groups = append(a.Groups, TrackGroup{AltGroupID: uint32(len(a.Groups)), Tracks: tracks})
+				a.AltGroups = append(a.AltGroups, AltGroup{ID: uint32(len(a.AltGroups)) + 1, Tracks: tracks})
 			}
 			err := a.setLoopDuration()
 			if c.wantErr != "" {
@@ -245,8 +245,8 @@ func TestSetLoopDuration(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, c.loopDurMS, a.LoopDurMS, "loop duration in ms")
-			for _, group := range a.Groups {
-				for _, track := range group.Tracks {
+			for _, ag := range a.AltGroups {
+				for _, track := range ag.Tracks {
 					want, ok := c.loopDur[track.Name]
 					require.Truef(t, ok, "no expected LoopDur for track %s", track.Name)
 					require.Equalf(t, want, track.LoopDur, "LoopDur for track %s", track.Name)
@@ -266,8 +266,8 @@ func TestLoadAsset(t *testing.T) {
 
 	// Collect all tracks by contentType
 	trackCounts := map[string]int{}
-	for _, group := range asset.Groups {
-		for _, track := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		for _, track := range ag.Tracks {
 			trackCounts[track.ContentType]++
 		}
 	}
@@ -293,8 +293,8 @@ func TestLoadAsset(t *testing.T) {
 		"video_600kbps_av1":            true,
 		"video_900kbps_av1":            true,
 	}
-	for _, group := range asset.Groups {
-		for _, track := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		for _, track := range ag.Tracks {
 			_, ok := expectedNames[track.Name]
 			require.True(t, ok, "unexpected track name: %s", track.Name)
 		}
@@ -308,9 +308,9 @@ func TestLoadAsset(t *testing.T) {
 	var videoCodecs []string
 	var videoBitrates []int
 	var videoNames []string
-	for _, group := range asset.Groups {
-		if len(group.Tracks) > 0 && group.Tracks[0].ContentType == "video" {
-			for _, track := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		if len(ag.Tracks) > 0 && ag.Tracks[0].ContentType == "video" {
+			for _, track := range ag.Tracks {
 				videoCodecs = append(videoCodecs, track.SpecData.Codec())
 				videoBitrates = append(videoBitrates, int(track.SampleBitrate))
 				videoNames = append(videoNames, track.Name)
@@ -334,9 +334,9 @@ func TestLoadAsset(t *testing.T) {
 	var audioCodecs []string
 	var audioBitrates []int
 	var audioNames []string
-	for _, group := range asset.Groups {
-		if len(group.Tracks) > 0 && group.Tracks[0].ContentType == "audio" {
-			for _, track := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		if len(ag.Tracks) > 0 && ag.Tracks[0].ContentType == "audio" {
+			for _, track := range ag.Tracks {
 				audioCodecs = append(audioCodecs, track.SpecData.Codec())
 				audioBitrates = append(audioBitrates, int(track.SampleBitrate))
 				audioNames = append(audioNames, track.Name)
@@ -355,13 +355,13 @@ func TestLoadAsset(t *testing.T) {
 
 	// Check that video group has a lower altGroupID than audio group
 	var videoGroupID, audioGroupID uint32
-	for _, group := range asset.Groups {
-		if len(group.Tracks) > 0 {
-			switch group.Tracks[0].ContentType {
+	for _, ag := range asset.AltGroups {
+		if len(ag.Tracks) > 0 {
+			switch ag.Tracks[0].ContentType {
 			case "video":
-				videoGroupID = group.AltGroupID
+				videoGroupID = ag.ID
 			case "audio":
-				audioGroupID = group.AltGroupID
+				audioGroupID = ag.ID
 			}
 		}
 	}
@@ -370,8 +370,8 @@ func TestLoadAsset(t *testing.T) {
 			"video group altGroupID should be less than audio group altGroupID")
 	}
 	require.Equal(t, 10000, int(asset.LoopDurMS), "loop duration should be 10000ms")
-	for _, group := range asset.Groups {
-		for _, track := range group.Tracks {
+	for _, ag := range asset.AltGroups {
+		for _, track := range ag.Tracks {
 			require.Equal(t, int(10*track.TimeScale), int(track.LoopDur),
 				"loop duration should be 10s in timescale")
 		}
