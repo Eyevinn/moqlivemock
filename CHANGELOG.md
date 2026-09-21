@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Assets longer than about 50s were rejected with "not compatible with loop
+  duration", or looped their audio far too early. `setLoopDuration` compared
+  `Duration * 1000` with `loopDurMS * TimeScale` in uint32, and both products
+  leave that range early: at 47.7s for a 90kHz video track and at 89.5s for a
+  48kHz audio track. A wrapped video product mismatched and failed the load; a
+  wrapped audio product still compared as long enough, but set a `LoopDur` of
+  about 51s on a 230s asset, so the audio restarted 4.5 times per video loop.
+  The arithmetic is in uint64 now, and the altGroup index no longer poses as a
+  MoQ group in the code or in the error messages ([#143][issue-143]).
+
 ## [0.15.0] - 2026-09-16
 
 Track Namespaces are tuples, and namespace discovery is something a peer asks
@@ -795,5 +807,6 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 [interop-70]: https://github.com/englishm/moq-interop-runner/issues/70
 [issue-118]: https://github.com/Eyevinn/moqlivemock/issues/118
 [issue-122]: https://github.com/Eyevinn/moqlivemock/issues/122
+[issue-143]: https://github.com/Eyevinn/moqlivemock/issues/143
 [moxygen-173]: https://github.com/facebookexperimental/moxygen/issues/173
 [wp]: https://github.com/Eyevinn/warp-player

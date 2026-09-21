@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -548,37 +549,58 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 	return groups, nil
 }
 
-// setLoopDuration set a loop duration for all tracks in the asset
-// based on the first track in the first group.
-// All the tracks in the first group must have durations that
-// are equal to the loopDuration in their timeScale.
+// setLoopDuration sets a loop duration for all tracks in the asset based on
+// the first track of the first altGroup (the video altGroup when the asset has
+// video, since generateTrackGroups orders video first). "Group" here is the
+// MSF/CMSF altGroup of alternate renditions, not a MoQ group of objects.
+//
+// Every track of the reference altGroup must have a duration equal to the loop
+// duration in its own timescale. Audio in a later altGroup may be longer; it is
+// then cut at the loop point, so it only has to cover the loop.
+//
+// The comparisons are made in uint64. Both Duration*1000 and
+// loopDurMS*TimeScale pass the uint32 ceiling well before an asset gets long:
+// a 90 kHz video track wraps at 47.7 s, which used to fail the load outright,
+// and a 48 kHz audio track at 89.5 s, which used to pass the check and then
+// loop on a small fraction of its true length (issue #143).
 func (a *Asset) setLoopDuration() error {
 	if len(a.Groups) == 0 {
 		return fmt.Errorf("no tracks found")
 	}
-	loopDurMS := a.Groups[0].Tracks[0].Duration * 1000 / a.Groups[0].Tracks[0].TimeScale
-	for gNr, group := range a.Groups {
+	ref := &a.Groups[0].Tracks[0]
+	if ref.TimeScale == 0 {
+		return fmt.Errorf("track %s has zero timescale", ref.Name)
+	}
+	loopDurMS := uint64(ref.Duration) * 1000 / uint64(ref.TimeScale)
+	if loopDurMS > math.MaxUint32 {
+		return fmt.Errorf("loop duration %dms from track %s is too long", loopDurMS, ref.Name)
+	}
+	for agNr, group := range a.Groups {
+		isRefGroup := agNr == 0
 		for tNr, track := range group.Tracks {
-			switch {
-			case gNr == 0:
-				if track.Duration*1000 != loopDurMS*track.TimeScale {
-					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
-				}
-				group.Tracks[tNr].LoopDur = track.Duration
-			case gNr > 0 && track.ContentType == "audio":
-				if track.Duration*1000 < loopDurMS*track.TimeScale {
-					return fmt.Errorf("group %d audio track %s not compatible with loop duration", gNr, track.Name)
-				}
-				group.Tracks[tNr].LoopDur = loopDurMS * track.TimeScale / 1000
-			default:
-				if track.Duration*1000 != loopDurMS*track.TimeScale {
-					return fmt.Errorf("group %d track %s not compatible with loop duration", gNr, track.Name)
-				}
-				group.Tracks[tNr].LoopDur = track.Duration
+			if track.TimeScale == 0 {
+				return fmt.Errorf("altGroup %d track %s has zero timescale", group.AltGroupID, track.Name)
 			}
+			// Both sides are the duration in ticks*1000, so a loop point
+			// that falls between two ticks still compares exactly.
+			trackDur := uint64(track.Duration) * 1000
+			loopDur := loopDurMS * uint64(track.TimeScale)
+			if !isRefGroup && track.ContentType == "audio" {
+				if trackDur < loopDur {
+					return fmt.Errorf("altGroup %d audio track %s is shorter than the loop duration",
+						group.AltGroupID, track.Name)
+				}
+				group.Tracks[tNr].LoopDur = uint32(loopDur / 1000)
+				continue
+			}
+			if trackDur != loopDur {
+				return fmt.Errorf("altGroup %d track %s not compatible with loop duration",
+					group.AltGroupID, track.Name)
+			}
+			group.Tracks[tNr].LoopDur = track.Duration
 		}
 	}
-	a.LoopDurMS = loopDurMS
+	a.LoopDurMS = uint32(loopDurMS)
 	return nil
 }
 
