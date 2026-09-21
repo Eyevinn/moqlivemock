@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-21
+
+A loop-duration overflow kept assets longer than about 50s from loading at all,
+and mislooped the audio of some that did load. Nothing else changed, so this is
+a straight upgrade from v0.15.0.
+
 ### Fixed
 
 - Assets longer than about 50s were rejected with "not compatible with loop
@@ -773,7 +779,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.0...v0.15.1
 [0.15.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.12.0...v0.13.0
