@@ -48,20 +48,20 @@ func TestBuildMoqMITrackMap_FallsBackToOpus(t *testing.T) {
 	require.NoError(t, err)
 
 	// Filter out everything that isn't AVC video or Opus audio.
-	var filtered []internal.TrackGroup
-	for _, g := range asset.Groups {
+	var filtered []internal.AltGroup
+	for _, ag := range asset.AltGroups {
 		var keep []internal.ContentTrack
-		for _, ct := range g.Tracks {
+		for _, ct := range ag.Tracks {
 			switch ct.SpecData.(type) {
 			case *internal.AVCData, *internal.OpusData:
 				keep = append(keep, ct)
 			}
 		}
 		if len(keep) > 0 {
-			filtered = append(filtered, internal.TrackGroup{AltGroupID: g.AltGroupID, Tracks: keep})
+			filtered = append(filtered, internal.AltGroup{ID: ag.ID, Tracks: keep})
 		}
 	}
-	asset.Groups = filtered
+	asset.AltGroups = filtered
 
 	m, err := BuildMoqMITrackMap(asset)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestBuildMoqMITrackMap_FallsBackToOpus(t *testing.T) {
 
 func TestBuildMoqMITrackMap_ErrorWhenNoVideo(t *testing.T) {
 	asset := &internal.Asset{
-		Groups: []internal.TrackGroup{},
+		AltGroups: []internal.AltGroup{},
 	}
 	_, err := BuildMoqMITrackMap(asset)
 	require.Error(t, err)

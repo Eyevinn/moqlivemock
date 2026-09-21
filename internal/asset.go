@@ -85,7 +85,7 @@ type ContentTrack struct {
 
 type Asset struct {
 	Name           string
-	Groups         []TrackGroup
+	AltGroups      []AltGroup
 	LoopDurMS      uint32
 	SubtitleTracks []*SubtitleTrack
 	Drm            *DRMInfo
@@ -99,15 +99,17 @@ type CodecSpecificData interface {
 	Clone() (CodecSpecificData, error)
 }
 
-type TrackGroup struct {
-	AltGroupID uint32
-	Tracks     []ContentTrack
+// AltGroup is an MSF/CMSF altGroup: alternate renditions of the same content,
+// of which a receiver picks one. It is not a MoQ group of objects.
+type AltGroup struct {
+	ID     uint32
+	Tracks []ContentTrack
 }
 
 // GetTrackByName returns a pointer to a ContentTrack with the given name, or nil if not found.
 func (a *Asset) GetTrackByName(name string) *ContentTrack {
-	for _, group := range a.Groups {
-		for _, ct := range group.Tracks {
+	for _, ag := range a.AltGroups {
+		for _, ct := range ag.Tracks {
 			if ct.Name == name {
 				return &ct
 			}
@@ -132,10 +134,10 @@ func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
 // the codec gate is applied later at serve time via cc608.CodecFor, which
 // admits AVC, HEVC and AV1.
 func (a *Asset) SetCC608Generator(gen *cc608.Generator) {
-	for gi := range a.Groups {
-		for ti := range a.Groups[gi].Tracks {
-			if a.Groups[gi].Tracks[ti].ContentType == "video" {
-				a.Groups[gi].Tracks[ti].cc608 = gen
+	for agi := range a.AltGroups {
+		for ti := range a.AltGroups[agi].Tracks {
+			if a.AltGroups[agi].Tracks[ti].ContentType == "video" {
+				a.AltGroups[agi].Tracks[ti].cc608 = gen
 			}
 		}
 	}
@@ -370,15 +372,15 @@ func LoadAssetWithProtection(dirPath string, audioSampleBatch, videoSampleBatch 
 			return nil, fmt.Errorf("failed to create ECCP protected tracks: %w", err)
 		}
 	}
-	trackGroups, err := generateTrackGroups(tracksByType)
+	altGroups, err := generateAltGroups(tracksByType)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate track groups: %w", err)
+		return nil, fmt.Errorf("failed to generate altGroups: %w", err)
 	}
 	asset := &Asset{
-		Name:   filepath.Base(dirPath),
-		Groups: trackGroups,
-		Drm:    drm,
-		Eccp:   eccp,
+		Name:      filepath.Base(dirPath),
+		AltGroups: altGroups,
+		Drm:       drm,
+		Eccp:      eccp,
 	}
 	if err := asset.setLoopDuration(); err != nil {
 		return nil, fmt.Errorf("could not set loop duration: %w", err)
@@ -487,10 +489,12 @@ func cloneCodecSpecificData(specData CodecSpecificData) (CodecSpecificData, erro
 	return cloned, nil
 }
 
-func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, error) {
-	var groups []TrackGroup
-	groupID := uint32(1)
-	// Add video group(s) first
+// generateAltGroups sorts the tracks into MSF/CMSF altGroups of alternate
+// renditions: one for video and one for audio, numbered from 1.
+func generateAltGroups(tracksByType map[string][]ContentTrack) ([]AltGroup, error) {
+	var altGroups []AltGroup
+	altGroupID := uint32(1)
+	// Add the video altGroup first
 	// Sort by codec (AVC, then HEVC, then AV1), then by codec string, then by
 	// bitrate ascending. AVC leads because HEVC with CENC is not fully
 	// supported in Widevine/Chrome. AV1 is last because a player that takes
@@ -518,14 +522,14 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 				return nil, fmt.Errorf("video tracks have different durations")
 			}
 		}
-		groups = append(groups, TrackGroup{
-			AltGroupID: groupID,
-			Tracks:     videoTracks,
+		altGroups = append(altGroups, AltGroup{
+			ID:     altGroupID,
+			Tracks: videoTracks,
 		})
-		groupID++
+		altGroupID++
 	}
 
-	// Then audio group(s)
+	// Then the audio altGroup
 	// Sort by codec (AAC, then Opus, then AC-3), then by bitrate ascending.
 	// Same reasoning as video: a player that defaults to the first audio track
 	// should land on the most widely supported codec. AAC leads, and AC-3 is
@@ -541,17 +545,17 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 			}
 			return audioTracks[i].SampleBitrate < audioTracks[j].SampleBitrate
 		})
-		groups = append(groups, TrackGroup{
-			AltGroupID: groupID,
-			Tracks:     audioTracks,
+		altGroups = append(altGroups, AltGroup{
+			ID:     altGroupID,
+			Tracks: audioTracks,
 		})
 	}
-	return groups, nil
+	return altGroups, nil
 }
 
 // setLoopDuration sets a loop duration for all tracks in the asset based on
 // the first track of the first altGroup (the video altGroup when the asset has
-// video, since generateTrackGroups orders video first). "Group" here is the
+// video, since generateAltGroups orders video first). "Group" here is the
 // MSF/CMSF altGroup of alternate renditions, not a MoQ group of objects.
 //
 // Every track of the reference altGroup must have a duration equal to the loop
@@ -564,10 +568,10 @@ func generateTrackGroups(tracksByType map[string][]ContentTrack) ([]TrackGroup, 
 // and a 48 kHz audio track at 89.5 s, which used to pass the check and then
 // loop on a small fraction of its true length (issue #143).
 func (a *Asset) setLoopDuration() error {
-	if len(a.Groups) == 0 {
+	if len(a.AltGroups) == 0 {
 		return fmt.Errorf("no tracks found")
 	}
-	ref := &a.Groups[0].Tracks[0]
+	ref := &a.AltGroups[0].Tracks[0]
 	if ref.TimeScale == 0 {
 		return fmt.Errorf("track %s has zero timescale", ref.Name)
 	}
@@ -575,29 +579,29 @@ func (a *Asset) setLoopDuration() error {
 	if loopDurMS > math.MaxUint32 {
 		return fmt.Errorf("loop duration %dms from track %s is too long", loopDurMS, ref.Name)
 	}
-	for agNr, group := range a.Groups {
-		isRefGroup := agNr == 0
-		for tNr, track := range group.Tracks {
+	for agNr, ag := range a.AltGroups {
+		isRefAltGroup := agNr == 0
+		for tNr, track := range ag.Tracks {
 			if track.TimeScale == 0 {
-				return fmt.Errorf("altGroup %d track %s has zero timescale", group.AltGroupID, track.Name)
+				return fmt.Errorf("altGroup %d track %s has zero timescale", ag.ID, track.Name)
 			}
 			// Both sides are the duration in ticks*1000, so a loop point
 			// that falls between two ticks still compares exactly.
 			trackDur := uint64(track.Duration) * 1000
 			loopDur := loopDurMS * uint64(track.TimeScale)
-			if !isRefGroup && track.ContentType == "audio" {
+			if !isRefAltGroup && track.ContentType == "audio" {
 				if trackDur < loopDur {
 					return fmt.Errorf("altGroup %d audio track %s is shorter than the loop duration",
-						group.AltGroupID, track.Name)
+						ag.ID, track.Name)
 				}
-				group.Tracks[tNr].LoopDur = uint32(loopDur / 1000)
+				ag.Tracks[tNr].LoopDur = uint32(loopDur / 1000)
 				continue
 			}
 			if trackDur != loopDur {
 				return fmt.Errorf("altGroup %d track %s not compatible with loop duration",
-					group.AltGroupID, track.Name)
+					ag.ID, track.Name)
 			}
-			group.Tracks[tNr].LoopDur = track.Duration
+			ag.Tracks[tNr].LoopDur = track.Duration
 		}
 	}
 	a.LoopDurMS = uint32(loopDurMS)
@@ -633,9 +637,9 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 	var tracks []Track
 	var initDataList []InitData
 	renderGroup := 1
-	for _, group := range a.Groups {
-		altGroup := int(group.AltGroupID)
-		for _, ct := range group.Tracks {
+	for _, ag := range a.AltGroups {
+		altGroup := int(ag.ID)
+		for _, ct := range ag.Tracks {
 			if ct.Protection != prot {
 				continue
 			}
@@ -765,8 +769,8 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 
 	// Add subtitle tracks to catalog (CMAF only).
 	// Group by format: WVTT tracks in one altGroup, STPP in another
-	wvttAltGroup := len(a.Groups) + 1
-	stppAltGroup := len(a.Groups) + 2
+	wvttAltGroup := len(a.AltGroups) + 1
+	stppAltGroup := len(a.AltGroups) + 2
 
 	for _, st := range a.SubtitleTracks {
 		initRef := ""
@@ -836,9 +840,9 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
 	var tracks []Track
 	renderGroup := 1
-	for _, group := range a.Groups {
-		altGroup := int(group.AltGroupID)
-		for _, ct := range group.Tracks {
+	for _, ag := range a.AltGroups {
+		altGroup := int(ag.ID)
+		for _, ct := range ag.Tracks {
 			if ct.Protection != ProtectionNone {
 				continue
 			}

@@ -18,9 +18,9 @@ func TestGenMoQGroup_VideoAudio(t *testing.T) {
 	require.NotNil(t, asset)
 
 	var videoTrack, audioTrack *ContentTrack
-	for _, group := range asset.Groups {
-		for i := range group.Tracks {
-			ct := &group.Tracks[i]
+	for _, ag := range asset.AltGroups {
+		for i := range ag.Tracks {
+			ct := &ag.Tracks[i]
 			if ct.ContentType == "video" && videoTrack == nil {
 				videoTrack = ct
 			}
@@ -64,9 +64,9 @@ func TestGenMoQStreams(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1) // adjust path if needed
 	require.NoError(t, err)
 	require.NotNil(t, asset)
-	for _, group := range asset.Groups {
-		for i := range group.Tracks {
-			ct := &group.Tracks[i]
+	for _, ag := range asset.AltGroups {
+		for i := range ag.Tracks {
+			ct := &ag.Tracks[i]
 			ofh, err := os.Create(fmt.Sprintf("%s.mp4", ct.Name))
 			if err != nil {
 				t.Fatalf("failed to create output file: %v", err)
