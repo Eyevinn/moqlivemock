@@ -156,6 +156,106 @@ func TestAACGroupBounds(t *testing.T) {
 	}
 }
 
+// TestSetLoopDuration covers loop durations well past the point where the
+// ms x timescale products leave uint32 range (issue #143): Duration*1000 wraps
+// at 47.7 s for a 90 kHz video track, and loopDurMS*TimeScale wraps at 89.5 s
+// for a 48 kHz audio track. Both used to turn a perfectly good asset into
+// "not compatible with loop duration".
+func TestSetLoopDuration(t *testing.T) {
+	// ticks converts a duration in ms to track ticks in uint64, so that the
+	// test data itself does not overflow what it is testing.
+	ticks := func(durMS uint64, timeScale uint32) uint32 {
+		return uint32(durMS * uint64(timeScale) / 1000)
+	}
+	video := func(name string, timeScale, duration uint32) ContentTrack {
+		return ContentTrack{Name: name, ContentType: "video", TimeScale: timeScale, Duration: duration}
+	}
+	audio := func(name string, timeScale, duration uint32) ContentTrack {
+		return ContentTrack{Name: name, ContentType: "audio", TimeScale: timeScale, Duration: duration}
+	}
+
+	cases := []struct {
+		desc      string
+		video     []ContentTrack
+		audio     []ContentTrack
+		loopDurMS uint32
+		loopDur   map[string]uint32
+		wantErr   string
+	}{
+		{
+			desc:      "10s, like the bundled test asset",
+			video:     []ContentTrack{video("v", 12800, ticks(10_000, 12800))},
+			audio:     []ContentTrack{audio("a", 48000, ticks(10_000, 48000))},
+			loopDurMS: 10_000,
+			loopDur:   map[string]uint32{"v": 128_000, "a": 480_000},
+		},
+		{
+			desc:      "60s at 90kHz, where Duration*1000 alone leaves uint32",
+			video:     []ContentTrack{video("v", 90000, ticks(60_000, 90000))},
+			audio:     []ContentTrack{audio("a", 48000, ticks(60_000, 48000))},
+			loopDurMS: 60_000,
+			loopDur:   map[string]uint32{"v": 5_400_000, "a": 2_880_000},
+		},
+		{
+			desc:      "230s, where loopDurMS*TimeScale leaves uint32 for 48kHz audio",
+			video:     []ContentTrack{video("v", 12800, ticks(230_000, 12800))},
+			audio:     []ContentTrack{audio("a", 48000, ticks(230_000, 48000))},
+			loopDurMS: 230_000,
+			loopDur:   map[string]uint32{"v": 2_944_000, "a": 11_040_000},
+		},
+		{
+			desc:  "audio longer than the loop is cut at the loop point",
+			video: []ContentTrack{video("v", 12800, ticks(230_000, 12800))},
+			// 10782 AAC frames, i.e. the first frame boundary past 230 s.
+			audio:     []ContentTrack{audio("a", 48000, 10782*1024)},
+			loopDurMS: 230_000,
+			loopDur:   map[string]uint32{"v": 2_944_000, "a": 11_040_000},
+		},
+		{
+			desc:  "audio shorter than the loop is rejected",
+			video: []ContentTrack{video("v", 12800, ticks(230_000, 12800))},
+			// One AAC frame short of covering the loop.
+			audio:   []ContentTrack{audio("a", 48000, 10781*1024)},
+			wantErr: "altGroup 1 audio track a is shorter than the loop duration",
+		},
+		{
+			desc: "video rendition of another duration is rejected",
+			video: []ContentTrack{
+				video("v", 12800, ticks(230_000, 12800)),
+				video("v2", 12800, ticks(230_000, 12800)-1),
+			},
+			audio:   []ContentTrack{audio("a", 48000, ticks(230_000, 48000))},
+			wantErr: "altGroup 0 track v2 not compatible with loop duration",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			a := &Asset{Name: "test"}
+			for _, tracks := range [][]ContentTrack{c.video, c.audio} {
+				if len(tracks) == 0 {
+					continue
+				}
+				a.Groups = append(a.Groups, TrackGroup{AltGroupID: uint32(len(a.Groups)), Tracks: tracks})
+			}
+			err := a.setLoopDuration()
+			if c.wantErr != "" {
+				require.EqualError(t, err, c.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, c.loopDurMS, a.LoopDurMS, "loop duration in ms")
+			for _, group := range a.Groups {
+				for _, track := range group.Tracks {
+					want, ok := c.loopDur[track.Name]
+					require.Truef(t, ok, "no expected LoopDur for track %s", track.Name)
+					require.Equalf(t, want, track.LoopDur, "LoopDur for track %s", track.Name)
+				}
+			}
+		})
+	}
+}
+
 func TestLoadAsset(t *testing.T) {
 	asset, err := LoadAsset("../assets/test10s", 1, 1)
 	require.NoError(t, err)
