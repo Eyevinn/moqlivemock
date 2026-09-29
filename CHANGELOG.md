@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Experimental paint-model subtitle tracks `subs_stpc_{lang}` and
+  `subs_wvtc_{lang}` (`-subsstpc`, `-subswvtc`, `-subsstpcbody`), off by default.
+- A `_locmaf` variant and a measured catalog `bitrate` for every subtitle track.
+
 ### Changed
 
 - mlmpub and mlmrel schedule raw-QUIC streams by publisher priority: catalog 0,
@@ -14,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - quic-go v0.62.0 and moqtransport v0.14.0, for stream priorities. Go 1.26 is
   now required, also in the mlmrel and mlmtest images.
 - mp4ff v0.57.0.
+- Subtitle groups carry one CMAF chunk per video object, each sent when its
+  interval ends, instead of one object per second. Each format has its own
+  altGroup.
 
 ## [0.15.1] - 2026-09-21
 

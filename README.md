@@ -20,8 +20,11 @@ The input media is 10s of video and audio which is then disassembled
 into frames. One or more frames are then combined into a MoQ object as a CMAF chunk.
 How many frames are combined is configurable via the `-audiobatch` and `-videobatch` options.
 
-Subtitles are generated on the fly and delivered as 1s groups with 1 object per group.
-That object is published at the start of each second in order to not increase the latency.
+Subtitles are generated on the fly and delivered as 1s groups with one object
+per video object, so at the video frame rate (25 fps for the test content). Each
+object is a CMAF chunk covering the same interval as the video object, published
+when that interval ends, so text reaches the player with the latency of the
+picture it belongs to.
 
 ### Wall-clock alignment
 
@@ -106,7 +109,8 @@ Both DRM and ECCP can be active simultaneously — they use independent encrypti
 and produce separate sets of protected tracks.
 
 Subtitle tracks are only included in the CMSF namespaces; LOC and moq-mi carry
-video and audio only.
+video and audio only. Like the media tracks, each subtitle track is listed as a
+CMAF track and a LOCMAF track `<name>_locmaf`.
 
 ### LOC (`mlm/msf/clear`)
 
@@ -203,7 +207,43 @@ You can configure multiple languages:
 ./mlmpub -subswvtt "" -subsstpp ""
 ```
 
-Subtitle track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`.
+Subtitle track names follow the pattern `subs_wvtt_{lang}` and `subs_stpp_{lang}`,
+each with a LOCMAF variant `subs_wvtt_{lang}_locmaf` and `subs_stpp_{lang}_locmaf`.
+
+A subtitle object covers one video object, 40 ms at 25 fps, and a cue lasts
+900 ms of every second. A cue keeps its true `begin` in every chunk and is given
+its `end` only in the chunk where it ends, so an unchanged cue is restated byte
+for byte, and the restatement is marked redundant (`sample_has_redundancy`).
+WVTT cues carry a `vsid` box with the UTC second they announce as source ID.
+
+### Paint-model subtitles (experimental)
+
+`-subsstpc` and `-subswvtc` add the paint-model variants of STPP and WVTT from
+[Eyevinn/paint-model-subtitles](https://github.com/Eyevinn/paint-model-subtitles),
+with the same cues:
+
+```shell
+./mlmpub -subsstpc en -subswvtc sv
+```
+
+The first chunk of each group is complete. A later chunk that restates the
+previous one is an 8-byte no-change box instead (`ttmn` for STPC, `vttn` for
+WVTC), and a changed STPC chunk carries only the TTML `<body>` in a `ttmb` box,
+which the receiver splices into the head of the group's first document.
+`-subsstpcbody=false` sends full documents instead. The tracks are
+`subs_stpc_{lang}` (codec `stpc`) and `subs_wvtc_{lang}` (codec `wvtc`), each
+also as `_locmaf`, and are off by default: the 4CCs `stpc`, `wvtc`, `ttmn`,
+`ttmb` and `vttn` are placeholders that are not registered with MP4RA.
+
+Wire bitrate per track, as measured on the generated groups and advertised in
+the catalog (25 fps test content):
+
+| Track | CMAF | LOCMAF |
+|---|---|---|
+| `stpp` | 317 kbit/s | 296 kbit/s |
+| `stpc` | 38 kbit/s | 17 kbit/s |
+| `wvtt` | 35 kbit/s | 14 kbit/s |
+| `wvtc` | 25 kbit/s | 4.5 kbit/s |
 
 To receive subtitles with the mlmsub subscriber:
 
@@ -214,6 +254,8 @@ To receive subtitles with the mlmsub subscriber:
 # Subscribe to a specific language
 ./mlmsub -subsout subs_sv.mp4 -subsname subs_wvtt_sv
 ```
+
+mlmsub expands a `_locmaf` subtitle track back to CMAF before writing it.
 
 ## In-band CTA-608 Captions
 

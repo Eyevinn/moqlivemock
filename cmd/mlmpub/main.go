@@ -69,6 +69,9 @@ type options struct {
 	sidePort         int
 	subsWvttLangs    string
 	subsStppLangs    string
+	subsWvtcLangs    string
+	subsStpcLangs    string
+	subsStpcBody     bool
 	cencKey          string
 	iv               string
 	kid              string
@@ -104,6 +107,12 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.IntVar(&opts.sidePort, "sideport", 0, "Port for HTTP side server serving /fingerprint and /clearkey (0 to disable)")
 	fs.StringVar(&opts.subsWvttLangs, "subswvtt", "sv", "Comma-separated WVTT subtitle languages (e.g. 'en,sv')")
 	fs.StringVar(&opts.subsStppLangs, "subsstpp", "en", "Comma-separated STPP subtitle languages (e.g. 'en,sv')")
+	fs.StringVar(&opts.subsWvtcLangs, "subswvtc", "",
+		"Comma-separated WVTC (experimental paint-model WVTT) subtitle languages (e.g. 'en,sv')")
+	fs.StringVar(&opts.subsStpcLangs, "subsstpc", "",
+		"Comma-separated STPC (experimental paint-model STPP) subtitle languages (e.g. 'en,sv')")
+	fs.BoolVar(&opts.subsStpcBody, "subsstpcbody", true,
+		"Send changed STPC chunks after the first of a group as a body-only ttmb box")
 	fs.StringVar(&opts.kid, "kid", "", "key id for CENC encryption (32 hex or 24 base64 chars)")
 	fs.StringVar(&opts.iv, "iv", "", "IV for CENC encryption (16 or 32 hex chars)")
 	fs.StringVar(&opts.cencKey, "cenckey", "", "Key for CENC encryption (32 hex or 24 base64 chars),"+
@@ -226,6 +235,16 @@ func runServer(opts *options) error {
 		return err
 	}
 	slog.Info("added subtitle tracks", "wvtt", wvttLangs, "stpp", stppLangs)
+	wvtcLangs := parseLanguages(opts.subsWvtcLangs)
+	stpcLangs := parseLanguages(opts.subsStpcLangs)
+	if len(wvtcLangs) > 0 || len(stpcLangs) > 0 {
+		err = asset.AddPaintSubtitleTracks(wvtcLangs, stpcLangs, opts.subsStpcBody)
+		if err != nil {
+			return err
+		}
+		slog.Info("added experimental paint-model subtitle tracks", "wvtc", wvtcLangs, "stpc", stpcLangs,
+			"stpcBody", opts.subsStpcBody)
+	}
 
 	// Enable in-band CTA-608 caption injection on video tracks when requested.
 	// A nil generator (the default) is a complete no-op; the codec gate is

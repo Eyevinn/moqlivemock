@@ -128,6 +128,21 @@ func (a *Asset) GetSubtitleTrackByName(name string) *SubtitleTrack {
 	return nil
 }
 
+// ResolveSubtitleTrack maps a catalog track name to its subtitle track and
+// packaging: "cmaf" for the plain name, "locmaf" for the name with
+// LocmafTrackSuffix. It returns nil if no subtitle track matches.
+func (a *Asset) ResolveSubtitleTrack(name string) (*SubtitleTrack, string) {
+	if st := a.GetSubtitleTrackByName(name); st != nil {
+		return st, "cmaf"
+	}
+	if base, ok := strings.CutSuffix(name, LocmafTrackSuffix); ok {
+		if st := a.GetSubtitleTrackByName(base); st != nil {
+			return st, "locmaf"
+		}
+	}
+	return nil, ""
+}
+
 // SetCC608Generator installs gen as the CTA-608 caption generator on every
 // video content track of the asset. Audio and subtitle tracks are untouched.
 // Passing a nil or disabled generator leaves captioning off (a complete no-op);
@@ -152,28 +167,59 @@ func (t *ContentTrack) CC608Generator() *cc608.Generator {
 // AddSubtitleTracks adds WVTT and STPP subtitle tracks for the given languages.
 // wvttLangs and stppLangs are lists of language codes (e.g., "en", "sv").
 // Track names are formatted as "subs_wvtt_{lang}" and "subs_stpp_{lang}".
+// The tracks send one object per video object (see SubtitleCadence).
 func (a *Asset) AddSubtitleTracks(wvttLangs, stppLangs []string) error {
-	// Create WVTT tracks
-	for _, lang := range wvttLangs {
-		name := fmt.Sprintf("subs_wvtt_%s", lang)
-		track, err := NewSubtitleTrack(name, SubtitleFormatWVTT, lang)
+	if err := a.addSubtitleTracks(SubtitleFormatWVTT, wvttLangs, false); err != nil {
+		return err
+	}
+	return a.addSubtitleTracks(SubtitleFormatSTPP, stppLangs, false)
+}
+
+// AddPaintSubtitleTracks adds the experimental paint-model WVTC and STPC
+// subtitle tracks for the given languages, named "subs_wvtc_{lang}" and
+// "subs_stpc_{lang}". They carry the same cues as the WVTT and STPP tracks,
+// but send a chunk that restates the previous one as an 8-byte no-change box.
+// With stpcBody, a changed STPC chunk after the first of its group carries
+// only the TTML body. The 4CCs are unregistered placeholders, so these tracks
+// are strictly opt-in.
+func (a *Asset) AddPaintSubtitleTracks(wvtcLangs, stpcLangs []string, stpcBody bool) error {
+	if err := a.addSubtitleTracks(SubtitleFormatWVTC, wvtcLangs, false); err != nil {
+		return err
+	}
+	return a.addSubtitleTracks(SubtitleFormatSTPC, stpcLangs, stpcBody)
+}
+
+func (a *Asset) addSubtitleTracks(format SubtitleFormat, langs []string, body bool) error {
+	cadence := a.subtitleCadence()
+	for _, lang := range langs {
+		name := fmt.Sprintf("subs_%s_%s", format, lang)
+		track, err := NewSubtitleTrack(name, format, lang)
 		if err != nil {
-			return fmt.Errorf("failed to create WVTT subtitle track for %s: %w", lang, err)
+			return fmt.Errorf("failed to create %s subtitle track for %s: %w",
+				strings.ToUpper(string(format)), lang, err)
 		}
+		track.Body = body
+		track.Cadence = cadence
 		a.SubtitleTracks = append(a.SubtitleTracks, track)
 	}
-
-	// Create STPP tracks
-	for _, lang := range stppLangs {
-		name := fmt.Sprintf("subs_stpp_%s", lang)
-		track, err := NewSubtitleTrack(name, SubtitleFormatSTPP, lang)
-		if err != nil {
-			return fmt.Errorf("failed to create STPP subtitle track for %s: %w", lang, err)
-		}
-		a.SubtitleTracks = append(a.SubtitleTracks, track)
-	}
-
 	return nil
+}
+
+// subtitleCadence returns the object cadence of the asset's first video track,
+// or the zero cadence (one subtitle object per group) if there is no video.
+func (a *Asset) subtitleCadence() SubtitleCadence {
+	for _, ag := range a.AltGroups {
+		for _, ct := range ag.Tracks {
+			if ct.ContentType == "video" && ct.TimeScale > 0 && ct.SampleDur > 0 {
+				return SubtitleCadence{
+					TimeScale:   ct.TimeScale,
+					SampleDur:   ct.SampleDur,
+					SampleBatch: max(ct.SampleBatch, 1),
+				}
+			}
+		}
+	}
+	return SubtitleCadence{}
 }
 
 // InitContentTrack initializes a ContentTrack from an io.Reader (expects a fragmented MP4).
@@ -622,8 +668,8 @@ const LocmafTrackSuffix = "_locmaf"
 // <name> and a LOCMAF track named <name>_locmaf, as alternates in the
 // same altGroup. Because LOCMAF init data is the raw CMAF init segment,
 // both tracks reference a single shared entry in the catalog InitDataList via
-// initRef (draft-ietf-moq-msf-01 Section 5.1.7 / 5.2.13). Subtitle tracks are
-// CMAF only.
+// initRef (draft-ietf-moq-msf-01 Section 5.1.7 / 5.2.13). Subtitle tracks
+// are published in both packagings too.
 //
 // The namespace parameter sets the Track.Namespace field in each catalog track entry.
 // The prot parameter selects which tracks to include: ProtectionNone for clear tracks,
@@ -767,36 +813,39 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 		}
 	}
 
-	// Add subtitle tracks to catalog (CMAF only).
-	// Group by format: WVTT tracks in one altGroup, STPP in another
-	wvttAltGroup := len(a.AltGroups) + 1
-	stppAltGroup := len(a.AltGroups) + 2
+	// Add subtitle tracks to catalog, each as a CMAF and a LOCMAF variant
+	// sharing one initRef like the media tracks. Each format gets its own
+	// altGroup, holding its languages and both packagings.
+	subsAltGroups := map[SubtitleFormat]int{
+		SubtitleFormatWVTT: len(a.AltGroups) + 1,
+		SubtitleFormatSTPP: len(a.AltGroups) + 2,
+		SubtitleFormatWVTC: len(a.AltGroups) + 3,
+		SubtitleFormatSTPC: len(a.AltGroups) + 4,
+	}
 
 	for _, st := range a.SubtitleTracks {
-		initRef := ""
-		if st.SpecData != nil {
-			data, err := st.SpecData.GenCMAFInitData()
-			if err != nil {
-				return nil, fmt.Errorf("could not generate init data for subtitle track %s: %w", st.Name, err)
-			}
-			initRef = "init-" + st.Name
-			initDataList = append(initDataList, InitData{
-				ID:   initRef,
-				Type: "inline",
-				Data: base64.StdEncoding.EncodeToString(data),
-			})
+		data, err := st.SpecData.GenCMAFInitData()
+		if err != nil {
+			return nil, fmt.Errorf("could not generate init data for subtitle track %s: %w", st.Name, err)
+		}
+		initRef := "init-" + st.Name
+		initDataList = append(initDataList, InitData{
+			ID:   initRef,
+			Type: "inline",
+			Data: base64.StdEncoding.EncodeToString(data),
+		})
+		cmafBitrate, err := calcSubtitleBitrate(st, "cmaf")
+		if err != nil {
+			return nil, err
+		}
+		locmafBitrate, err := calcSubtitleBitrate(st, "locmaf")
+		if err != nil {
+			return nil, err
 		}
 
-		// Determine altGroup based on format
-		altGroup := wvttAltGroup
-		if st.Format == SubtitleFormatSTPP {
-			altGroup = stppAltGroup
-		}
-
-		track := Track{
-			Name:        st.Name,
+		altGroup := subsAltGroups[st.Format]
+		base := Track{
 			Namespace:   namespace,
-			Packaging:   "cmaf",
 			IsLive:      true,
 			Role:        "subtitle",
 			RenderGroup: &renderGroup,
@@ -806,7 +855,19 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 			Timescale:   Ptr(int(st.TimeScale)),
 			Language:    st.Language,
 		}
-		tracks = append(tracks, track)
+
+		cmafTrack := base
+		cmafTrack.Name = st.Name
+		cmafTrack.Packaging = "cmaf"
+		cmafTrack.Bitrate = &cmafBitrate
+
+		locmafTrack := base
+		locmafTrack.Name = st.Name + LocmafTrackSuffix
+		locmafTrack.Packaging = "locmaf"
+		locmafTrack.LocmafVersion = locmaf.Version
+		locmafTrack.Bitrate = &locmafBitrate
+
+		tracks = append(tracks, cmafTrack, locmafTrack)
 	}
 
 	cat := &Catalog{

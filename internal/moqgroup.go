@@ -23,6 +23,9 @@ type MoQGroup struct {
 	startNr    uint64
 	endNr      uint64
 	MoQObjects []MoQObject
+	// objEndMS is the wall-clock availability time in ms of each object,
+	// set for subtitle groups whose objects follow the video cadence.
+	objEndMS []uint64
 }
 
 type MoQObject []byte
@@ -105,14 +108,21 @@ func CalcLOCGroupRange(track *ContentTrack, groupNr uint64, constantDurMS uint32
 }
 
 func calcMoQGroup(track *ContentTrack, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
-	startTime := nr * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
-	endTime := (nr + 1) * uint64(constantDurMS) * uint64(track.TimeScale) / 1000
-	startNr = startTime / uint64(track.SampleDur)
-	if startTime%uint64(track.SampleDur) != 0 {
+	return calcGroupSampleRange(track.TimeScale, track.SampleDur, nr, constantDurMS)
+}
+
+// calcGroupSampleRange returns the [startNr, endNr) sample range of group nr
+// for samples of duration sampleDur in timeScale, with groups of an average
+// duration of constantDurMS milliseconds.
+func calcGroupSampleRange(timeScale, sampleDur uint32, nr uint64, constantDurMS uint32) (startNr, endNr uint64) {
+	startTime := nr * uint64(constantDurMS) * uint64(timeScale) / 1000
+	endTime := (nr + 1) * uint64(constantDurMS) * uint64(timeScale) / 1000
+	startNr = startTime / uint64(sampleDur)
+	if startTime%uint64(sampleDur) != 0 {
 		startNr++
 	}
-	endNr = endTime / uint64(track.SampleDur)
-	if endTime%uint64(track.SampleDur) != 0 {
+	endNr = endTime / uint64(sampleDur)
+	if endTime%uint64(sampleDur) != 0 {
 		endNr++
 	}
 	return startNr, endNr

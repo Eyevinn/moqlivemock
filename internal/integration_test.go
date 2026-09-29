@@ -270,6 +270,96 @@ func TestVideoAudioReceive(t *testing.T) {
 	})
 }
 
+// writeRecorder keeps every Write as its own chunk: mlmsub writes the init
+// data and then each object with one Write each.
+type writeRecorder struct {
+	mu     sync.Mutex
+	writes [][]byte
+}
+
+func (w *writeRecorder) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.writes = append(w.writes, append([]byte(nil), p...))
+	return len(p), nil
+}
+
+func (w *writeRecorder) get() [][]byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([][]byte(nil), w.writes...)
+}
+
+// TestPaintSubtitleReceiveLocmaf subscribes to the LOCMAF variant of a
+// paint-model subtitle track, whose catalog name carries the LOCMAF suffix.
+// mlmsub expands LOCMAF back to CMAF, so each received object must carry
+// exactly the samples of the CMAF chunk the publisher generated.
+func TestPaintSubtitleReceiveLocmaf(t *testing.T) {
+	asset, err := internal.LoadAsset(testAssetDir, 2, 1)
+	require.NoError(t, err)
+	require.NoError(t, asset.AddPaintSubtitleTracks(nil, []string{"en"}, true))
+	catalog, err := asset.GenCMAFCatalogEntry(internal.NamespaceString(testNamespace),
+		internal.ProtectionNone, time.Now().UnixMilli())
+	require.NoError(t, err)
+	st := asset.SubtitleTracks[0]
+
+	synctest.Test(t, func(t *testing.T) {
+		// The publisher starts at the group after the current one.
+		groupNr := internal.CurrSubtitleGroupNr(uint64(time.Now().UnixMilli()), internal.MoqGroupDurMS) + 1
+		want, err := internal.GenSubtitleGroup(st, groupNr, internal.MoqGroupDurMS, "cmaf")
+		require.NoError(t, err)
+
+		sConn, cConn := testconn.Pair()
+		ph := newPubHandler(asset, catalog)
+		go ph.Handle(t.Context(), sConn)
+
+		rec := &writeRecorder{}
+		sh := &sub.Handler{
+			Namespace: testNamespace,
+			Outs:      map[string]io.Writer{"subs": rec},
+			Logfh:     io.Discard,
+			VideoName: "NONE",
+			AudioName: "NONE",
+			SubsName:  "subs_stpc_en_locmaf",
+		}
+		go func() { _ = sh.RunWithConn(t.Context(), cConn) }()
+
+		for len(rec.get()) < 3 {
+			time.Sleep(10 * time.Millisecond)
+		}
+		writes := rec.get()
+		for i := 0; i < 2; i++ {
+			got := fullSamplesOf(t, writes[1+i])
+			exp := fullSamplesOf(t, want.MoQObjects[i])
+			require.Len(t, got, len(exp))
+			for j := range exp {
+				assert.Equal(t, exp[j].DecodeTime, got[j].DecodeTime)
+				assert.Equal(t, exp[j].Dur, got[j].Dur)
+				assert.Equal(t, exp[j].Flags, got[j].Flags)
+				assert.Equal(t, exp[j].Data, got[j].Data)
+			}
+		}
+		assert.True(t, strings.HasPrefix(string(fullSamplesOf(t, writes[1])[0].Data), "<?xml"),
+			"the first object is a full document")
+		assert.Equal(t, "ttmn", string(fullSamplesOf(t, writes[2])[0].Data[4:8]),
+			"the second object is a no-change box")
+
+		shutdown(sConn, cConn)
+	})
+}
+
+// fullSamplesOf decodes the samples of one CMAF chunk (moof+mdat).
+func fullSamplesOf(t *testing.T, chunk []byte) []mp4.FullSample {
+	t.Helper()
+	f, err := mp4.DecodeFileSR(bits.NewFixedSliceReader(chunk))
+	require.NoError(t, err)
+	require.NotEmpty(t, f.Segments)
+	require.NotEmpty(t, f.Segments[0].Fragments)
+	fss, err := f.Segments[0].Fragments[0].GetFullSamples(nil)
+	require.NoError(t, err)
+	return fss
+}
+
 func TestSubtitleReceive(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
