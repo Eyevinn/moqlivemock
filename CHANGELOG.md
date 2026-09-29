@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interval ends, instead of one object per second. Each format has its own
   altGroup.
 
+### Fixed
+
+- `make build` skipped a program whose name matched a stray binary in the
+  repository root: the program targets were not phony.
+
 ## [0.15.1] - 2026-09-21
 
 A loop-duration overflow kept assets longer than about 50s from loading at all,
