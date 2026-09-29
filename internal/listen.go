@@ -45,12 +45,24 @@ func RunMoQServer(ctx context.Context, addr string, tlsConfig *tls.Config, handl
 			EnableStreamResetPartialDelivery: true,
 		},
 	}
-	// ConfigureHTTP3Server (webtransport-go v0.11.0) sends the full set of
-	// WebTransport SETTINGS, including the WT_MAX_SESSIONS and flow-control
-	// codepoints Safari 26.4+ requires. See https://github.com/Eyevinn/warp-player/issues/88
+	// ConfigureHTTP3Server sends the WebTransport SETTINGS Safari 26.4+
+	// requires, including WT_MAX_SESSIONS. See
+	// https://github.com/Eyevinn/warp-player/issues/88
 	webtransport.ConfigureHTTP3Server(h3Server)
 	wt := webtransport.Server{
 		H3: h3Server,
+		// The initial flow-control limits for what the client may open and
+		// send. webtransport-go sends SETTINGS_WT_INITIAL_MAX_STREAMS_BIDI,
+		// _UNI and _DATA only when these are set, and raises them with
+		// WT_MAX_STREAMS and WT_MAX_DATA capsules as they are used. Safari
+		// enforces the limits, so without them it may open no stream at
+		// all: createUnidirectionalStream never resolves, and the MoQ SETUP
+		// is never sent. Chromium enforces only limits that were sent.
+		Config: &webtransport.Config{
+			MaxIncomingStreams:    1000,
+			MaxIncomingUniStreams: 100,
+			MaxIncomingData:       16 << 20,
+		},
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
