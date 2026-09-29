@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Safari could open no WebTransport stream to mlmpub or mlmrel, so MOQ Player
+  stalled before the MoQ SETUP. The server now advertises its stream and data
+  limits.
+
 ## [0.16.0] - 2026-09-29
 
 Subtitles reach the player with the latency of the picture they belong to, and
