@@ -109,9 +109,17 @@ LOC (raw codec frames, one per object) and moq-mi (catalogless):
 ### Subtitle Tracks
 
 Subtitles are dynamically generated (not loaded from files), showing UTC time
-and group number, as WVTT (WebVTT in CMAF) or STPP (TTML in CMAF).
+and group number, as WVTT (WebVTT in CMAF) or STPP (TTML in CMAF), plus the
+experimental paint-model STPC and WVTC (`-subsstpc`, `-subswvtc`; unregistered
+4CCs, so off by default). A subtitle group has one CMAF chunk per video object
+(`SubtitleCadence`, taken from the first video track), each sent when its
+interval ends; the paint-model tracks send a restating chunk as a `ttmn`/`vttn`
+box and a changed STPC chunk as a body-only `ttmb`. Every subtitle track is
+also published as LOCMAF (`_locmaf`). The boxes come from mp4ff (v0.57.0 and
+later).
 
-Track naming: `subs_wvtt_{lang}`, `subs_stpp_{lang}`
+Track naming: `subs_wvtt_{lang}`, `subs_stpp_{lang}`, `subs_wvtc_{lang}`,
+`subs_stpc_{lang}`, each also with the `_locmaf` suffix
 
 ### Content Protection
 

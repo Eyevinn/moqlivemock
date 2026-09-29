@@ -61,6 +61,8 @@ func TestSubtitleDataCodec(t *testing.T) {
 	}{
 		{SubtitleFormatWVTT, "wvtt"},
 		{SubtitleFormatSTPP, "stpp.ttml.im1t"},
+		{SubtitleFormatWVTC, "wvtc"},
+		{SubtitleFormatSTPC, "stpc"},
 	}
 
 	for _, tc := range tests {
@@ -190,14 +192,32 @@ func TestCalcCueItvls(t *testing.T) {
 			},
 		},
 		{
-			desc:     "utc shifted, starting 100ms into second",
+			desc:     "utc shifted, starting 100ms into second, cue times not clipped",
 			startMS:  12000,
 			dur:      800,
 			utcMS:    12100,
 			cueDurMS: 900,
 			wanted: []cueItvl{
-				{startMS: 12000, endMS: 12800, utcS: 12},
+				{startMS: 11900, endMS: 12800, utcS: 12},
 			},
+		},
+		{
+			desc:     "interval inside one cue",
+			startMS:  5040,
+			dur:      40,
+			utcMS:    5040,
+			cueDurMS: 900,
+			wanted: []cueItvl{
+				{startMS: 5000, endMS: 5900, utcS: 5},
+			},
+		},
+		{
+			desc:     "interval after the cue ended",
+			startMS:  5920,
+			dur:      40,
+			utcMS:    5920,
+			cueDurMS: 900,
+			wanted:   []cueItvl{},
 		},
 	}
 
@@ -264,7 +284,7 @@ func TestGenSubtitleGroupWvtt(t *testing.T) {
 	groupNr := uint64(1000) // Group number corresponding to 1000 seconds
 	groupDurMS := uint32(1000)
 
-	mg, err := GenSubtitleGroup(st, groupNr, groupDurMS)
+	mg, err := GenSubtitleGroup(st, groupNr, groupDurMS, "cmaf")
 	if err != nil {
 		t.Fatalf("GenSubtitleGroup failed: %v", err)
 	}
@@ -311,7 +331,7 @@ func TestGenSubtitleGroupStpp(t *testing.T) {
 	groupNr := uint64(1000)
 	groupDurMS := uint32(1000)
 
-	mg, err := GenSubtitleGroup(st, groupNr, groupDurMS)
+	mg, err := GenSubtitleGroup(st, groupNr, groupDurMS, "cmaf")
 	if err != nil {
 		t.Fatalf("GenSubtitleGroup failed: %v", err)
 	}
