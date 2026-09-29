@@ -1,4 +1,4 @@
-.PHONY: all build build-linux test coverage check check-licenses pre-commit pre-commit-install codespell clean install update
+.PHONY: all build mlmpub mlmsub mlmrel build-linux test coverage check check-licenses pre-commit pre-commit-install codespell clean install update
 
 LDFLAGS = -X github.com/Eyevinn/moqlivemock/internal.commitVersion=$$(git describe --tags HEAD 2>/dev/null || echo dev-$$(git rev-parse --short HEAD)) \
           -X github.com/Eyevinn/moqlivemock/internal.commitDate=$$(git log -1 --format=%ct)
