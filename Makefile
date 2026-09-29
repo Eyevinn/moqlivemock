@@ -1,18 +1,18 @@
 .PHONY: all build mlmpub mlmsub mlmrel build-linux test coverage check check-licenses pre-commit pre-commit-install codespell clean install update
 
-LDFLAGS = -X github.com/Eyevinn/moqlivemock/internal.commitVersion=$$(git describe --tags HEAD 2>/dev/null || echo dev-$$(git rev-parse --short HEAD)) \
-          -X github.com/Eyevinn/moqlivemock/internal.commitDate=$$(git log -1 --format=%ct)
-
 all: check build test
 
 # Add programs to build here. Should be placed in the cmd/ directory.
 build: mlmpub mlmsub mlmrel
 
+# Binaries are built in module mode, also inside a go.work workspace: they use
+# the dependencies in go.mod, and carry the version Go embeds from the git tag
+# and commit, which a workspace build does not (see internal/buildinfo.go).
 mlmpub mlmsub mlmrel:
-	go build -ldflags "$(LDFLAGS)" -o out/$@ ./cmd/$@
+	GOWORK=off go build -o out/$@ ./cmd/$@
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o out/mlmpub-linux ./cmd/mlmpub
+	GOOS=linux GOARCH=amd64 GOWORK=off go build -o out/mlmpub-linux ./cmd/mlmpub
 
 test:
 	go test -race ./...
@@ -48,9 +48,7 @@ clean:
 	rm -rf out/ coverage.out coverage.html coverage.txt venv/
 
 install:
-	go install -ldflags "$(LDFLAGS)" ./cmd/mlmpub
-	go install -ldflags "$(LDFLAGS)" ./cmd/mlmsub
-	go install -ldflags "$(LDFLAGS)" ./cmd/mlmrel
+	GOWORK=off go install ./cmd/mlmpub ./cmd/mlmsub ./cmd/mlmrel
 
 update:
 	go get -t -u ./...
