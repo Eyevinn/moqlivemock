@@ -85,7 +85,7 @@ func publishMoqMIVideo(ctx context.Context, publisher *moqtransport.Subscription
 		if ctx.Err() != nil {
 			return
 		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority,
+		sg, err := publisher.OpenSubgroup(groupNr, 0, VideoPriority,
 			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("moqmi: failed to open subgroup", "error", err)
@@ -189,7 +189,7 @@ func publishMoqMIAudio(ctx context.Context, publisher *moqtransport.Subscription
 		_, origNr := ct.CalcSample(frameNr)
 		sample := ct.Samples[origNr]
 
-		sg, err := publisher.OpenSubgroup(frameNr, 0, MediaPriority,
+		sg, err := publisher.OpenSubgroup(frameNr, 0, AudioPriority,
 			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("moqmi: failed to open audio subgroup", "error", err)

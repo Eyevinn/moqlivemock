@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- mlmpub and mlmrel schedule raw-QUIC streams by publisher priority: catalog 0,
+  audio and subtitles 64, video 128 (all were 128).
 - quic-go v0.62.0 and moqtransport v0.14.0, for stream priorities. Go 1.26 is
   now required, also in the mlmrel and mlmtest images.
 

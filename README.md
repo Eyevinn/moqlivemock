@@ -520,6 +520,20 @@ Example QUIC config:
 }
 ```
 
+### Stream priorities
+
+mlmpub gives each kind of track its own publisher priority, lower first: the
+catalog 0, audio and subtitles 64, and video 128. Over raw QUIC, moqtransport
+hands these to quic-go (v0.62.0 and later) as RFC 9218 urgencies below those
+of the control and request streams, so when the link is short the catalog goes
+first and audio and subtitles go ahead of video. mlmrel keeps each object's
+priority when it forwards it.
+
+The reduction takes the top two bits of a priority, so priorities 64 apart are
+always scheduled apart and closer ones may not be. Subscriber priority is not
+used. WebTransport sessions, and so browser playback, are not scheduled yet:
+webtransport-go has no stream priority to pass them to.
+
 ## Development
 
 Use plain Go environment, with go 1.25 or later.
