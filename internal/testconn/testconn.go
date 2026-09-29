@@ -28,12 +28,19 @@
 //	CloseWithError closes all tracked pipes (unblocking goroutines stuck in
 //	asyncPipe.Read) and cancels both the local and peer contexts. This is required
 //	by synctest, which panics if the test bubble exits with blocked goroutines.
+//
+// Priorities:
+//
+//	Streams implement moqtransport.PrioritizedStream, so a session hands them
+//	the urgency it would give a scheduling transport. Nothing schedules on it;
+//	Conn.Priorities reports it, for tests of what a session asked for.
 package testconn
 
 import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"sync"
 	"sync/atomic"
 
@@ -153,9 +160,39 @@ type Conn struct {
 	uniAccept   chan moqtransport.ReceiveStream // peer-opened unidirectional streams
 	streamID    atomic.Uint64
 
-	mu     sync.Mutex
-	pipes  []*asyncPipe // tracked for cleanup on close
-	closed bool
+	mu         sync.Mutex
+	pipes      []*asyncPipe        // tracked for cleanup on close
+	priorities map[uint64]Priority // by stream ID, for streams this side opened
+	closed     bool
+}
+
+var (
+	_ moqtransport.PrioritizedStream = (*stream)(nil)
+	_ moqtransport.PrioritizedStream = (*sendStream)(nil)
+)
+
+// Priority is what a stream was given through SetPriority: RFC 9218's
+// urgency and incremental flag.
+type Priority struct {
+	Urgency     int8
+	Incremental bool
+}
+
+// Priorities returns the latest priority set on each stream this side opened,
+// by stream ID. A stream never given one is absent.
+func (c *Conn) Priorities() map[uint64]Priority {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.priorities)
+}
+
+func (c *Conn) setPriority(id uint64, p Priority) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.priorities == nil {
+		c.priorities = make(map[uint64]Priority)
+	}
+	c.priorities[id] = p
 }
 
 func (c *Conn) AcceptStream(ctx context.Context) (moqtransport.Stream, error) {
@@ -197,7 +234,7 @@ func (c *Conn) OpenStreamSync(ctx context.Context) (moqtransport.Stream, error) 
 	c.peer.trackPipe(pipeAtoB)
 	c.peer.trackPipe(pipeBtoA)
 
-	local := &stream{id: id, r: pipeBtoA, w: pipeAtoB}
+	local := &stream{id: id, r: pipeBtoA, w: pipeAtoB, opener: c}
 	remote := &stream{id: id, r: pipeAtoB, w: pipeBtoA}
 
 	select {
@@ -223,7 +260,7 @@ func (c *Conn) OpenUniStreamSync(ctx context.Context) (moqtransport.SendStream, 
 	c.trackPipe(pipe)
 	c.peer.trackPipe(pipe)
 
-	local := &sendStream{id: id, w: pipe}
+	local := &sendStream{id: id, w: pipe, conn: c}
 	remote := &receiveStream{id: id, r: pipe}
 
 	select {
@@ -292,9 +329,10 @@ func (c *Conn) NegotiatedALPN() string {
 
 // stream implements moqtransport.Stream (bidirectional).
 type stream struct {
-	id uint64
-	r  *asyncPipe // read from peer
-	w  *asyncPipe // write to peer
+	id     uint64
+	r      *asyncPipe // read from peer
+	w      *asyncPipe // write to peer
+	opener *Conn      // set on the opening side, which records the priority
 }
 
 func (s *stream) Read(p []byte) (int, error)  { return s.r.Read(p) }
@@ -304,16 +342,29 @@ func (s *stream) Stop(uint32)                 { _ = s.r.CloseWithError(io.EOF) }
 func (s *stream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
 func (s *stream) StreamID() uint64            { return s.id }
 
+// SetPriority is recorded only on the side that opened the stream. Stream IDs
+// are counted per side, so the accepting side's ID could collide with one of
+// its own streams.
+func (s *stream) SetPriority(urgency int8, incremental bool) {
+	if s.opener != nil {
+		s.opener.setPriority(s.id, Priority{Urgency: urgency, Incremental: incremental})
+	}
+}
+
 // sendStream implements moqtransport.SendStream (write-only).
 type sendStream struct {
-	id uint64
-	w  *asyncPipe
+	id   uint64
+	w    *asyncPipe
+	conn *Conn // the opening side
 }
 
 func (s *sendStream) Write(p []byte) (int, error) { return s.w.Write(p) }
 func (s *sendStream) Close() error                { return s.w.Close() }
 func (s *sendStream) Reset(uint32)                { _ = s.w.CloseWithError(io.ErrClosedPipe) }
 func (s *sendStream) StreamID() uint64            { return s.id }
+func (s *sendStream) SetPriority(urgency int8, incremental bool) {
+	s.conn.setPriority(s.id, Priority{Urgency: urgency, Incremental: incremental})
+}
 
 // receiveStream implements moqtransport.ReceiveStream (read-only).
 type receiveStream struct {

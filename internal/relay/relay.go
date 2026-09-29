@@ -176,6 +176,10 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, disc
 		// upstream subgroup stream -- FIN or RESET -- rather than inferring
 		// ends from group numbering.
 		SubgroupEndEvents: true,
+		// Each re-emitted subgroup keeps the publisher priority it arrived
+		// with (forward.go), so scheduling on it keeps the origin's ordering
+		// across the hop. Subscriber priority is not honoured, as at mlmpub.
+		PriorityMapper: moqtransport.PublisherPriorityMapper,
 	}
 	session.PublishNamespaceHandler = h.publishNamespaceHandler(session)
 	session.SubscribeHandler = h.subscribeHandler()

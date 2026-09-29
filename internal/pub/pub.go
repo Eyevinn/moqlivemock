@@ -15,10 +15,6 @@ import (
 	"github.com/mengelbart/qlog"
 )
 
-const (
-	MediaPriority = 128
-)
-
 // NamespaceEntry pairs an announcement namespace with its catalog.
 type NamespaceEntry struct {
 	Namespace []string
@@ -52,6 +48,10 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		Implementation:            "Eyevinn/moqlivemock",
 		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
+		// The publisher priority is what varies per track (priority.go); the
+		// subscribers leave subscriber priority at its default. So the few
+		// urgency levels the transport has go to the publisher's priority.
+		PriorityMapper: moqtransport.PublisherPriorityMapper,
 	}
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
 	if err := session.Run(ctx, conn); err != nil {
@@ -227,10 +227,13 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 				slog.Error("failed to marshal catalog", "error", err)
 				return
 			}
+			// The priority travels with the object. It does not schedule the
+			// stream: a FETCH response can mix priorities, so moqtransport
+			// schedules it at the default publisher priority.
 			if err := response.WriteObject(moqtransport.Object{
 				GroupID:  0,
 				ObjectID: 0,
-				Priority: MediaPriority,
+				Priority: CatalogPriority,
 				Payload:  catalogJSON,
 			}); err != nil {
 				slog.Error("failed to write catalog via fetch", "error", err)
@@ -361,7 +364,7 @@ func (h *Handler) writeCatalog(subscription *moqtransport.Subscription, nsEntry 
 	if err != nil {
 		return fmt.Errorf("marshalling catalog: %w", err)
 	}
-	sg, err := subscription.OpenSubgroup(0, 0, MediaPriority, moqtransport.WithEndOfGroup())
+	sg, err := subscription.OpenSubgroup(0, 0, CatalogPriority, moqtransport.WithEndOfGroup())
 	if err != nil {
 		return fmt.Errorf("opening subgroup: %w", err)
 	}
@@ -392,7 +395,7 @@ func PublishTrack(ctx context.Context, publisher *moqtransport.Subscription,
 		if ctx.Err() != nil {
 			return
 		}
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority)
+		sg, err := publisher.OpenSubgroup(groupNr, 0, trackPriority(ct))
 		if err != nil {
 			slog.Error("failed to open subgroup", "error", err)
 			return
@@ -477,7 +480,7 @@ func PublishLOCTrack(ctx context.Context, publisher *moqtransport.Subscription,
 		// Every object on this stream carries a LOC Timestamp property, and
 		// draft-18 puts the PROPERTIES bit in the subgroup header rather than
 		// per object, so it has to be declared when the stream is opened.
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority,
+		sg, err := publisher.OpenSubgroup(groupNr, 0, trackPriority(ct),
 			moqtransport.WithObjectProperties())
 		if err != nil {
 			slog.Error("failed to open subgroup", "error", err)
@@ -560,7 +563,7 @@ func PublishSubtitleTrack(ctx context.Context, publisher *moqtransport.Subscript
 			return
 		}
 
-		sg, err := publisher.OpenSubgroup(groupNr, 0, MediaPriority)
+		sg, err := publisher.OpenSubgroup(groupNr, 0, SubtitlePriority)
 		if err != nil {
 			slog.Error("failed to open subgroup for subtitle", "error", err)
 			return
