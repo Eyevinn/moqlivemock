@@ -100,7 +100,7 @@ func main() {
 
 	// TAP v14 output
 	fmt.Println("TAP version 14")
-	fmt.Printf("# moqlivemock %s\n", internal.GetVersion())
+	fmt.Printf("# moqlivemock %s\n", internal.Version())
 	fmt.Printf("# Relay: %s\n", *relay)
 	fmt.Printf("# Draft: %d (ALPN: %s)\n", *draft, alpn)
 	fmt.Printf("1..%d\n", len(cases))

@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Subtitle groups carry one CMAF chunk per video object, each sent when its
   interval ends, instead of one object per second. Each format has its own
   altGroup.
+- `-version` shows the version Go embeds from the git tag and commit, also in
+  the Docker images; `internal/version.go` and the Makefile `-ldflags` are gone.
 
 ### Fixed
 

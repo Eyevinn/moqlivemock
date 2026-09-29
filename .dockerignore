@@ -1,4 +1,5 @@
-.git
+# .git stays in the build context: Go embeds the version from the git tag and
+# commit when it builds (see internal/buildinfo.go).
 venv
 out
 **/*.log

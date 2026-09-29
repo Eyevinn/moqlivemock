@@ -175,7 +175,7 @@ func parseLogLevel(level string) slog.Level {
 
 func runServer(opts *options) error {
 	if opts.version {
-		fmt.Printf("%s %s\n", appName, internal.GetVersion())
+		fmt.Printf("%s %s\n", appName, internal.Version())
 		return nil
 	}
 

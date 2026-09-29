@@ -16,7 +16,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # The full history with its tags: Go embeds the version from them.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
