@@ -71,7 +71,7 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		srcFrag, err := ct.createFragment(chunkNr, start, end, nil)
 		require.NoError(t, err)
 
-		obj, err := locmaf.EncodeCanonical(nil, srcFrag.Moof, srcFrag.Mdat.Data, encState, moovOf(ct))
+		obj, err := locmaf.EncodeCanonical(nil, srcFrag.Moof, srcFrag.Mdat.Payload(), encState, moovOf(ct))
 		require.NoError(t, err)
 
 		eff, raw, err := locmaf.Decode(obj, decState, moovOf(ct))
@@ -97,7 +97,7 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		require.NoError(t, err)
 		_, ok := box.(*mp4.MoofBox)
 		require.True(t, ok, "canonical chunk starts with a moof")
-		require.True(t, bytes.HasSuffix(chunk, srcFrag.Mdat.Data),
+		require.True(t, bytes.HasSuffix(chunk, srcFrag.Mdat.Payload()),
 			"mdat payload survives untouched")
 	}
 }
@@ -163,7 +163,7 @@ func TestLocmafEncryptedSencRoundTrip(t *testing.T) {
 				}
 				srcSubs := append([][]mp4.SubSamplePattern(nil), srcSenc.SubSamples...)
 
-				obj, err := locmaf.EncodeCanonical(nil, encFrag.Moof, encFrag.Mdat.Data, encState, moov)
+				obj, err := locmaf.EncodeCanonical(nil, encFrag.Moof, encFrag.Mdat.Payload(), encState, moov)
 				require.NoError(t, err)
 
 				eff, raw, err := locmaf.Decode(obj, decState, moov)
@@ -207,16 +207,13 @@ func TestLocmafEncryptedSencRoundTrip(t *testing.T) {
 	}
 }
 
-// encryptViaTrack serialises the fragment and encrypts it the way
-// GenLocmafChunk does.
+// encryptViaTrack encrypts the fragment in place the way GenLocmafChunk
+// does, and returns it.
 func encryptViaTrack(ct *ContentTrack, frag *mp4.Fragment) (*mp4.Fragment, error) {
-	size := frag.Size()
-	buf := make([]byte, 0, size)
-	w := bytes.NewBuffer(buf)
-	if err := frag.Encode(w); err != nil {
+	if err := ct.encryptFragment(frag); err != nil {
 		return nil, err
 	}
-	return ct.encryptFragment(w.Bytes())
+	return frag, nil
 }
 
 // firstProtectedVideoTrack returns the first encrypted video track in

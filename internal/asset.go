@@ -1159,23 +1159,12 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *c
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	size := f.Size()
-	sw := bits.NewFixedSliceWriter(int(size))
-	err = f.EncodeSW(sw)
-	if err != nil {
+	if err := t.encryptFragment(f); err != nil {
 		return nil, err
 	}
-
-	if len(t.contentProtectionRefIDs) > 0 {
-		encrypted, err := t.encryptFragment(sw.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		sw = bits.NewFixedSliceWriter(int(encrypted.Size()))
-		err = encrypted.EncodeSW(sw)
-		if err != nil {
-			return nil, fmt.Errorf("unable to encode encrypted fragment: %w", err)
-		}
+	sw := bits.NewFixedSliceWriter(int(f.Size()))
+	if err := f.EncodeSW(sw); err != nil {
+		return nil, err
 	}
 	return sw.Bytes(), nil
 }
@@ -1194,21 +1183,11 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-
-	size := f.Size()
-	sw := bits.NewFixedSliceWriter(int(size))
-	if err := f.EncodeSW(sw); err != nil {
+	if err := t.encryptFragment(f); err != nil {
 		return nil, err
 	}
 
-	if len(t.contentProtectionRefIDs) > 0 {
-		f, err = t.encryptFragment(sw.Bytes())
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	obj, err := locmaf.EncodeCanonical(nil, f.Moof, f.Mdat.Data, state, t.SpecData.GetInit().Moov)
+	obj, err := locmaf.EncodeCanonical(nil, f.Moof, f.Mdat.Payload(), state, t.SpecData.GetInit().Moov)
 	if err != nil {
 		return nil, fmt.Errorf("unable to encode LOCMAF object: %w", err)
 	}
@@ -1228,6 +1207,8 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc 
 	if err != nil {
 		return nil, err
 	}
+	var buf [4]mp4.FullSample // room for the usual batch sizes without allocating
+	samples := buf[:0]
 	for sampleNr := startNr; sampleNr < endNr; sampleNr++ {
 		startTime, origNr := t.CalcSample(uint64(sampleNr))
 		orig := t.Samples[origNr]
@@ -1249,7 +1230,7 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc 
 		// it preserves the correct per-sample dur on the wire — using
 		// t.SampleDur would over-claim the duration of the short sample and
 		// confuse strict audio renderers (Safari).
-		fs := mp4.FullSample{
+		samples = append(samples, mp4.FullSample{
 			Sample: mp4.Sample{
 				Flags: orig.Flags,
 				Dur:   orig.Dur,
@@ -1257,17 +1238,41 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc 
 			},
 			DecodeTime: startTime,
 			Data:       data,
-		}
-		f.AddFullSample(fs)
+		})
 	}
-	// OptimizeTrun promotes constant per-sample fields (duration, flags) into
-	// tfhd defaults so the trun only carries what actually varies. For audio
-	// (constant duration, all sync) this drops per-sample overhead from 16 B
-	// to 4 B; for video (1 sample per chunk in the default config) the saving
-	// is on the trun box header.
-	f.EncOptimize = mp4.OptimizeTrun
+	if t.isProtected() {
+		// Encryption works in place, so a protected track copies the sample
+		// data into the fragment. t.Samples is shared by every track and
+		// subscription made from the same file, and must stay in the clear.
+		size := 0
+		for i := range samples {
+			size += len(samples[i].Data)
+		}
+		f.Mdat.SetData(make([]byte, 0, size))
+		for i := range samples {
+			f.AddFullSample(samples[i])
+		}
+	} else {
+		// The fragment references the sample data, which are copied only
+		// when the chunk is encoded.
+		f.AddFullSamples(samples)
+	}
+	// OptimizeTfhdTrun promotes constant per-sample fields (duration, flags)
+	// into tfhd defaults so the trun only carries what actually varies. For
+	// audio (constant duration, all sync) this drops per-sample overhead from
+	// 16 B to 4 B; for video (1 sample per chunk in the default config) the
+	// saving is on the trun box header. It must run before encryption, which
+	// sets the saio offset from the sizes of the boxes before senc.
+	if err := f.Moof.Traf.OptimizeTfhdTrun(); err != nil {
+		return nil, err
+	}
 	f.SetTrunDataOffsets()
 	return f, nil
+}
+
+// isProtected reports whether the track is encrypted.
+func (t *ContentTrack) isProtected() bool {
+	return len(t.contentProtectionRefIDs) > 0
 }
 
 // CalcSample calculates the start time and original sample number for a given output sample number.
@@ -1286,43 +1291,23 @@ func (t *ContentTrack) CalcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts an encoded fragment and returns the decoded fragment.
-// mp4.EncryptFragment returns the next IV to use; we store it on the track so consecutive
-// fragments chain without IV reuse (cenc) or carry the constant IV forward (cbcs).
-func (t *ContentTrack) encryptFragment(fragmentBytes []byte) (*mp4.Fragment, error) {
-	bytesReader := bytes.NewReader(fragmentBytes)
-	var pos uint64 = 0
-	moofBox, err := mp4.DecodeBox(pos, bytesReader)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode moof: %w", err)
+// encryptFragment encrypts a fragment from createFragment in place, if the
+// track is protected. mp4.EncryptFragment returns the next IV to use; we store
+// it on the track so consecutive fragments chain without IV reuse (cenc) or
+// carry the constant IV forward (cbcs).
+func (t *ContentTrack) encryptFragment(f *mp4.Fragment) error {
+	if !t.isProtected() {
+		return nil
 	}
-	moof, ok := moofBox.(*mp4.MoofBox)
-	if !ok {
-		return nil, fmt.Errorf("expected moof box, got %T", moofBox)
-	}
-	pos += moof.Size()
-	mdatBox, err := mp4.DecodeBox(pos, bytesReader)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode mdat: %w", err)
-	}
-	mdat, ok := mdatBox.(*mp4.MdatBox)
-	if !ok {
-		return nil, fmt.Errorf("expected mdat box, got %T", mdatBox)
-	}
-
-	decodedFrag := mp4.NewFragment()
-	decodedFrag.AddChild(moof)
-	decodedFrag.AddChild(mdat)
-
 	if t.currentIV == nil {
 		t.currentIV = append([]byte(nil), t.cenc.iv...)
 	}
-	nextIV, err := mp4.EncryptFragment(decodedFrag, t.cenc.key, t.currentIV, t.ipd)
+	nextIV, err := mp4.EncryptFragment(f, t.cenc.key, t.currentIV, t.ipd)
 	if err != nil {
-		return nil, fmt.Errorf("unable to encrypt fragment: %w", err)
+		return fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
 	t.currentIV = nextIV
-	return decodedFrag, nil
+	return nil
 }
 
 // DecryptInit decrypts an encoded init segment
