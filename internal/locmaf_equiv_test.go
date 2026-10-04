@@ -54,7 +54,7 @@ func runIntegrationTrack(t *testing.T, ct *ContentTrack) {
 		if end > uint64(len(ct.Samples)) {
 			return
 		}
-		_, err := ct.GenLocmafChunk(chunkNr, start, end, state, nil)
+		_, err := ct.GenLocmafChunk(chunkNr, start, end, state, nil, nil)
 		require.NoError(t, err)
 	}
 
@@ -210,7 +210,7 @@ func TestLocmafEncryptedSencRoundTrip(t *testing.T) {
 // encryptViaTrack encrypts the fragment in place the way GenLocmafChunk
 // does, and returns it.
 func encryptViaTrack(ct *ContentTrack, frag *mp4.Fragment) (*mp4.Fragment, error) {
-	if err := ct.encryptFragment(frag); err != nil {
+	if err := ct.encryptFragment(frag, nil); err != nil {
 		return nil, err
 	}
 	return frag, nil
