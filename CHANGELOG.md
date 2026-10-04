@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- mlmpub generates CMAF and LOCMAF media about twice as fast with half the
+  allocations, most for encrypted tracks, which are no longer re-encoded.
 - mp4ff v0.58.0.
 
 ## [0.16.1] - 2026-09-30
