@@ -371,6 +371,19 @@ func initAV1Data(init *mp4.InitSegment, samples []mp4.FullSample) (*AV1Data, err
 	}
 	av1C := av01.Av1C
 
+	// SVT-AV1/ffmpeg repeat the sequence header OBU in each key frame's
+	// temporal unit. When they do, it is the one that applies to the samples,
+	// so av1C is built from it: an mp4 from ffmpeg and libsvtav1 has an av1C
+	// sequence header with tools turned off that the frames use, and parsing
+	// frame headers with it, as encryption does, misreads them.
+	seqOBU, inBand := keyframeAV1SeqHeader(samples)
+	if inBand {
+		var err error
+		if av1C, err = av1CWithSequenceHeader(av1C, seqOBU); err != nil {
+			return nil, err
+		}
+	}
+
 	sh, err := av1C.SequenceHeader()
 	if err != nil {
 		return nil, fmt.Errorf("could not parse AV1 sequence header: %w", err)
@@ -381,10 +394,10 @@ func initAV1Data(init *mp4.InitSegment, samples []mp4.FullSample) (*AV1Data, err
 	ad.configOBUs = append([]byte(nil), av1C.ConfigOBUs...)
 
 	// Decide whether LOC needs the sequence header prepended in-band. LOC has
-	// no init segment, so every keyframe must be self-contained. SVT-AV1/ffmpeg
-	// repeat the sequence header OBU in each key frame's temporal unit, in which
-	// case no prepend is needed; muxers that keep it only in av1C need one.
-	ad.locNeedsConfig = !keyframeHasAV1SeqHeader(samples)
+	// no init segment, so every keyframe must be self-contained, which it is
+	// when it carries its own sequence header; muxers that keep it only in
+	// av1C need one.
+	ad.locNeedsConfig = !inBand
 
 	// Create a CMAF-compliant init segment (av01) from the av1C config box.
 	ad.outInit = mp4.CreateEmptyInit()
@@ -398,19 +411,60 @@ func initAV1Data(init *mp4.InitSegment, samples []mp4.FullSample) (*AV1Data, err
 	return ad, nil
 }
 
-// keyframeHasAV1SeqHeader reports whether the first sync sample begins with an
-// AV1 sequence-header OBU (i.e. the coded keyframes already carry the decoder
-// config in-band). Returns false if there is no sync sample or it cannot be
-// parsed, so the caller conservatively prepends the config for LOC.
-func keyframeHasAV1SeqHeader(samples []mp4.FullSample) bool {
+// keyframeAV1SeqHeader returns the sequence header OBU of the first sync
+// sample, which comes before its first frame header, possibly after metadata
+// OBUs. ok is false if there is no sync sample, it cannot be parsed, or it has
+// no sequence header, so that the caller conservatively uses av1C and
+// prepends the config for LOC.
+func keyframeAV1SeqHeader(samples []mp4.FullSample) (seqOBU av1.OBU, ok bool) {
 	for i := range samples {
 		if !samples[i].IsSync() {
 			continue
 		}
-		hdr, err := av1.ParseOBUHeader(samples[i].Data)
-		return err == nil && hdr.Type == av1.OBUSequenceHeader
+		obus, err := av1.SplitOBUs(samples[i].Data)
+		if err != nil {
+			return av1.OBU{}, false
+		}
+		for _, o := range obus {
+			switch o.Header.Type {
+			case av1.OBUSequenceHeader:
+				return o, true
+			case av1.OBUFrame, av1.OBUFrameHeader:
+				return av1.OBU{}, false
+			}
+		}
+		return av1.OBU{}, false
 	}
-	return false
+	return av1.OBU{}, false
+}
+
+// av1CWithSequenceHeader returns av1C with seqOBU as its sequence header, and
+// the fields that must match it (profile, level, tier, bit depth and chroma
+// format) taken from it. Other config OBUs, such as metadata, are kept. av1C
+// is returned unchanged if it already has this sequence header.
+func av1CWithSequenceHeader(av1C *mp4.Av1CBox, seqOBU av1.OBU) (*mp4.Av1CBox, error) {
+	obus, err := av1.SplitOBUs(av1C.ConfigOBUs)
+	if err != nil {
+		return nil, fmt.Errorf("could not split av1C config OBUs: %w", err)
+	}
+	configOBUs := seqOBU.Encode()
+	for _, o := range obus {
+		if o.Header.Type == av1.OBUSequenceHeader {
+			if bytes.Equal(o.Payload, seqOBU.Payload) {
+				return av1C, nil
+			}
+			continue
+		}
+		configOBUs = append(configOBUs, o.Encode()...)
+	}
+	sh, err := av1.ParseSequenceHeader(seqOBU.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse keyframe AV1 sequence header: %w", err)
+	}
+	rec := av1.CodecConfRecFromSequenceHeader(sh, configOBUs)
+	rec.InitialPresentationDelayPresent = av1C.InitialPresentationDelayPresent
+	rec.InitialPresentationDelayMinusOne = av1C.InitialPresentationDelayMinusOne
+	return &mp4.Av1CBox{CodecConfRec: rec}, nil
 }
 
 // GenCMAFInitData returns the CMAF init segment.

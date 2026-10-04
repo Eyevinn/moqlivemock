@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Encrypted AV1 tracks now encrypt each MoQ group as one sequence, so the
-  protected ranges of inter frames account for the reference frames.
+- Encrypted AV1 tracks left the wrong bytes in the clear. Each MoQ group is now
+  encrypted as one sequence, and av1C holds the keyframes' sequence header.
 
 ## [0.16.1] - 2026-09-30
 
