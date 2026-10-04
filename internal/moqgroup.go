@@ -52,13 +52,20 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 	// disabled/absent generator, a non-video track, or a codec with no caption
 	// carriage, in which case createFragment does no splicing at all.
 	cc := track.newGroupCCSplice(groupNr, startNr, endNr)
+	// A group starts at a random-access point, so its chunks are one decode
+	// sequence for encryption, which AV1 needs to carry reference-frame state
+	// from chunk to chunk. enc is nil for a clear track.
+	enc, err := track.newEncryptor()
+	if err != nil {
+		return nil, err
+	}
 	v02State := locmaf.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)
 		switch packaging {
 		case "cmaf":
-			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample, cc)
+			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample, cc, enc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
@@ -67,7 +74,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		case "locmaf":
 			// "locmaf" packaging is LOCMAF (versioned by locmafVersion).
-			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State, cc)
+			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State, cc, enc)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
@@ -75,6 +82,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		}
 	}
+	track.endEncryption(enc)
 	return mq, nil
 }
 

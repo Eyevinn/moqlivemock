@@ -1037,7 +1037,7 @@ func calcCmafBitrate(ct *ContentTrack) (int, error) {
 	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
 		return int(ct.SampleBitrate), nil
 	}
-	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch), nil)
+	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch), nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure CMAF chunk for %s: %w", ct.Name, err)
 	}
@@ -1067,11 +1067,11 @@ func calcLocmafBitrate(ct *ContentTrack) (int, error) {
 		return int(ct.SampleBitrate), nil
 	}
 	state := locmaf.NewState()
-	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state, nil)
+	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF full chunk for %s: %w", ct.Name, err)
 	}
-	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state, nil)
+	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF delta chunk for %s: %w", ct.Name, err)
 	}
@@ -1154,12 +1154,15 @@ type ccSplice struct {
 // [nr*d.sampleDur, (nr+1)*d.sampleDur].
 // This is calculated based on wrap-around given the loopDuration
 // of the asset. cc is the optional per-group caption schedule (nil = no captions).
-func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *ccSplice) ([]byte, error) {
+// enc is the encryptor of the chunk's MoQ group for a protected track (nil =
+// encrypt the chunk on its own, see encryptFragment).
+func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *ccSplice,
+	enc *mp4.FragmentEncryptor) ([]byte, error) {
 	f, err := t.createFragment(chunkNr, startNr, endNr, cc)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	if err := t.encryptFragment(f); err != nil {
+	if err := t.encryptFragment(f, enc); err != nil {
 		return nil, err
 	}
 	sw := bits.NewFixedSliceWriter(int(f.Size()))
@@ -1173,8 +1176,9 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *c
 // followed by the raw mdat payload) for endNr-startNr samples, using
 // `state` as the in-group reference: an empty state yields a full
 // header, subsequent calls with the same state yield delta headers.
+// cc and enc are as for GenCMAFChunk.
 func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
-	state *locmaf.State, cc *ccSplice) ([]byte, error) {
+	state *locmaf.State, cc *ccSplice, enc *mp4.FragmentEncryptor) ([]byte, error) {
 	if state == nil {
 		return nil, fmt.Errorf("locmaf state is nil")
 	}
@@ -1183,7 +1187,7 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
-	if err := t.encryptFragment(f); err != nil {
+	if err := t.encryptFragment(f, enc); err != nil {
 		return nil, err
 	}
 
@@ -1291,22 +1295,54 @@ func (t *ContentTrack) CalcSample(nr uint64) (startTime, origNr uint64) {
 	return startTime, origNr
 }
 
-// encryptFragment encrypts a fragment from createFragment in place, if the
-// track is protected. mp4.EncryptFragment returns the next IV to use; we store
-// it on the track so consecutive fragments chain without IV reuse (cenc) or
-// carry the constant IV forward (cbcs).
-func (t *ContentTrack) encryptFragment(f *mp4.Fragment) error {
+// newEncryptor returns the encryptor of one decode sequence of a protected
+// track, such as a MoQ group, which starts at a random-access point. It
+// continues the IV chain of the track, and returns nil for a clear track. The
+// fragments of the sequence must be encrypted with it in decode order, and
+// endEncryption called after the last one.
+func (t *ContentTrack) newEncryptor() (*mp4.FragmentEncryptor, error) {
 	if !t.isProtected() {
-		return nil
+		return nil, nil
 	}
 	if t.currentIV == nil {
 		t.currentIV = append([]byte(nil), t.cenc.iv...)
 	}
-	nextIV, err := mp4.EncryptFragment(f, t.cenc.key, t.currentIV, t.ipd)
+	enc, err := t.ipd.NewFragmentEncryptor(t.cenc.key, t.currentIV)
 	if err != nil {
+		return nil, fmt.Errorf("unable to create encryptor: %w", err)
+	}
+	return enc, nil
+}
+
+// endEncryption stores the next IV of enc on the track, so that the next
+// sequence chains without IV reuse (cenc) or carries the constant IV forward
+// (cbcs).
+func (t *ContentTrack) endEncryption(enc *mp4.FragmentEncryptor) {
+	if enc != nil {
+		t.currentIV = enc.IV()
+	}
+}
+
+// encryptFragment encrypts a fragment from createFragment in place with enc,
+// if the track is protected. A nil enc encrypts the fragment as a sequence of
+// its own, as for a chunk made outside a MoQ group.
+func (t *ContentTrack) encryptFragment(f *mp4.Fragment, enc *mp4.FragmentEncryptor) error {
+	if !t.isProtected() {
+		return nil
+	}
+	own := enc == nil
+	if own {
+		var err error
+		if enc, err = t.newEncryptor(); err != nil {
+			return err
+		}
+	}
+	if err := enc.EncryptFragment(f); err != nil {
 		return fmt.Errorf("unable to encrypt fragment: %w", err)
 	}
-	t.currentIV = nextIV
+	if own {
+		t.endEncryption(enc)
+	}
 	return nil
 }
 
