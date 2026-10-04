@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- mp4ff v0.58.0.
+
 ## [0.16.1] - 2026-09-30
 
 Safari has not been able to play from mlmpub since v0.13.0: the WebTransport
