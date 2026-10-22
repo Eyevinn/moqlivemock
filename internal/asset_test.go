@@ -519,7 +519,7 @@ func TestGen20sCMAFStreams(t *testing.T) {
 			nrSamples := int(20 * tr.TimeScale / tr.SampleDur)
 			groupNr := uint32(0)
 			for nr := range nrSamples {
-				chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1), nil, nil)
+				chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1), nil, nil, nil)
 				require.NoError(t, err)
 				_, err = ofh.Write(chunk)
 				require.NoError(t, err)
@@ -663,7 +663,7 @@ func checkDecryptedTracksMatchExactly(t *testing.T, drm *DRMInfo, suffix string)
 				nrSamples := int(3 * tr.TimeScale / tr.SampleDur)
 				groupNr := uint32(0)
 				for nr := range nrSamples {
-					chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1), nil, nil)
+					chunk, err := tr.GenCMAFChunk(groupNr, uint64(nr), uint64(nr+1), nil, nil, nil)
 					if err != nil {
 						t.Fatalf("chunk generation failed for track=%s codec=%s scheme=%s encStatus=%s chunkNr=%d: %v",
 							tr.Name, tr.SpecData.Codec(), drm.ContentProtections[0].Scheme, encryptionStatus, nr, err)

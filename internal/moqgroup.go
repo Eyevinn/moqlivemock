@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Eyevinn/locmaf"
+	"github.com/Eyevinn/mp4ff/mp4"
 
 	"github.com/Eyevinn/moqlivemock/internal/cc608"
 )
@@ -59,13 +60,19 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 	if err != nil {
 		return nil, err
 	}
+	// One fragment for the whole group, reset for each chunk: each chunk is
+	// encoded into bytes of its own before the next is made.
+	frag, err := mp4.CreateFragment(uint32(groupNr), trackID)
+	if err != nil {
+		return nil, err
+	}
 	v02State := locmaf.NewState()
 	for i := startNr; i < endNr; i += uint64(sampleBatch) {
 		firstSample := i
 		endSample := min(i+uint64(sampleBatch), endNr)
 		switch packaging {
 		case "cmaf":
-			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample, cc, enc)
+			chunk, err := track.GenCMAFChunk(uint32(groupNr), firstSample, endSample, cc, enc, frag)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate CMAF chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)
@@ -74,7 +81,7 @@ func GenMoQGroup(track *ContentTrack, groupNr uint64, sampleBatch int,
 			mq.MoQObjects = append(mq.MoQObjects, chunk)
 		case "locmaf":
 			// "locmaf" packaging is LOCMAF (versioned by locmafVersion).
-			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State, cc, enc)
+			chunk, err := track.GenLocmafChunk(uint32(groupNr), firstSample, endSample, v02State, cc, enc, frag)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate locmaf chunk for group %d, samples %d-%d: %w",
 					groupNr, firstSample, endSample, err)

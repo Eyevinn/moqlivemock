@@ -1037,7 +1037,7 @@ func calcCmafBitrate(ct *ContentTrack) (int, error) {
 	if batch == 0 || ct.SampleDur == 0 || ct.TimeScale == 0 {
 		return int(ct.SampleBitrate), nil
 	}
-	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch), nil, nil)
+	chunk, err := ct.GenCMAFChunk(0, 0, uint64(batch), nil, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure CMAF chunk for %s: %w", ct.Name, err)
 	}
@@ -1067,11 +1067,11 @@ func calcLocmafBitrate(ct *ContentTrack) (int, error) {
 		return int(ct.SampleBitrate), nil
 	}
 	state := locmaf.NewState()
-	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state, nil, nil)
+	fullChunk, err := ct.GenLocmafChunk(0, 0, uint64(batch), state, nil, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF full chunk for %s: %w", ct.Name, err)
 	}
-	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state, nil, nil)
+	deltaChunk, err := ct.GenLocmafChunk(1, uint64(batch), 2*uint64(batch), state, nil, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("measure LOCMAF delta chunk for %s: %w", ct.Name, err)
 	}
@@ -1156,9 +1156,10 @@ type ccSplice struct {
 // of the asset. cc is the optional per-group caption schedule (nil = no captions).
 // enc is the encryptor of the chunk's MoQ group for a protected track (nil =
 // encrypt the chunk on its own, see encryptFragment).
+// frag, when not nil, is reset and reused to build the chunk (see createFragment).
 func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *ccSplice,
-	enc *mp4.FragmentEncryptor) ([]byte, error) {
-	f, err := t.createFragment(chunkNr, startNr, endNr, cc)
+	enc *mp4.FragmentEncryptor, frag *mp4.Fragment) ([]byte, error) {
+	f, err := t.createFragment(frag, chunkNr, startNr, endNr, cc)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
@@ -1176,14 +1177,14 @@ func (t *ContentTrack) GenCMAFChunk(chunkNr uint32, startNr, endNr uint64, cc *c
 // followed by the raw mdat payload) for endNr-startNr samples, using
 // `state` as the in-group reference: an empty state yields a full
 // header, subsequent calls with the same state yield delta headers.
-// cc and enc are as for GenCMAFChunk.
+// cc, enc and frag are as for GenCMAFChunk.
 func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
-	state *locmaf.State, cc *ccSplice, enc *mp4.FragmentEncryptor) ([]byte, error) {
+	state *locmaf.State, cc *ccSplice, enc *mp4.FragmentEncryptor, frag *mp4.Fragment) ([]byte, error) {
 	if state == nil {
 		return nil, fmt.Errorf("locmaf state is nil")
 	}
 
-	f, err := t.createFragment(chunkNr, startNr, endNr, cc)
+	f, err := t.createFragment(frag, chunkNr, startNr, endNr, cc)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create fragment: %w", err)
 	}
@@ -1206,9 +1207,21 @@ func (t *ContentTrack) GenLocmafChunk(chunkNr uint32, startNr, endNr uint64,
 // in the callers — so the captions ride inside the encrypted payload. A nil cc
 // (or one whose schedule does not cover the frame) leaves the sample data
 // untouched, i.e. a complete no-op.
-func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc *ccSplice) (*mp4.Fragment, error) {
-	f, err := mp4.CreateFragment(chunkNr, trackID)
-	if err != nil {
+//
+// A nil f creates a new fragment. Otherwise f, made by mp4.CreateFragment for
+// trackID, is reset and returned, reusing its boxes, its encryption boxes and
+// the buffer a protected track's sample data are copied into, so making chunk
+// after chunk in one fragment allocates it once. Nothing taken from f for the
+// previous chunk may be in use: the callers encode each chunk into bytes of
+// its own before making the next.
+func (t *ContentTrack) createFragment(f *mp4.Fragment, chunkNr uint32, startNr, endNr uint64,
+	cc *ccSplice) (*mp4.Fragment, error) {
+	if f == nil {
+		var err error
+		if f, err = mp4.CreateFragment(chunkNr, trackID); err != nil {
+			return nil, err
+		}
+	} else if err := f.Reset(chunkNr); err != nil {
 		return nil, err
 	}
 	var buf [4]mp4.FullSample // room for the usual batch sizes without allocating
@@ -1248,11 +1261,8 @@ func (t *ContentTrack) createFragment(chunkNr uint32, startNr, endNr uint64, cc 
 		// Encryption works in place, so a protected track copies the sample
 		// data into the fragment. t.Samples is shared by every track and
 		// subscription made from the same file, and must stay in the clear.
-		size := 0
-		for i := range samples {
-			size += len(samples[i].Data)
-		}
-		f.Mdat.SetData(make([]byte, 0, size))
+		// The mdat allocates the copy itself, rather than being given a
+		// buffer, so that Reset keeps it for the next chunk.
 		for i := range samples {
 			f.AddFullSample(samples[i])
 		}
