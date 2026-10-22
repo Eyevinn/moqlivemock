@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-22
+
+mlmtest, mlmsub and mlmrel now reach relays that route on the path, such as
+cdn.moq.dev, over both native QUIC and WebTransport, and a relay that refuses a
+session is reported at once with its reason. mlmpub generates media in less than
+half the time, and encrypted AV1 tracks leave the right bytes in the clear. The
+paint-model subtitle init segments gain a `ttma` box, and mlmsub `-addr` accepts
+`moqt://` URLs.
+
 ### Changed
 
 - mlmpub generates CMAF and LOCMAF media in less than half the time, with about
@@ -845,7 +854,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.1...v0.16.0
 [0.15.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.0...v0.15.1
