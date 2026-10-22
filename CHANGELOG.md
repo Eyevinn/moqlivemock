@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Encrypted AV1 tracks left the wrong bytes in the clear. Each MoQ group is now
   encrypted as one sequence, and av1C holds the keyframes' sequence header.
+- mlmsub and mlmrel could not open a WebTransport session to any public relay
+  (moq-rs, cdn.moq.dev, Cloudflare, moxygen) because the client sent the draft-15
+  `webtransport-h3` token; they now send the legacy token those relays accept.
+  The webtransport-go fork is rebased onto upstream v0.13.0.
 
 ## [0.16.1] - 2026-09-30
 

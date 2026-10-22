@@ -96,7 +96,11 @@ func dialUpstream(ctx context.Context, rawURL string) (moqtransport.Connection, 
 			// draft-ietf-webtrans-http3-16 requires, so don't insist the peer
 			// has it.
 			AllowPeerWithoutPartialDelivery: true,
-			ApplicationProtocols:            moqtransport.SupportedALPNs(),
+			// Every deployed WebTransport relay we have met, the web-transport-quinn based
+			// ones (moq-rs, cdn.moq.dev, Cloudflare) and moxygen alike, still rejects the
+			// draft-15 "webtransport-h3" :protocol token, so send the legacy "webtransport".
+			LegacyConnectProtocol: true,
+			ApplicationProtocols:  moqtransport.SupportedALPNs(),
 		}
 		_, session, err := dialer.Dial(ctx, u.String(), nil)
 		if err != nil {
