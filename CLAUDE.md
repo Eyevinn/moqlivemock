@@ -164,6 +164,6 @@ RELAY_URL=moqt://relay:443 TESTCASE=setup-only TLS_DISABLE_VERIFY=1 go run ./cmd
 
 The URL's scheme picks the transport: `moqt://` is native QUIC, with the URL's
 authority and path sent as the AUTHORITY and PATH setup options, and `https://`
-is WebTransport. Both go through `internal.RelayURL`, which mlmrel's
-`-upstream` uses too.
+is WebTransport. Both go through `internal.RelayURL`, as do mlmsub's `-addr`
+and mlmrel's `-upstream`.
 

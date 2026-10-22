@@ -38,6 +38,11 @@ type Handler struct {
 	// QlogFilter selects which qlog events reach Logfh; nil writes them all.
 	// Build one with qlogfilter.ParseClasses.
 	QlogFilter func(qlog.Event) bool
+	// Path and Authority are the PATH and AUTHORITY setup options, which a
+	// client sends over native QUIC when the URL it dialled has them
+	// (internal.RelayURL). Empty sends neither.
+	Path      string
+	Authority string
 
 	catalog    *internal.Catalog
 	mux        *CmafMux
@@ -133,6 +138,8 @@ func (h *Handler) startSession(ctx context.Context, conn moqtransport.Connection
 	session := &moqtransport.Session{
 		PublishNamespaceHandler: h.getPublishNamespaceHandler(),
 		Implementation:          "Eyevinn/moqlivemock",
+		Path:                    h.Path,
+		Authority:               h.Authority,
 		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
 	}

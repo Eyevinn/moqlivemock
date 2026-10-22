@@ -2,94 +2,34 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"io"
-	"net"
-	"net/url"
+	"strings"
 
+	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
-	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/quicmoq"
-	"github.com/Eyevinn/moqtransport/webtransportmoq"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/webtransport-go"
 )
 
-func runClientWithDial(
-	ctx context.Context, addr string, useWebTransport bool, alpn string, h *sub.Handler, outs map[string]io.Writer,
-) error {
-	var conn moqtransport.Connection
-	var err error
-	if useWebTransport {
-		conn, err = dialWebTransport(ctx, addr, alpn)
-	} else {
-		conn, err = dialQUIC(ctx, addr, alpn)
+// relayURL reads -addr: a moqt:// or https:// URL, or a bare host[:port],
+// which is short for moqt://host[:port].
+func relayURL(addr string) (internal.RelayURL, error) {
+	if !strings.Contains(addr, "://") {
+		addr = "moqt://" + addr
 	}
+	return internal.ParseRelayURL(addr)
+}
+
+// runClientWithDial connects to the relay and runs the subscriber on the
+// connection, offering alpn as the only MOQT version. It does not verify the
+// server certificate: the peers are test servers on self-signed certificates.
+func runClientWithDial(
+	ctx context.Context, relay internal.RelayURL, alpn string, h *sub.Handler, outs map[string]io.Writer,
+) error {
+	conn, err := relay.Dial(ctx, internal.DialConfig{SkipVerify: true, ALPNs: []string{alpn}})
 	if err != nil {
 		return err
 	}
 	h.Outs = outs
+	h.Path = relay.Path()
+	h.Authority = relay.Authority()
 	return h.RunWithConn(ctx, conn)
-}
-
-func ensurePort(addr, defaultPort string) string {
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return net.JoinHostPort(addr, defaultPort)
-	}
-	return addr
-}
-
-func ensureURLPort(rawURL, defaultPort string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return rawURL
-	}
-	if u.Port() == "" {
-		u.Host = net.JoinHostPort(u.Hostname(), defaultPort)
-		return u.String()
-	}
-	return rawURL
-}
-
-func dialQUIC(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
-	addr = ensurePort(addr, "443")
-	conn, err := quic.DialAddr(ctx, addr, &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{alpn},
-	}, &quic.Config{
-		EnableDatagrams:                  true,
-		EnableStreamResetPartialDelivery: true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return quicmoq.NewClient(conn), nil
-}
-
-func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
-	// webtransport-go (Eyevinn fork on v0.13.0) sends and accepts the legacy
-	// WEBTRANSPORT_MAX_SESSIONS codepoint itself, so deployed web-transport-quinn
-	// relays (moq-rs / cdn.moq.dev, Cloudflare) interoperate without extra setup.
-	dialer := webtransport.Transport{
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: true,
-		},
-		QUICConfig: &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-		},
-		// quinn doesn't implement the QUIC RESET_STREAM_AT extension that
-		// draft-ietf-webtrans-http3-16 requires, so don't insist the peer has it.
-		AllowPeerWithoutPartialDelivery: true,
-		// Every deployed WebTransport relay we have met, the web-transport-quinn based
-		// ones (moq-rs, cdn.moq.dev, Cloudflare) and moxygen alike, still rejects the
-		// draft-15 "webtransport-h3" :protocol token, so send the legacy "webtransport".
-		LegacyConnectProtocol: true,
-		ApplicationProtocols:  []string{alpn},
-	}
-	_, session, err := dialer.Dial(ctx, ensureURLPort(addr, "443"), nil)
-	if err != nil {
-		return nil, err
-	}
-	return webtransportmoq.NewClient(session), nil
 }
