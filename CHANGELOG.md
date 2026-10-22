@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (moq-rs, cdn.moq.dev, Cloudflare, moxygen) because the client sent the draft-15
   `webtransport-h3` token; they now send the legacy token those relays accept.
   The webtransport-go fork is rebased onto upstream v0.13.0.
+- mlmpub kept a subscriber's session after its connection closed, and mlmtest
+  reported a relay that refused the session as a timeout. moqtransport v0.14.1.
 
 ## [0.16.1] - 2026-09-30
 

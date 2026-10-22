@@ -202,14 +202,9 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, disc
 	select {
 	case <-ctx.Done():
 	case <-session.Context().Done():
+		// This includes a peer that vanished -- idle timeout, crash, pulled
+		// cable -- since the session ends with its connection.
 		slog.Info("MoQ session ended", "reason", context.Cause(session.Context()))
-	case <-conn.Context().Done():
-		// The session context is not cancelled when the connection dies under
-		// it: the accept loops see the error and simply return. Watching only
-		// the session leaves a peer that vanished -- idle timeout, crash,
-		// pulled cable -- registered forever, and with -upstream it also means
-		// runUpstream never gets its session back to redial.
-		slog.Info("connection closed", "reason", context.Cause(conn.Context()))
 	}
 	// The per-announcement watchers normally clean the table, but sweep by
 	// session as well so that nothing this session announced can go stale:
