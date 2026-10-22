@@ -8,12 +8,12 @@ github.com/Eyevinn/moqtransport v0.14.0 h1:kK6p7QJ6rWluwEyQ+gHBY6Mo5C7cUqNedAre5
 github.com/Eyevinn/moqtransport v0.14.0/go.mod h1:woelFaK8LX0T7nsIfQDm2y6etFsB23RDeGV8di+zU4I=
 github.com/Eyevinn/mp4ff v0.60.0 h1:gtxm4/NTTZ0805f0+nHKIdyps6txbjywsgTjwXbnJ6M=
 github.com/Eyevinn/mp4ff v0.60.0/go.mod h1:97zsDIJUiDTYqKpqq/b1K9foamxXmvsgE4GdPrPK3ks=
-github.com/Eyevinn/webtransport-go v0.0.0-20260806102014-dfc839273d65 h1:+5Bv5dO3Zg49eswFkzmIYSxN3xL2NK4hHE00QyLJ5XE=
-github.com/Eyevinn/webtransport-go v0.0.0-20260806102014-dfc839273d65/go.mod h1:GHne8aRFJ24h73pAMrcywXtuaz/ShBXCLXLvG/NPFdU=
+github.com/Eyevinn/webtransport-go v0.0.0-20261016122133-4c2adc0635bf h1:G2Xivj3JHIoeGu2TYiAg4P6izJzDDZmDJqtoZxqddN0=
+github.com/Eyevinn/webtransport-go v0.0.0-20261016122133-4c2adc0635bf/go.mod h1:K83X9YHbAqgSLO6ikS6BXCMdWOvqh9JTHALulvb2JVk=
 github.com/beevik/etree v1.5.0 h1:iaQZFSDS+3kYZiGoc9uKeOkUY3nYMXOKLl6KIJxiJWs=
 github.com/beevik/etree v1.5.0/go.mod h1:gPNJNaBGVZ9AwsidazFZyygnd+0pAU38N4D+WemwKNs=
-github.com/dunglas/httpsfv v1.1.0 h1:Jw76nAyKWKZKFrpMMcL76y35tOpYHqQPzHQiwDvpe54=
-github.com/dunglas/httpsfv v1.1.0/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
+github.com/dunglas/httpsfv v1.1.1 h1:HoSs101zIE9I23DlqlmljJ/OIi7ILwrH347pXhRZdxI=
+github.com/dunglas/httpsfv v1.1.1/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
 github.com/go-test/deep v1.1.0 h1:WOcxcdHcvdgThNXjw0t76K42FXTU7HpNQWHpA2HHNlg=
 github.com/go-test/deep v1.1.0/go.mod h1:5C2ZWiW0ErCdrYzpqxLbTX7MG14M9iiw8DgHncVwcsE=
 github.com/mengelbart/qlog v0.1.0 h1:8cDMuCMcKtzkPXUU5FF7OBwqKiy+De0GKvIvNawifoA=

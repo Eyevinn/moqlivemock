@@ -67,7 +67,7 @@ func dialQUIC(ctx context.Context, addr string, alpn string) (moqtransport.Conne
 }
 
 func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtransport.Connection, error) {
-	// webtransport-go (Eyevinn fork on v0.12.0) sends and accepts the legacy
+	// webtransport-go (Eyevinn fork on v0.13.0) sends and accepts the legacy
 	// WEBTRANSPORT_MAX_SESSIONS codepoint itself, so deployed web-transport-quinn
 	// relays (moq-rs / cdn.moq.dev, Cloudflare) interoperate without extra setup.
 	dialer := webtransport.Transport{
@@ -81,7 +81,11 @@ func dialWebTransport(ctx context.Context, addr string, alpn string) (moqtranspo
 		// quinn doesn't implement the QUIC RESET_STREAM_AT extension that
 		// draft-ietf-webtrans-http3-16 requires, so don't insist the peer has it.
 		AllowPeerWithoutPartialDelivery: true,
-		ApplicationProtocols:            []string{alpn},
+		// Every deployed WebTransport relay we have met, the web-transport-quinn based
+		// ones (moq-rs, cdn.moq.dev, Cloudflare) and moxygen alike, still rejects the
+		// draft-15 "webtransport-h3" :protocol token, so send the legacy "webtransport".
+		LegacyConnectProtocol: true,
+		ApplicationProtocols:  []string{alpn},
 	}
 	_, session, err := dialer.Dial(ctx, ensureURLPort(addr, "443"), nil)
 	if err != nil {
