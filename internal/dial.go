@@ -73,12 +73,19 @@ type DialConfig struct {
 	// KeepAlive, when non-zero, keeps an idle connection open by sending a
 	// keep-alive this often.
 	KeepAlive time.Duration
+	// ALPNs are the MOQT versions offered, as the QUIC ALPN or the
+	// WebTransport subprotocol. Nil offers every version this build speaks.
+	ALPNs []string
 }
 
 // Dial opens a connection to the relay over the transport the URL's scheme
 // names. The PATH and AUTHORITY setup options are the caller's to put on the
 // moqtransport.Session it runs on the connection.
 func (r RelayURL) Dial(ctx context.Context, cfg DialConfig) (moqtransport.Connection, error) {
+	alpns := cfg.ALPNs
+	if alpns == nil {
+		alpns = moqtransport.SupportedALPNs()
+	}
 	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.SkipVerify}
 	quicConfig := &quic.Config{
 		EnableDatagrams:                  true,
@@ -90,13 +97,16 @@ func (r RelayURL) Dial(ctx context.Context, cfg DialConfig) (moqtransport.Connec
 		u.Host = net.JoinHostPort(u.Hostname(), "443")
 	}
 	if u.Scheme == "moqt" {
-		tlsConfig.NextProtos = moqtransport.SupportedALPNs()
+		tlsConfig.NextProtos = alpns
 		conn, err := quic.DialAddr(ctx, u.Host, tlsConfig, quicConfig)
 		if err != nil {
 			return nil, err
 		}
 		return quicmoq.NewClient(conn), nil
 	}
+	// The Eyevinn webtransport-go fork also sends and accepts the legacy
+	// WEBTRANSPORT_MAX_SESSIONS codepoint, which the deployed
+	// web-transport-quinn relays need.
 	dialer := webtransport.Transport{
 		TLSClientConfig: tlsConfig,
 		QUICConfig:      quicConfig,
@@ -107,7 +117,7 @@ func (r RelayURL) Dial(ctx context.Context, cfg DialConfig) (moqtransport.Connec
 		// ones (moq-rs, cdn.moq.dev, Cloudflare) and moxygen alike, still rejects the
 		// draft-15 "webtransport-h3" :protocol token, so send the legacy "webtransport".
 		LegacyConnectProtocol: true,
-		ApplicationProtocols:  moqtransport.SupportedALPNs(),
+		ApplicationProtocols:  alpns,
 	}
 	_, session, err := dialer.Dial(ctx, u.String(), nil)
 	if err != nil {

@@ -71,7 +71,9 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	}
 
 	opts := options{}
-	fs.StringVar(&opts.addr, "addr", "localhost:4443", "connect address (use https:// for WebTransport)")
+	fs.StringVar(&opts.addr, "addr", "localhost:4443",
+		"relay or publisher to connect to: moqt://host[:port][/path] or host[:port] over native QUIC, "+
+			"https://host[:port]/path over WebTransport")
 	fs.StringVar(&opts.trackname, "trackname", "video_400kbps_avc", "Track to subscribe to")
 	fs.BoolVar(&opts.version, "version", false, fmt.Sprintf("Get %s version", appName))
 	fs.IntVar(&opts.duration, "duration", 0, "Duration of session in seconds (0 means unlimited)")
@@ -186,8 +188,10 @@ func runClient(ctx context.Context, opts *options) error {
 		return err
 	}
 
-	// Automatically use WebTransport if address starts with https://
-	useWebTransport := strings.HasPrefix(opts.addr, "https://")
+	relay, err := relayURL(opts.addr)
+	if err != nil {
+		return err
+	}
 
 	// "/" separates the fields of the namespace tuple, matching how MSF
 	// writes a namespace in the catalog. Sending "cmsf/clear" as one field
@@ -246,5 +250,5 @@ func runClient(ctx context.Context, opts *options) error {
 			opts.draft, moqtransport.SupportedALPNs())
 	}
 
-	return runClientWithDial(ctx, opts.addr, useWebTransport, alpn, h, outs)
+	return runClientWithDial(ctx, relay, alpn, h, outs)
 }

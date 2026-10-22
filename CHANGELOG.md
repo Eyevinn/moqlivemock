@@ -24,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The webtransport-go fork is rebased onto upstream v0.13.0.
 - mlmpub kept a subscriber's session after its connection closed, and mlmtest
   reported a relay that refused the session as a timeout. moqtransport v0.14.1.
-- mlmtest dialed every relay URL as native QUIC and dropped its path. It now uses
-  WebTransport for `https://` and sends a `moqt://` URL's path and authority in
-  SETUP, which relays such as cdn.moq.dev require.
+- mlmtest, mlmsub `-addr` and mlmrel `-upstream` now send a `moqt://` URL's path
+  and authority in SETUP, which cdn.moq.dev requires; mlmsub accepts `moqt://`
+  URLs, and mlmtest uses WebTransport for `https://` ones.
 
 ## [0.16.1] - 2026-09-30
 

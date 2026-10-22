@@ -403,6 +403,12 @@ There are more options to change the loglevel, choose track etc.
 The subscriber will connect to the publisher and start receiving
 video and audio frames if some tracks are selected.
 
+`-addr` picks the transport from its scheme: `moqt://host[:port][/path]`, or a
+bare `host[:port]`, connects over native QUIC, and `https://host[:port]/path`
+over WebTransport (mlmpub serves it at `/moq`). Over native QUIC the URL's path
+and authority are sent in SETUP, so a relay that routes on the path can be
+reached directly, e.g. `-addr moqt://cdn.moq.dev/anon`.
+
 ### Use with Eyevinn's browser player
 
 The browser player [warp-player][warp-player] has been created to match the
