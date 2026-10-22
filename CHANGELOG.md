@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- mlmpub generates CMAF and LOCMAF media about twice as fast with half the
-  allocations, most for encrypted tracks, which are no longer re-encoded.
+- mlmpub generates CMAF and LOCMAF media in less than half the time, with about
+  a sixth of the allocations.
 - mp4ff v0.60.0. The paint-model `stpc` and `wvtc` sample entries now carry a
   `ttma` box with a 5 s maximum period of activation.
 
