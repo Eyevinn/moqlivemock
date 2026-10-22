@@ -55,6 +55,13 @@ type Handler struct {
 	// subscriber cares to wait: a publisher that never answers must not take
 	// its subscribers down with it. Zero waits indefinitely.
 	UpstreamTimeout time.Duration
+	// UpstreamPath and UpstreamAuthority are the PATH and AUTHORITY setup
+	// options of the sessions HandleUpstream runs. An upstream reached by a
+	// moqt:// URL is sent the URL's path and authority in SETUP (Section
+	// 3.1.4), so a relay that routes on the path accepts the session; one
+	// reached over WebTransport gets neither, as its CONNECT carries them.
+	UpstreamPath      string
+	UpstreamAuthority string
 
 	mu            sync.Mutex
 	announcements map[nsKey]*announcement
@@ -167,7 +174,7 @@ func (h *Handler) HandleUpstream(ctx context.Context, conn moqtransport.Connecti
 	h.handle(ctx, conn, true)
 }
 
-func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, discover bool) {
+func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, upstream bool) {
 	session := &moqtransport.Session{
 		Implementation: "Eyevinn/moqlivemock/mlmrel",
 		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
@@ -180,6 +187,10 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, disc
 		// with (forward.go), so scheduling on it keeps the origin's ordering
 		// across the hop. Subscriber priority is not honoured, as at mlmpub.
 		PriorityMapper: moqtransport.PublisherPriorityMapper,
+	}
+	if upstream {
+		session.Path = h.UpstreamPath
+		session.Authority = h.UpstreamAuthority
 	}
 	session.PublishNamespaceHandler = h.publishNamespaceHandler(session)
 	session.SubscribeHandler = h.subscribeHandler()
@@ -195,7 +206,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, disc
 		return
 	}
 	slog.Info("MoQ session established", "version", session.Version())
-	if discover {
+	if upstream {
 		go h.discoverNamespaces(session)
 	}
 
