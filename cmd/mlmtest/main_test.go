@@ -13,50 +13,65 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/quicmoq"
 	"github.com/quic-go/quic-go"
 )
 
-// startInteropServer starts a QUIC-based MoQ server that accepts
-// interop test operations (announce, subscribe) against every draft this build
-// speaks. From draft-17 the ALPN is the whole of version negotiation, so the
-// set of drafts and the set of ALPNs are the same thing.
-// It returns the listener address and a cancel function.
-func startInteropServer(t *testing.T) (addr string, cancel func()) {
+// startInteropServer starts a MoQ server that accepts the interop test
+// operations (announce, subscribe) over both native QUIC and WebTransport on
+// one port, the way internal.RunMoQServer serves mlmpub and mlmrel. It serves
+// every draft this build speaks: from draft-17 the ALPN is the whole of version
+// negotiation, so the set of drafts and the set of ALPNs are the same thing.
+// It returns the server's address.
+func startInteropServer(t *testing.T) string {
 	t.Helper()
 	tlsConfig, err := generateTLSConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	listener, err := quic.ListenAddr("localhost:0", tlsConfig, &quic.Config{
-		EnableDatagrams: true,
-	})
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	addr := pc.LocalAddr().String()
+	if err := pc.Close(); err != nil {
+		t.Fatal(err)
+	}
 
-	ctx, ctxCancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() { _ = internal.RunMoQServer(ctx, addr, tlsConfig, interopStub{}) }()
+	waitForServer(t, addr)
+	return addr
+}
 
-	go func() {
-		for {
-			conn, err := listener.Accept(ctx)
-			if err != nil {
-				return
-			}
-			go serveInteropConn(ctx, conn)
+// waitForServer dials until the server answers, so that no test case races
+// its startup.
+func waitForServer(t *testing.T, addr string) {
+	t.Helper()
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		conn, err := quic.DialAddr(ctx, addr, tlsConfig, nil)
+		cancel()
+		if err == nil {
+			_ = conn.CloseWithError(0, "")
+			return
 		}
-	}()
-
-	port := listener.Addr().(*net.UDPAddr).Port
-	return fmt.Sprintf("moqt://localhost:%d", port), func() {
-		ctxCancel()
-		_ = listener.Close()
+		if time.Now().After(deadline) {
+			t.Fatalf("server at %s did not start: %v", addr, err)
+		}
 	}
 }
 
-func serveInteropConn(ctx context.Context, conn *quic.Conn) {
+// interopStub is the relay side of the interop test cases.
+type interopStub struct{}
+
+func (interopStub) Handle(ctx context.Context, conn moqtransport.Connection) {
 	s := &moqtransport.Session{
 		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
 			func(r *moqtransport.PublishNamespaceRequest) {
@@ -74,10 +89,13 @@ func serveInteropConn(ctx context.Context, conn *quic.Conn) {
 			}),
 		Implementation: "Eyevinn/mlmtest interop stub",
 	}
-	if err := s.Run(ctx, quicmoq.NewServer(conn)); err != nil {
+	if err := s.Run(ctx, conn); err != nil {
 		return
 	}
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-s.Context().Done():
+	}
 	_ = s.Close(moqtransport.SessionErrorNoError, "test over")
 }
 
@@ -99,27 +117,35 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   moqtransport.SupportedALPNs(),
+		NextProtos:   append(moqtransport.SupportedALPNs(), "h3"),
 	}, nil
 }
 
+// TestInteropTestCases runs every test case over both transports, picked by
+// the relay URL's scheme. The moqt:// URL has a path, so its sessions carry
+// the PATH and AUTHORITY setup options.
 func TestInteropTestCases(t *testing.T) {
-	addr, cancel := startInteropServer(t)
-	defer cancel()
+	addr := startInteropServer(t)
+	relays := []struct{ transport, url string }{
+		{"quic", "moqt://" + addr + "/anon"},
+		{"webtransport", "https://" + addr + "/moq"},
+	}
 
-	for _, alpn := range moqtransport.SupportedALPNs() {
-		draft, err := strconv.Atoi(strings.TrimPrefix(alpn, "moqt-"))
-		if err != nil {
-			t.Fatalf("cannot read a draft number out of ALPN %q: %v", alpn, err)
-		}
-		for _, tc := range testCases {
-			t.Run(fmt.Sprintf("draft%d/%s", draft, tc.name), func(t *testing.T) {
-				ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTimeout)
-				defer ctxCancel()
-				if err := tc.fn(ctx, addr, true, draft); err != nil {
-					t.Fatalf("%s (draft-%d): %v", tc.name, draft, err)
-				}
-			})
+	for _, relay := range relays {
+		for _, alpn := range moqtransport.SupportedALPNs() {
+			draft, err := strconv.Atoi(strings.TrimPrefix(alpn, "moqt-"))
+			if err != nil {
+				t.Fatalf("cannot read a draft number out of ALPN %q: %v", alpn, err)
+			}
+			for _, tc := range testCases {
+				t.Run(fmt.Sprintf("%s/draft%d/%s", relay.transport, draft, tc.name), func(t *testing.T) {
+					ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTimeout)
+					defer ctxCancel()
+					if err := tc.fn(ctx, relay.url, true, draft); err != nil {
+						t.Fatalf("%s (draft-%d over %s): %v", tc.name, draft, relay.transport, err)
+					}
+				})
+			}
 		}
 	}
 }

@@ -2,19 +2,12 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"fmt"
 	"log/slog"
-	"net"
-	"net/url"
 	"time"
 
+	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/relay"
 	"github.com/Eyevinn/moqtransport"
-	"github.com/Eyevinn/moqtransport/quicmoq"
-	"github.com/Eyevinn/moqtransport/webtransportmoq"
-	"github.com/quic-go/quic-go"
-	"github.com/quic-go/webtransport-go"
 )
 
 const upstreamRedialDelay = 2 * time.Second
@@ -55,59 +48,13 @@ func runUpstream(ctx context.Context, h *relay.Handler, rawURL string) {
 // dialUpstream connects to moqt://host[:port] over raw QUIC or to
 // https://host[:port][/path] over WebTransport. The default port is 443.
 // Like mlmsub, it does not verify the server certificate: the peers are test
-// servers on self-signed certificates.
+// servers on self-signed certificates. A moqt:// path is not sent as a PATH
+// setup option: relay.Handler builds the upstream session, and mlmpub serves
+// the same namespaces whatever the path.
 func dialUpstream(ctx context.Context, rawURL string) (moqtransport.Connection, error) {
-	u, err := url.Parse(rawURL)
+	upstream, err := internal.ParseRelayURL(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("parse upstream URL: %w", err)
+		return nil, err
 	}
-	switch u.Scheme {
-	case "moqt":
-		addr := u.Host
-		if u.Port() == "" {
-			addr = net.JoinHostPort(u.Hostname(), "443")
-		}
-		conn, err := quic.DialAddr(ctx, addr, &tls.Config{
-			InsecureSkipVerify: true,
-			NextProtos:         moqtransport.SupportedALPNs(),
-		}, &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-			KeepAlivePeriod:                  upstreamKeepAlive,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return quicmoq.NewClient(conn), nil
-	case "https":
-		if u.Port() == "" {
-			u.Host = net.JoinHostPort(u.Hostname(), "443")
-		}
-		dialer := webtransport.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-			QUICConfig: &quic.Config{
-				EnableDatagrams:                  true,
-				EnableStreamResetPartialDelivery: true,
-				KeepAlivePeriod:                  upstreamKeepAlive,
-			},
-			// quinn doesn't implement the QUIC RESET_STREAM_AT extension that
-			// draft-ietf-webtrans-http3-16 requires, so don't insist the peer
-			// has it.
-			AllowPeerWithoutPartialDelivery: true,
-			// Every deployed WebTransport relay we have met, the web-transport-quinn based
-			// ones (moq-rs, cdn.moq.dev, Cloudflare) and moxygen alike, still rejects the
-			// draft-15 "webtransport-h3" :protocol token, so send the legacy "webtransport".
-			LegacyConnectProtocol: true,
-			ApplicationProtocols:  moqtransport.SupportedALPNs(),
-		}
-		_, session, err := dialer.Dial(ctx, u.String(), nil)
-		if err != nil {
-			return nil, err
-		}
-		return webtransportmoq.NewClient(session), nil
-	default:
-		return nil, fmt.Errorf("upstream URL scheme must be moqt:// or https://, got %q", u.Scheme)
-	}
+	return upstream.Dial(ctx, internal.DialConfig{SkipVerify: true, KeepAlive: upstreamKeepAlive})
 }
