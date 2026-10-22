@@ -70,7 +70,7 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.StringVar(&opts.keyFile, "key", "key.pem", "TLS key file")
 	fs.StringVar(&opts.addr, "addr", "0.0.0.0:4443", "listen address")
 	fs.StringVar(&opts.upstream, "upstream", "",
-		"upstream publisher to dial: moqt://host[:port] (QUIC) or https://host[:port][/path] (WebTransport)")
+		"upstream publisher to dial: moqt://host[:port][/path] (QUIC) or https://host[:port][/path] (WebTransport)")
 	fs.DurationVar(&opts.maxRendezvous, "max-rendezvous", 10*time.Second,
 		"longest a SUBSCRIBE asking with RENDEZVOUS_TIMEOUT is held for its publisher to appear; "+
 			"the subscriber's own value applies when shorter")
@@ -184,7 +184,13 @@ func runServer(ctx context.Context, opts *options) error {
 	h.Linger = opts.linger
 	h.UpstreamTimeout = opts.upstreamTO
 	if opts.upstream != "" {
-		go runUpstream(ctx, h, opts.upstream)
+		upstream, err := internal.ParseRelayURL(opts.upstream)
+		if err != nil {
+			return fmt.Errorf("-upstream: %w", err)
+		}
+		h.UpstreamPath = upstream.Path()
+		h.UpstreamAuthority = upstream.Authority()
+		go runUpstream(ctx, h, upstream)
 	}
 	err = internal.RunMoQServer(ctx, opts.addr, tlsConfig, h)
 	// A signal cancels the context and takes the listener down with it; that

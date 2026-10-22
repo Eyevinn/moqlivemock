@@ -573,6 +573,32 @@ func TestUpstreamNamespaceDiscovery(t *testing.T) {
 	})
 }
 
+// TestUpstreamSetupOptions: the relay sends its upstream the PATH and
+// AUTHORITY setup options a moqt:// -upstream URL calls for, and only its
+// upstream: on a downstream session the relay is the server, which may send
+// neither, so applying them there would fail the session.
+func TestUpstreamSetupOptions(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		qlog := &testconn.QlogBuffer{}
+		h := relay.NewHandler(qlog)
+		h.UpstreamPath = "/anon?jwt=x"
+		h.UpstreamAuthority = "relay.example:443"
+
+		// The relay dials its upstream, so it holds the client end.
+		usConn, ucConn := testconn.Pair()
+		go h.HandleUpstream(t.Context(), ucConn)
+		upstream := &moqtransport.Session{Implementation: "mlmrel-test-upstream"}
+		require.NoError(t, upstream.Run(t.Context(), usConn))
+
+		_, osConn, ocConn := connect(t, h)
+		synctest.Wait()
+
+		require.True(t, qlog.HasSetupOption(testconn.SetupOptionPath, "/anon?jwt=x"))
+		require.True(t, qlog.HasSetupOption(testconn.SetupOptionAuthority, "relay.example:443"))
+		shutdown(usConn, ucConn, osConn, ocConn)
+	})
+}
+
 // TestResetPropagation: an upstream subgroup reset reaches the downstream
 // subscriber as a reset, not as a clean end. The downstream test session
 // turns on SubgroupEndEvents to observe exactly what the relay emitted.
