@@ -1,7 +1,7 @@
 // Package relay implements a MoQ Transport relay. It accepts sessions from
 // publishers and subscribers alike, keeps a table of announced namespaces,
-// and forwards subscriptions to the session that announced the namespace:
-// one upstream subscription per (namespace, track) is fanned out to any
+// and forwards subscriptions to the session that announced the namespace or a
+// prefix of it: one upstream subscription per (namespace, track) is fanned out to any
 // number of downstream subscribers through a small cache of recent groups,
 // which also gives a late subscriber a group-aligned start. FETCHes are
 // served from that cache when it covers the range and proxied upstream
@@ -65,7 +65,7 @@ type Handler struct {
 
 	mu            sync.Mutex
 	announcements map[nsKey]*announcement
-	waiters       map[nsKey][]chan *announcement
+	waiters       map[*nsWaiter]struct{}
 	tracks        map[trackKey]*relayTrack
 	announcers    map[*nsAnnouncer]struct{}
 
@@ -94,7 +94,7 @@ func NewHandler(logfh io.Writer) *Handler {
 		UpstreamTimeout: 5 * time.Second,
 		MaxRendezvous:   10 * time.Second,
 		announcements:   make(map[nsKey]*announcement),
-		waiters:         make(map[nsKey][]chan *announcement),
+		waiters:         make(map[*nsWaiter]struct{}),
 		tracks:          make(map[trackKey]*relayTrack),
 		announcers:      make(map[*nsAnnouncer]struct{}),
 	}
@@ -153,6 +153,13 @@ type announcement struct {
 	// withdraws it. It is nil for a namespace the relay learned from its own
 	// SUBSCRIBE_NAMESPACE upstream, which NAMESPACE_DONE withdraws instead.
 	request *moqtransport.PublishNamespaceRequest
+}
+
+// nsWaiter is a SUBSCRIBE held for a publisher of its namespace, or of a
+// prefix of it, to be announced.
+type nsWaiter struct {
+	namespace []string
+	ch        chan *announcement // buffered: gets the first announcement that matches
 }
 
 // Handle runs a MoQ session on the given connection and blocks until the
@@ -323,9 +330,8 @@ func (h *Handler) rendezvousHold(r *moqtransport.SubscribeRequest) time.Duration
 // none exists and hold is positive, it waits that long for one to arrive
 // (the rendezvous a subscribe-before-announce race needs) before giving up.
 func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string, hold time.Duration) *announcement {
-	key := keyForNamespace(namespace)
 	h.mu.Lock()
-	if a, ok := h.announcements[key]; ok {
+	if a := h.matchLocked(namespace); a != nil {
 		h.mu.Unlock()
 		return a
 	}
@@ -333,41 +339,28 @@ func (h *Handler) awaitAnnouncement(ctx context.Context, namespace []string, hol
 		h.mu.Unlock()
 		return nil
 	}
-	ch := make(chan *announcement, 1)
-	h.waiters[key] = append(h.waiters[key], ch)
+	w := &nsWaiter{namespace: namespace, ch: make(chan *announcement, 1)}
+	h.waiters[w] = struct{}{}
 	h.mu.Unlock()
 
 	timer := time.NewTimer(hold)
 	defer timer.Stop()
 	select {
-	case a := <-ch:
+	case a := <-w.ch:
 		return a
 	case <-timer.C:
 	case <-ctx.Done():
 	}
-	h.removeWaiter(key, ch)
+	h.mu.Lock()
+	delete(h.waiters, w)
+	h.mu.Unlock()
 	// register may have won a race with the timeout; the channel is buffered,
 	// so a notification sent before removal is still there.
 	select {
-	case a := <-ch:
+	case a := <-w.ch:
 		return a
 	default:
 		return nil
-	}
-}
-
-func (h *Handler) removeWaiter(key nsKey, ch chan *announcement) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	waiters := h.waiters[key]
-	for i, w := range waiters {
-		if w == ch {
-			h.waiters[key] = append(waiters[:i], waiters[i+1:]...)
-			break
-		}
-	}
-	if len(h.waiters[key]) == 0 {
-		delete(h.waiters, key)
 	}
 }
 
@@ -375,7 +368,34 @@ func (h *Handler) removeWaiter(key nsKey, ch chan *announcement) {
 func (h *Handler) lookupAnnouncement(namespace []string) *announcement {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.announcements[keyForNamespace(namespace)]
+	return h.matchLocked(namespace)
+}
+
+// matchLocked returns the announcement that covers the namespace, or nil. A
+// SUBSCRIBE or FETCH for a namespace matches a publisher that announced it or
+// any prefix of it: (foo, bar) matches (foo) and (foo, bar), but not (foobar)
+// (draft-ietf-moq-transport-18 Section 9.5). Of several matches the longest,
+// most specific announcement wins. The draft has the relay subscribe to every
+// matching publisher and merge their Objects (Section 9.3); this relay keeps
+// one upstream subscription per track, so it picks one. h.mu must be held.
+func (h *Handler) matchLocked(namespace []string) *announcement {
+	for n := len(namespace); n > 0; n-- {
+		if a, ok := h.announcements[keyForNamespace(namespace[:n])]; ok {
+			return a
+		}
+	}
+	return nil
+}
+
+// wakeWaitersLocked hands a new announcement to every held SUBSCRIBE it
+// covers. h.mu must be held.
+func (h *Handler) wakeWaitersLocked(a *announcement) {
+	for w := range h.waiters {
+		if prefixMatches(a.namespace, w.namespace) {
+			w.ch <- a // buffered, and each waiter is woken once
+			delete(h.waiters, w)
+		}
+	}
 }
 
 // register adds the announcement to the table. A namespace announced again
@@ -396,10 +416,7 @@ func (h *Handler) register(session *moqtransport.Session, r *moqtransport.Publis
 		request:   r,
 	}
 	h.announcements[key] = a
-	for _, ch := range h.waiters[key] {
-		ch <- a // buffered, one per waiter
-	}
-	delete(h.waiters, key)
+	h.wakeWaitersLocked(a)
 }
 
 // deregister removes the announcement created by r and reports whether it was
@@ -540,10 +557,7 @@ func (h *Handler) registerDiscovered(session *moqtransport.Session, namespace []
 	}
 	a := &announcement{namespace: namespace, session: session}
 	h.announcements[key] = a
-	for _, ch := range h.waiters[key] {
-		ch <- a // buffered, one per waiter
-	}
-	delete(h.waiters, key)
+	h.wakeWaitersLocked(a)
 	return true
 }
 
