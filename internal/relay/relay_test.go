@@ -2,6 +2,7 @@ package relay_test
 
 import (
 	"io"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -160,6 +161,148 @@ func TestRejectPropagation(t *testing.T) {
 
 		_, err = subSession.Subscribe(t.Context(), testNamespace, "test-track")
 		requireRequestError(t, err, moqtransport.RequestErrorUninterested)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// acceptingPublisher is a publisher session that accepts every SUBSCRIBE and
+// reports the namespace it was asked for, under its name.
+func acceptingPublisher(name string, asked chan<- []string) *moqtransport.Session {
+	return &moqtransport.Session{
+		Implementation: name,
+		SubscribeHandler: moqtransport.SubscribeHandlerFunc(func(r *moqtransport.SubscribeRequest) {
+			asked <- append([]string{name}, r.Namespace()...)
+			_, _ = r.Accept()
+		}),
+	}
+}
+
+// TestSubscribePrefixMatch: a SUBSCRIBE for a namespace that extends an
+// announced one reaches the publisher of the announced one, which is asked for
+// the full namespace (Namespace Prefix Matching, draft-18 Section 9.5). The
+// interop runner's data-subgroup-basic case subscribes like this. A namespace
+// that only shares a field's leading characters is no match.
+func TestSubscribePrefixMatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		asked := make(chan []string, 1)
+		pubSession := acceptingPublisher("pub", asked)
+		psConn, pcConn := connectSession(t, h, pubSession)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		deep := append(slices.Clone(testNamespace), "moq-test-00", "0", "2")
+		_, err = subSession.Subscribe(t.Context(), deep, "track")
+		require.NoError(t, err)
+		require.Equal(t, append([]string{"pub"}, deep...), <-asked)
+
+		_, err = subSession.Subscribe(t.Context(), []string{"moq-test", "interop2"}, "track")
+		requireRequestError(t, err, moqtransport.RequestErrorDoesNotExist)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestSubscribeLongestPrefix: of two matching announcements, the more specific
+// one serves the subscription.
+func TestSubscribeLongestPrefix(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		asked := make(chan []string, 2)
+		short := acceptingPublisher("short", asked)
+		long := acceptingPublisher("long", asked)
+		shConn, scConn1 := connectSession(t, h, short)
+		lsConn, lcConn := connectSession(t, h, long)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := short.PublishNamespace(t.Context(), []string{"moq-test"})
+		require.NoError(t, err)
+		_, err = long.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		_, err = subSession.Subscribe(t.Context(), append(slices.Clone(testNamespace), "x"), "track")
+		require.NoError(t, err)
+		require.Equal(t, "long", (<-asked)[0])
+
+		_, err = subSession.Subscribe(t.Context(), []string{"moq-test", "other"}, "track")
+		require.NoError(t, err)
+		require.Equal(t, "short", (<-asked)[0])
+
+		shutdown(shConn, scConn1, lsConn, lcConn, ssConn, scConn)
+	})
+}
+
+// TestRendezvousPrefix: a held SUBSCRIBE is answered by the announcement of a
+// prefix of its namespace, and not by an unrelated one.
+func TestRendezvousPrefix(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		asked := make(chan []string, 2)
+		other := acceptingPublisher("other", asked)
+		pub := acceptingPublisher("pub", asked)
+		osConn, ocConn := connectSession(t, h, other)
+		psConn, pcConn := connectSession(t, h, pub)
+		subSession, ssConn, scConn := connect(t, h)
+
+		deep := append(slices.Clone(testNamespace), "deep")
+		subscribed := make(chan error, 1)
+		go func() {
+			_, err := subSession.Subscribe(t.Context(), deep, "track",
+				moqtransport.WithRendezvousTimeout(time.Second))
+			subscribed <- err
+		}()
+
+		time.Sleep(200 * time.Millisecond)
+		_, err := other.PublishNamespace(t.Context(), []string{"moq-test", "other"})
+		require.NoError(t, err)
+		time.Sleep(300 * time.Millisecond)
+		_, err = pub.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		require.NoError(t, <-subscribed)
+		require.Equal(t, append([]string{"pub"}, deep...), <-asked)
+
+		shutdown(osConn, ocConn, psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestFetchPrefixMatch: a FETCH is routed by the same prefix matching as a
+// SUBSCRIBE, and proxied with the full namespace.
+func TestFetchPrefixMatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		asked := make(chan []string, 1)
+		pubSession := &moqtransport.Session{
+			Implementation: "mlmrel-test-publisher",
+			FetchHandler: moqtransport.FetchHandlerFunc(func(r *moqtransport.FetchRequest) {
+				asked <- r.Namespace()
+				response, err := r.Accept()
+				if err != nil {
+					return
+				}
+				_ = response.WriteObject(moqtransport.Object{
+					GroupID: 0, ObjectID: 0, Priority: 128, Payload: []byte("fetched"),
+				})
+				_ = response.Close()
+			}),
+		}
+		psConn, pcConn := connectSession(t, h, pubSession)
+		subSession, ssConn, scConn := connect(t, h)
+
+		_, err := pubSession.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+
+		deep := append(slices.Clone(testNamespace), "deep")
+		fs, err := subSession.Fetch(t.Context(), deep, "test-track",
+			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+		require.NoError(t, err)
+		require.Equal(t, deep, <-asked)
+		fo, err := fs.ReadObject(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, []byte("fetched"), fo.Payload)
 
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})

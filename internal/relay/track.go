@@ -61,12 +61,16 @@ type relayTrack struct {
 	endInfo *publishEnd
 }
 
-func newRelayTrack(h *Handler, key trackKey, ann *announcement) *relayTrack {
+// newRelayTrack makes the track for the namespace a subscriber asked for,
+// served by the session of ann. The upstream SUBSCRIBE carries that namespace,
+// which may be longer than the announced one when the announcement is a
+// prefix of it.
+func newRelayTrack(h *Handler, key trackKey, ann *announcement, namespace []string) *relayTrack {
 	ctx, cancel := context.WithCancelCause(ann.session.Context())
 	return &relayTrack{
 		h:         h,
 		key:       key,
-		namespace: ann.namespace,
+		namespace: namespace,
 		track:     key.track,
 		upstream:  ann.session,
 		ctx:       ctx,
@@ -86,7 +90,7 @@ func (h *Handler) trackFor(ann *announcement, namespace []string, track string) 
 		h.mu.Lock()
 		rt, ok := h.tracks[key]
 		if !ok {
-			rt = newRelayTrack(h, key, ann)
+			rt = newRelayTrack(h, key, ann, namespace)
 			h.tracks[key] = rt
 			h.mu.Unlock()
 			go rt.run()
