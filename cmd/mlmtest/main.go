@@ -179,10 +179,11 @@ func testAnnounceOnly(ctx context.Context, relay string, tlsSkipVerify bool, dra
 	if err != nil {
 		return err
 	}
-	if _, err := s.PublishNamespace(ctx, []string{"moq-test", "interop"}); err != nil {
+	publication, err := s.PublishNamespace(ctx, []string{"moq-test", "interop"})
+	if err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
 	}
-	closeSession(s)
+	_ = closePublisher(s, publication)
 	return nil
 }
 
@@ -196,12 +197,9 @@ func testPublishNamespaceDone(ctx context.Context, relay string, tlsSkipVerify b
 	if err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE: %w", err)
 	}
-	// Closing the announcement's stream is what draft-18 uses in place of
-	// UNANNOUNCE.
-	if err := publication.Close(); err != nil {
+	if err := closePublisher(s, publication); err != nil {
 		return fmt.Errorf("PUBLISH_NAMESPACE_DONE: %w", err)
 	}
-	closeSession(s)
 	return nil
 }
 
@@ -259,16 +257,37 @@ func closeSession(s *moqtransport.Session) {
 	_ = s.Close(moqtransport.SessionErrorNoError, "test complete")
 }
 
+// withdrawGrace is how long a publisher waits between withdrawing its
+// namespace and closing the session. Closing the connection drops whatever is
+// not yet sent, so without a pause the withdrawal could be lost with it.
+const withdrawGrace = 100 * time.Millisecond
+
+// closePublisher withdraws the namespace and then closes the session.
+// Closing the announcement's stream is what draft-18 uses in place of
+// UNANNOUNCE, and it is PUBLISH_NAMESPACE_DONE.
+//
+// Several test cases announce the same namespace, each on fresh sessions, so
+// the relay must have dropped one announcement before the next case makes it
+// again. A relay that notices a closed session only some time later would
+// still hold the namespace and refuse the next PUBLISH_NAMESPACE; withdrawn
+// first, the announcement is dropped at once.
+func closePublisher(s *moqtransport.Session, publication *moqtransport.NamespacePublication) error {
+	err := publication.Close()
+	time.Sleep(withdrawGrace)
+	closeSession(s)
+	return err
+}
+
 // testAnnounceSubscribe: publisher announces, subscriber subscribes, both succeed.
 func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
 	ns := []string{"moq-test", "interop"}
 
 	// Publisher: connect, setup, announce
-	pub, _, err := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	pub, publication, err := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
-	defer closeSession(pub)
+	defer func() { _ = closePublisher(pub, publication) }()
 
 	// Subscriber: connect, setup, subscribe
 	sub, err := runSession(ctx, relay, tlsSkipVerify)
@@ -308,11 +327,11 @@ func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerif
 	// Wait 500ms, then publisher connects and announces
 	time.Sleep(500 * time.Millisecond)
 
-	pub, _, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	pub, publication, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
 	if pubErr != nil {
 		return fmt.Errorf("publisher: %w", pubErr)
 	}
-	defer closeSession(pub)
+	defer func() { _ = closePublisher(pub, publication) }()
 
 	// Wait for subscriber result
 	wg.Wait()
