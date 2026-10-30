@@ -5,6 +5,7 @@ import (
 	"testing"
 	"testing/synctest"
 
+	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/relay"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
 	"github.com/Eyevinn/moqlivemock/internal/testconn"
@@ -84,61 +85,75 @@ func TestRelayedVideoAudioReceive(t *testing.T) {
 }
 
 // TestRelayedTwoLateJoiningSubscribers is the phase 3 acceptance: two
-// subscribers with the default joining-FETCH catalog flow (no workaround
-// flags) behind one relay, the second joining seconds late, both receiving
-// media. The joining FETCH is proxied upstream; the media tracks share one
-// upstream subscription per track.
+// subscribers with the default joining catalog flow (no workaround flags)
+// behind one relay, the second joining seconds late, both receiving media.
+// The catalog's current Group comes through the relay as a joining FETCH on
+// draft-18 and as a fill on draft-22, proxied upstream or served from the
+// relay's cache; the media tracks share one upstream subscription per track.
+// The relay speaks either draft on either side, so the mixed pairs run too.
 func TestRelayedTwoLateJoiningSubscribers(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
-	synctest.Test(t, func(t *testing.T) {
-		ph := newPubHandler(asset, catalog)
-		upServer, upClient := testconn.Pair()
-		go ph.Handle(t.Context(), upServer)
-		rh := relay.NewHandler(io.Discard)
-		// HandleUpstream, as mlmrel -upstream does: the publisher answers
-		// namespace discovery rather than announcing unprompted, so the
-		// relay has to ask before it knows anything to route.
-		go rh.HandleUpstream(t.Context(), upClient)
-		synctest.Wait() // the upstream's namespaces land in the relay's table
+	for _, c := range []struct{ up, down string }{
+		{"moqt-22", "moqt-22"},
+		{"moqt-18", "moqt-18"},
+		{"moqt-18", "moqt-22"},
+		{"moqt-22", "moqt-18"},
+	} {
+		t.Run(c.up+"_to_"+c.down, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) { relayTwoLateJoiningSubscribers(t, asset, catalog, c.up, c.down) })
+		})
+	}
+}
 
-		newJoiningSub := func(video, audio io.Writer) *sub.Handler {
-			return &sub.Handler{
-				Namespace: testNamespace,
-				Outs:      map[string]io.Writer{"video": video, "audio": audio},
-				Logfh:     io.Discard,
-				VideoName: "_avc",
-				AudioName: "_aac",
-				// CatalogMode empty: the default joining-FETCH flow.
-			}
+func relayTwoLateJoiningSubscribers(t *testing.T, asset *internal.Asset, catalog *internal.Catalog,
+	upALPN, downALPN string) {
+	ph := newPubHandler(asset, catalog)
+	upServer, upClient := testconn.PairALPN(upALPN)
+	go ph.Handle(t.Context(), upServer)
+	rh := relay.NewHandler(io.Discard)
+	// HandleUpstream, as mlmrel -upstream does: the publisher answers
+	// namespace discovery rather than announcing unprompted, so the
+	// relay has to ask before it knows anything to route.
+	go rh.HandleUpstream(t.Context(), upClient)
+	synctest.Wait() // the upstream's namespaces land in the relay's table
+
+	newJoiningSub := func(video, audio io.Writer) *sub.Handler {
+		return &sub.Handler{
+			Namespace: testNamespace,
+			Outs:      map[string]io.Writer{"video": video, "audio": audio},
+			Logfh:     io.Discard,
+			VideoName: "_avc",
+			AudioName: "_aac",
+			// CatalogMode empty: the default joining flow.
 		}
+	}
 
-		aServer, aClient := testconn.Pair()
-		go rh.Handle(t.Context(), aServer)
-		videoA, audioA := newSyncBuffer(), newSyncBuffer()
-		go func() { _ = newJoiningSub(videoA, audioA).RunWithConn(t.Context(), aClient) }()
+	aServer, aClient := testconn.PairALPN(downALPN)
+	go rh.Handle(t.Context(), aServer)
+	videoA, audioA := newSyncBuffer(), newSyncBuffer()
+	go func() { _ = newJoiningSub(videoA, audioA).RunWithConn(t.Context(), aClient) }()
 
-		// A plays for a while before B joins late.
-		videoA.WaitForLen(50_000)
+	// A plays for a while before B joins late.
+	videoA.WaitForLen(50_000)
 
-		bServer, bClient := testconn.Pair()
-		go rh.Handle(t.Context(), bServer)
-		videoB, audioB := newSyncBuffer(), newSyncBuffer()
-		go func() { _ = newJoiningSub(videoB, audioB).RunWithConn(t.Context(), bClient) }()
+	bServer, bClient := testconn.PairALPN(downALPN)
+	go rh.Handle(t.Context(), bServer)
+	videoB, audioB := newSyncBuffer(), newSyncBuffer()
+	go func() { _ = newJoiningSub(videoB, audioB).RunWithConn(t.Context(), bClient) }()
 
-		aBefore := videoA.Len()
-		videoB.WaitForLen(50_000)
-		audioA.WaitForLen(10_000)
-		audioB.WaitForLen(10_000)
+	aBefore := videoA.Len()
+	videoB.WaitForLen(50_000)
+	audioA.WaitForLen(10_000)
+	audioB.WaitForLen(10_000)
 
-		// A kept receiving while B joined and played.
-		require.Greater(t, videoA.Len(), aBefore, "first subscriber stalled when the second joined")
+	// A kept receiving while B joined and played.
+	require.Greater(t, videoA.Len(), aBefore, "first subscriber stalled when the second joined")
 
-		for _, c := range []*testconn.Conn{
-			upServer, upClient, aServer, aClient, bServer, bClient,
-		} {
-			_ = c.CloseWithError(0, "")
-		}
-		synctest.Wait()
-	})
+	for _, c := range []*testconn.Conn{
+		upServer, upClient, aServer, aClient, bServer, bClient,
+	} {
+		_ = c.CloseWithError(0, "")
+	}
+	synctest.Wait()
 }

@@ -121,13 +121,20 @@ func (p *asyncPipe) CloseWithError(err error) error {
 // Pair creates a pair of in-memory connections (server, client)
 // wired together. Streams opened on one side appear on the other's
 // Accept calls. Both connections share contexts so that closing either
-// side cancels both.
+// side cancels both. They speak the draft this build prefers.
 func Pair() (*Conn, *Conn) {
+	return PairALPN(moqtransport.SupportedALPNs()[0])
+}
+
+// PairALPN is Pair for a session that speaks the draft alpn names, one of
+// moqtransport.SupportedALPNs.
+func PairALPN(alpn string) (*Conn, *Conn) {
 	serverCtx, serverCancel := context.WithCancel(context.Background())
 	clientCtx, clientCancel := context.WithCancel(context.Background())
 
 	server := &Conn{
 		perspective: moqtransport.PerspectiveServer,
+		alpn:        alpn,
 		ctx:         serverCtx,
 		cancel:      serverCancel,
 		cancelPeer:  clientCancel,
@@ -136,6 +143,7 @@ func Pair() (*Conn, *Conn) {
 	}
 	client := &Conn{
 		perspective: moqtransport.PerspectiveClient,
+		alpn:        alpn,
 		ctx:         clientCtx,
 		cancel:      clientCancel,
 		cancelPeer:  serverCancel,
@@ -152,6 +160,7 @@ func Pair() (*Conn, *Conn) {
 // Conn implements moqtransport.Connection using in-memory pipes.
 type Conn struct {
 	perspective moqtransport.Perspective
+	alpn        string
 	ctx         context.Context
 	cancel      context.CancelFunc
 	cancelPeer  context.CancelFunc
@@ -322,9 +331,9 @@ func (c *Conn) Perspective() moqtransport.Perspective {
 func (c *Conn) NegotiatedALPN() string {
 	// From draft-17 the negotiated protocol identifier is the whole of version
 	// negotiation, and a session cannot start without one it recognises. An
-	// in-memory connection has no TLS to negotiate it, so it reports what this
-	// build speaks.
-	return moqtransport.SupportedALPNs()[0]
+	// in-memory connection has no TLS to negotiate it, so it reports the one
+	// it was made with.
+	return c.alpn
 }
 
 // stream implements moqtransport.Stream (bidirectional).

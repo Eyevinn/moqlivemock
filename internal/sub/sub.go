@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Eyevinn/locmaf"
 	"github.com/Eyevinn/moqlivemock/internal"
@@ -429,68 +430,79 @@ func afterLocation(o *moqtransport.Object, loc moqtransport.Location) bool {
 	return o.ObjectID > loc.Object
 }
 
+// catalogReader is where the catalog's current Group comes from when
+// joining: a FETCH response or a draft-22 fill. Both read the same way.
+type catalogReader interface {
+	ReadObject(ctx context.Context) (*moqtransport.FetchObject, error)
+	Close() error
+}
+
+// fillWait bounds the wait for a catalog fill. A relay that does not serve
+// fills may open no fill stream at all, and then nothing would end the wait.
+const fillWait = 3 * time.Second
+
 // joiningCatalog retrieves the catalog the spec-recommended way (MSF draft-01
-// §5): a SUBSCRIBE with Filter Type Largest Object plus a relative Joining FETCH
-// (offset 0). The FETCH delivers the latest complete catalog (object 0 of the
-// current group) plus any deltas up to the live edge; the SUBSCRIBE then carries
-// subsequent updates. Objects at or before the subscription's largest location
-// are already covered by the FETCH and are skipped on the subscription, so this
-// also transparently dedupes a publisher that still replays object 0 on the
-// subscription.
+// §5): a SUBSCRIBE for what is published from now on, plus the current Group
+// up to the live edge. The latter is object 0 of the current group, the full
+// catalog, and any deltas after it. The SUBSCRIBE then carries subsequent
+// updates.
+//
+// Draft-18 asks for the current Group with a relative Joining FETCH (offset
+// 0). Draft-22 has no Joining FETCH: the SUBSCRIBE starts at the Next Object
+// and carries a fill of the current Group (draft-22 Section 3.5), which
+// arrives on a stream of its own. A fill that fails, or does not come, is
+// replaced by a standalone FETCH of the same Group.
+//
+// Objects at or before the subscription's largest location are already
+// covered by the FETCH or fill and are skipped on the subscription, which
+// also dedupes a publisher that replays object 0 there.
 func (h *Handler) joiningCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	rs, err := s.Subscribe(ctx, namespace, h.CatalogTrack)
+	draft18 := s.Version() == moqtransport.Version18
+	var opts []moqtransport.SubscribeOption
+	if !draft18 {
+		opts = append(opts, moqtransport.WithFilter(moqtransport.NextObject()),
+			moqtransport.WithFill(moqtransport.FillRange(moqtransport.RelativeStart(1))))
+	}
+	rs, err := s.Subscribe(ctx, namespace, h.CatalogTrack, opts...)
 	if err != nil {
 		return err
 	}
 	largest, hasLargest := rs.LargestObject()
 	if !hasLargest {
 		_ = rs.Close()
-		return fmt.Errorf("catalog subscription reported no content; cannot perform joining fetch")
+		return fmt.Errorf("catalog subscription reported no content; cannot join it")
 	}
 
-	// Relative joining FETCH, offset 0. The namespace and track are the
-	// subscription's: naming it is the whole point, and the publisher derives
-	// the range from its Joining Location so the fetch and the subscription
-	// are contiguous.
-	rt, err := s.FetchRelative(ctx, rs, 0)
+	var applied int
+	if draft18 {
+		// The namespace and track are the subscription's: naming it is the
+		// whole point, and the publisher derives the range from its Joining
+		// Location so the fetch and the subscription are contiguous.
+		var fs *moqtransport.FetchStream
+		if fs, err = s.FetchRelative(ctx, rs, 0); err == nil {
+			applied, err = h.readCatalogGroup(ctx, fs, "joining fetch")
+		}
+	} else {
+		fillCtx, cancel := context.WithTimeout(ctx, fillWait)
+		applied, err = h.readCatalogGroup(fillCtx, rs.Fill(), "fill")
+		cancel()
+		if err != nil || applied == 0 {
+			slog.Warn("catalog fill brought no catalog, fetching its group instead",
+				"error", err, "group", largest.Group)
+			var fs *moqtransport.FetchStream
+			fs, err = s.Fetch(ctx, namespace, h.CatalogTrack,
+				moqtransport.AbsoluteRange(moqtransport.Location{Group: largest.Group}, largest))
+			if err == nil {
+				applied, err = h.readCatalogGroup(ctx, fs, "fetch")
+			}
+		}
+	}
+	if err == nil && applied == 0 {
+		err = fmt.Errorf("the catalog's current group holds no catalog")
+	}
 	if err != nil {
 		_ = rs.Close()
 		return err
-	}
-
-	// Drain the fetch to its end. Object 0 of the group is the full catalog and
-	// anything after it is a delta; draining used to be impossible because
-	// there was no fetch-complete signal to stop on, so only the first object
-	// was read. ErrFetchComplete is that signal.
-	applied := 0
-	for {
-		o, rerr := rt.ReadObject(ctx)
-		if rerr != nil {
-			if !errors.Is(rerr, moqtransport.ErrFetchComplete) {
-				_ = rt.Close()
-				_ = rs.Close()
-				return fmt.Errorf("joining fetch: reading catalog: %w", rerr)
-			}
-			break
-		}
-		if o.EndOfRange != 0 {
-			// A gap the publisher chose to mark rather than fill.
-			slog.Debug("joining fetch reported a gap", "upTo", o.GroupID, "object", o.ObjectID)
-			continue
-		}
-		if aerr := h.applyCatalog(o.Payload, "catalog (joining fetch)"); aerr != nil {
-			_ = rt.Close()
-			_ = rs.Close()
-			return aerr
-		}
-		applied++
-		slog.Info("fetched catalog via joining fetch",
-			"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
-	}
-	_ = rt.Close()
-	if applied == 0 {
-		_ = rs.Close()
-		return fmt.Errorf("joining fetch returned no catalog objects")
 	}
 
 	// Continue reading catalog updates on the subscription, skipping anything
@@ -519,6 +531,34 @@ func (h *Handler) joiningCatalog(ctx context.Context, s *moqtransport.Session, n
 		}
 	}()
 	return nil
+}
+
+// readCatalogGroup drains a FETCH response or fill, applying each catalog
+// Object in turn: object 0 of a group is the full catalog and anything after
+// it a delta. It closes r, and reports how many it applied.
+func (h *Handler) readCatalogGroup(ctx context.Context, r catalogReader, via string) (int, error) {
+	defer func() { _ = r.Close() }()
+	applied := 0
+	for {
+		o, err := r.ReadObject(ctx)
+		if errors.Is(err, moqtransport.ErrFetchComplete) {
+			return applied, nil
+		}
+		if err != nil {
+			return applied, fmt.Errorf("%s: reading catalog: %w", via, err)
+		}
+		if o.EndOfRange != 0 {
+			// A gap the publisher chose to mark rather than fill.
+			slog.Debug("catalog "+via+" reported a gap", "upTo", o.GroupID, "object", o.ObjectID)
+			continue
+		}
+		if err := h.applyCatalog(o.Payload, "catalog ("+via+")"); err != nil {
+			return applied, err
+		}
+		applied++
+		slog.Info("fetched catalog via "+via,
+			"groupID", o.GroupID, "objectID", o.ObjectID, "payloadLength", len(o.Payload))
+	}
 }
 
 func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
@@ -619,12 +659,11 @@ func (h *Handler) subscribeToCatalog(ctx context.Context, s *moqtransport.Sessio
 }
 
 func (h *Handler) fetchCatalog(ctx context.Context, s *moqtransport.Session, namespace []string) error {
-	// The catalog is one object at {0, 0}. A standalone FETCH names its range
-	// explicitly, and an End Location whose Object is 0 asks for the whole of
-	// that group.
+	// The catalog is one object at {0, 0}. A standalone FETCH for it names
+	// that Location as both ends of the range, which is inclusive.
+	catalogLocation := moqtransport.Location{Group: 0, Object: 0}
 	rt, err := s.Fetch(ctx, namespace, h.CatalogTrack,
-		moqtransport.Location{Group: 0, Object: 0},
-		moqtransport.Location{Group: 0, Object: 0})
+		moqtransport.AbsoluteRange(catalogLocation, catalogLocation))
 	if err != nil {
 		return err
 	}

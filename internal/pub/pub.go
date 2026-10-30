@@ -45,6 +45,7 @@ func (h *Handler) Handle(ctx context.Context, conn moqtransport.Connection) {
 		SubscribeNamespaceHandler: h.getSubscribeNamespaceHandler(),
 		SubscribeHandler:          h.getSubscribeHandler(ctx),
 		FetchHandler:              h.getFetchHandler(),
+		FillHandler:               h.getFillHandler(),
 		Implementation:            "Eyevinn/moqlivemock",
 		Qlogger: qlogfilter.Wrap(qlog.NewQLOGHandler(h.Logfh, "MoQ QLOG", "MoQ QLOG",
 			conn.Perspective().String(), moqtransport.QlogSchema), h.QlogFilter),
@@ -166,26 +167,9 @@ func (h *Handler) findNamespace(ns []string) *NamespaceEntry {
 	return nil
 }
 
-// locationLess reports whether a precedes b in (group, object) order.
-func locationLess(a, b moqtransport.Location) bool {
-	if a.Group != b.Group {
-		return a.Group < b.Group
-	}
-	return a.Object < b.Object
-}
-
-// locationInFetchRange reports whether loc falls within a FETCH's requested
-// [start, end) range. An EndObject of 0 means "to the end of EndGroup" per the
-// FETCH semantics (draft-ietf-moq-transport §9.16.3).
-func locationInFetchRange(loc, start, end moqtransport.Location) bool {
-	if locationLess(loc, start) {
-		return false
-	}
-	if end.Object == 0 {
-		return loc.Group <= end.Group
-	}
-	return locationLess(loc, end)
-}
+// catalogLocation is where the catalog lives: it is a single Object, {0, 0},
+// so that is also its subscription's Largest Object.
+var catalogLocation = moqtransport.Location{Group: 0, Object: 0}
 
 func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 	return moqtransport.FetchHandlerFunc(func(r *moqtransport.FetchRequest) {
@@ -209,48 +193,86 @@ func (h *Handler) getFetchHandler() moqtransport.FetchHandler {
 			return
 		}
 
+		// The catalog is the Track's only Object, so any range that is not
+		// empty holds it. One that starts after it is INVALID_RANGE (draft-22
+		// Section 9.20.9). A draft-18 joining FETCH arrives already resolved
+		// against its subscription, and resolves the same way.
+		rng, ok := r.Range(catalogLocation, true)
+		if !ok {
+			if err := r.Reject(moqtransport.RequestErrorInvalidRange, "range starts after the catalog"); err != nil {
+				slog.Error("failed to reject fetch", "error", err)
+			}
+			return
+		}
 		response, err := r.Accept()
 		if err != nil {
 			slog.Error("failed to accept fetch", "error", err)
 			return
 		}
-		// The catalog is a single object at {group:0, object:0}. Honor the
-		// requested range -- already resolved against the subscription for a
-		// joining fetch -- and serve the object only when it covers {0,0}; any
-		// other range yields an empty response, which is a FETCH_HEADER and a
-		// FIN and is a meaningful answer in itself.
-		start, end := r.Range()
-		catalogLoc := moqtransport.Location{Group: 0, Object: 0}
-		if locationInFetchRange(catalogLoc, start, end) {
-			catalogJSON, err := json.Marshal(nsEntry.Catalog)
-			if err != nil {
-				slog.Error("failed to marshal catalog", "error", err)
-				return
-			}
-			// The priority travels with the object. It does not schedule the
-			// stream: a FETCH response can mix priorities, so moqtransport
-			// schedules it at the default publisher priority.
-			if err := response.WriteObject(moqtransport.Object{
-				GroupID:  0,
-				ObjectID: 0,
-				Priority: CatalogPriority,
-				Payload:  catalogJSON,
-			}); err != nil {
-				slog.Error("failed to write catalog via fetch", "error", err)
-				response.Reset(moqtransport.StreamErrorInternal)
-				return
-			}
-			joining, isJoining := r.Joining()
-			slog.Info("served catalog via FETCH", "namespace", r.Namespace(),
-				"joining", isJoining, "joiningRequestID", joining, "start", start, "end", end)
-		} else {
-			slog.Info("FETCH range excludes catalog object {0,0}; empty response",
-				"namespace", r.Namespace(), "start", start, "end", end)
+		if !h.serveCatalog(response, nsEntry) {
+			return
 		}
-		if err := response.Close(); err != nil {
-			slog.Error("failed to close fetch stream", "error", err)
+		joining, isJoining := r.Joining()
+		slog.Info("served catalog via FETCH", "namespace", r.Namespace(),
+			"joining", isJoining, "joiningRequestID", joining, "range", rng)
+	})
+}
+
+// getFillHandler serves the fills a draft-22 subscriber asks for along with a
+// SUBSCRIBE, which is how it joins a track at its current Group. As with
+// FETCH, only the catalog has a past to fill from: the media tracks are
+// generated live, from the next Group on. Refusing a fill resets its stream
+// and leaves the subscription alone.
+func (h *Handler) getFillHandler() moqtransport.FillHandler {
+	return moqtransport.FillHandlerFunc(func(r *moqtransport.FillRequest) {
+		nsEntry := h.findNamespace(r.Namespace())
+		if nsEntry == nil || nsEntry.Packaging == "moqmi" || r.Track() != "catalog" ||
+			!r.Range().Contains(catalogLocation) {
+			slog.Info("refusing fill", "namespace", r.Namespace(), "track", r.Track(),
+				"range", r.Range())
+			if err := r.Reject(moqtransport.StreamErrorInternal); err != nil {
+				slog.Debug("failed to refuse fill", "error", err)
+			}
+			return
+		}
+		response, err := r.Accept()
+		if err != nil {
+			slog.Error("failed to open fill", "error", err)
+			return
+		}
+		if h.serveCatalog(response, nsEntry) {
+			slog.Info("served catalog via fill", "namespace", r.Namespace(), "range", r.Range())
 		}
 	})
+}
+
+// serveCatalog writes the catalog Object to a FETCH or fill response and
+// closes it, and reports whether it got that far.
+func (h *Handler) serveCatalog(response *moqtransport.FetchResponse, nsEntry *NamespaceEntry) bool {
+	catalogJSON, err := json.Marshal(nsEntry.Catalog)
+	if err != nil {
+		slog.Error("failed to marshal catalog", "error", err)
+		response.Reset(moqtransport.StreamErrorInternal)
+		return false
+	}
+	// The priority travels with the object. It does not schedule the
+	// stream: a FETCH response can mix priorities, so moqtransport
+	// schedules it at the default publisher priority.
+	if err := response.WriteObject(moqtransport.Object{
+		GroupID:  catalogLocation.Group,
+		ObjectID: catalogLocation.Object,
+		Priority: CatalogPriority,
+		Payload:  catalogJSON,
+	}); err != nil {
+		slog.Error("failed to write catalog", "error", err)
+		response.Reset(moqtransport.StreamErrorInternal)
+		return false
+	}
+	if err := response.Close(); err != nil {
+		slog.Error("failed to close catalog response", "error", err)
+		return false
+	}
+	return true
 }
 
 func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.SubscribeHandler {
@@ -314,8 +336,7 @@ func (h *Handler) getSubscribeHandler(ctx context.Context) moqtransport.Subscrib
 			// subscription below for backward compatibility with
 			// subscribe-only clients; joining clients dedupe it against the
 			// FETCH (objects <= largest are skipped on the subscription).
-			subscription := accept(moqtransport.WithLargestObject(
-				moqtransport.Location{Group: 0, Object: 0}))
+			subscription := accept(moqtransport.WithLargestObject(catalogLocation))
 			if subscription == nil {
 				return
 			}

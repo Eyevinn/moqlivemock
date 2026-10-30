@@ -206,6 +206,7 @@ func (h *Handler) handle(ctx context.Context, conn moqtransport.Connection, upst
 	session.PublishNamespaceHandler = h.publishNamespaceHandler(session)
 	session.SubscribeHandler = h.subscribeHandler()
 	session.FetchHandler = h.fetchHandler()
+	session.FillHandler = h.fillHandler()
 	session.SubscribeNamespaceHandler = h.subscribeNamespaceHandler()
 
 	slog.Info("starting MoQ session", "perspective", conn.Perspective())
