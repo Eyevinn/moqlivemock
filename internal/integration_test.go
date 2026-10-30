@@ -13,6 +13,7 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal/pub"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
 	"github.com/Eyevinn/moqlivemock/internal/testconn"
+	"github.com/Eyevinn/moqtransport"
 	"github.com/Eyevinn/mp4ff/bits"
 	"github.com/Eyevinn/mp4ff/mp4"
 	"github.com/stretchr/testify/assert"
@@ -120,6 +121,16 @@ func newSubHandler(outs map[string]io.Writer) *sub.Handler {
 	}
 }
 
+// forEachDraft runs a synctest test once for every draft this build speaks,
+// named after its ALPN.
+func forEachDraft(t *testing.T, f func(t *testing.T, alpn string)) {
+	for _, alpn := range moqtransport.SupportedALPNs() {
+		t.Run(alpn, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) { f(t, alpn) })
+		})
+	}
+}
+
 // shutdown closes both connections and waits for goroutines to drain.
 func shutdown(sConn, cConn *testconn.Conn) {
 	_ = sConn.CloseWithError(0, "")
@@ -130,8 +141,8 @@ func shutdown(sConn, cConn *testconn.Conn) {
 func TestCatalogExchange(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
-	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := testconn.Pair()
+	forEachDraft(t, func(t *testing.T, alpn string) {
+		sConn, cConn := testconn.PairALPN(alpn)
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -156,8 +167,8 @@ func TestCatalogExchange(t *testing.T) {
 func TestJoiningCatalog(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
-	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := testconn.Pair()
+	forEachDraft(t, func(t *testing.T, alpn string) {
+		sConn, cConn := testconn.PairALPN(alpn)
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -192,8 +203,8 @@ func TestJoiningCatalog(t *testing.T) {
 func TestSubscribeCatalogLegacy(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
-	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := testconn.Pair()
+	forEachDraft(t, func(t *testing.T, alpn string) {
+		sConn, cConn := testconn.PairALPN(alpn)
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)
@@ -220,8 +231,8 @@ func TestSubscribeCatalogLegacy(t *testing.T) {
 func TestFetchCatalog(t *testing.T) {
 	asset, catalog := loadTestAsset(t)
 
-	synctest.Test(t, func(t *testing.T) {
-		sConn, cConn := testconn.Pair()
+	forEachDraft(t, func(t *testing.T, alpn string) {
+		sConn, cConn := testconn.PairALPN(alpn)
 
 		ph := newPubHandler(asset, catalog)
 		go ph.Handle(t.Context(), sConn)

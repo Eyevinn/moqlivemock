@@ -297,7 +297,7 @@ func TestFetchPrefixMatch(t *testing.T) {
 
 		deep := append(slices.Clone(testNamespace), "deep")
 		fs, err := subSession.Fetch(t.Context(), deep, "test-track",
-			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+			moqtransport.AbsoluteRange(moqtransport.Location{}, moqtransport.Location{}))
 		require.NoError(t, err)
 		require.Equal(t, deep, <-asked)
 		fo, err := fs.ReadObject(t.Context())
@@ -531,7 +531,7 @@ func TestFetchProxied(t *testing.T) {
 		require.NoError(t, err)
 
 		fs, err := subSession.Fetch(t.Context(), testNamespace, "test-track",
-			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+			moqtransport.AbsoluteRange(moqtransport.Location{}, moqtransport.Location{}))
 		require.NoError(t, err)
 		fo, err := fs.ReadObject(t.Context())
 		require.NoError(t, err)
@@ -579,7 +579,7 @@ func TestFetchFromCache(t *testing.T) {
 		}
 
 		fs, err := subSession.Fetch(t.Context(), testNamespace, "test-track",
-			moqtransport.Location{Group: 1, Object: 0}, moqtransport.Location{Group: 1, Object: 2})
+			moqtransport.AbsoluteRange(moqtransport.Location{Group: 1}, moqtransport.Location{Group: 1, Object: 1}))
 		require.NoError(t, err)
 		var payloads []string
 		for {
@@ -592,6 +592,81 @@ func TestFetchFromCache(t *testing.T) {
 			payloads = append(payloads, string(fo.Payload))
 		}
 		require.Equal(t, []string{"a", "b"}, payloads)
+
+		shutdown(psConn, pcConn, ssConn, scConn)
+	})
+}
+
+// TestFill: a draft-22 subscriber joining with a fill gets it from the
+// relay's cache when the cache covers the fill range. The publisher has no
+// FetchHandler, so a fill the relay has to fetch upstream fails, and the
+// relay resets it; the subscription carries on regardless.
+func TestFill(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+
+		pub := newFanoutPublisher() // no FetchHandler
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subSession, ssConn, scConn := connect(t, h)
+		require.Equal(t, moqtransport.Version22, subSession.Version())
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+		first, err := subSession.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		sg1, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		for i, p := range []string{"a", "b"} {
+			_, err = sg1.WriteObject(uint64(i), []byte(p))
+			require.NoError(t, err)
+		}
+		require.NoError(t, sg1.Close())
+		sg2, err := upSub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = sg2.WriteObject(0, []byte("c")) // completes group 1 in the cache
+		require.NoError(t, err)
+		for range 3 {
+			_, err := first.ReadObject(t.Context())
+			require.NoError(t, err)
+		}
+
+		// Two Groups back from the Next Group is Group 1, and the fill ends
+		// at the Largest Object, {2, 0}: all of it is cached.
+		cached, err := subSession.Subscribe(t.Context(), testNamespace, "test-track",
+			moqtransport.WithFilter(moqtransport.NextObject()),
+			moqtransport.WithFill(moqtransport.FillRange(moqtransport.RelativeStart(2))))
+		require.NoError(t, err)
+		var payloads []string
+		for {
+			fo, err := cached.Fill().ReadObject(t.Context())
+			if err != nil {
+				require.ErrorIs(t, err, moqtransport.ErrFetchComplete)
+				break
+			}
+			payloads = append(payloads, string(fo.Payload))
+		}
+		require.Equal(t, []string{"a", "b", "c"}, payloads)
+
+		// Group 0 was never cached, so this fill goes upstream and fails.
+		uncached, err := subSession.Subscribe(t.Context(), testNamespace, "test-track",
+			moqtransport.WithFilter(moqtransport.NextObject()),
+			moqtransport.WithFill(moqtransport.FillRange(moqtransport.AbsoluteStart(moqtransport.Location{}))))
+		require.NoError(t, err)
+		_, err = uncached.Fill().ReadObject(t.Context())
+		require.Error(t, err)
+		require.NotErrorIs(t, err, moqtransport.ErrFetchComplete)
+
+		_, err = sg2.WriteObject(1, []byte("d"))
+		require.NoError(t, err)
+		for {
+			o, err := uncached.ReadObject(t.Context())
+			require.NoError(t, err, "the subscription outlives its failed fill")
+			if string(o.Payload) == "d" {
+				break
+			}
+		}
 
 		shutdown(psConn, pcConn, ssConn, scConn)
 	})
@@ -955,7 +1030,7 @@ func TestFetchProxiedUpstreamTimeout(t *testing.T) {
 
 		start := time.Now()
 		_, err = subSession.Fetch(t.Context(), testNamespace, "test-track",
-			moqtransport.Location{Group: 0, Object: 0}, moqtransport.Location{Group: 0, Object: 1})
+			moqtransport.AbsoluteRange(moqtransport.Location{}, moqtransport.Location{}))
 		requireRequestError(t, err, moqtransport.RequestErrorTimeout)
 		require.Equal(t, time.Second, time.Since(start))
 

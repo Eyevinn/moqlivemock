@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/Dash-Industry-Forum/livesim2 v1.9.0
-	github.com/Eyevinn/moqtransport v0.14.1
+	github.com/Eyevinn/moqtransport v0.14.2-0.20261030145823-05528bd76a86
 	github.com/Eyevinn/mp4ff v0.60.0
 	github.com/quic-go/quic-go v0.62.0
 	github.com/quic-go/webtransport-go v0.13.0

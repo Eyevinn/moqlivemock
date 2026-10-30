@@ -362,11 +362,21 @@ func (c *groupCache) newestGroupObjects() []*moqtransport.Object {
 	return out
 }
 
-// collectRange returns the cached objects of a FETCH range in ascending
-// (group, object) order, and whether the cache fully covers the range. Only
-// a fully covered range is served from cache; anything else is proxied.
-func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtransport.Object, bool) {
-	if len(c.order) == 0 || end.Group < start.Group {
+// collectRange returns the cached objects of a range of the track, under
+// rt.mu; see groupCache.collectRange.
+func (rt *relayTrack) collectRange(rng moqtransport.LocationRange) ([]*moqtransport.Object, bool) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	return rt.cache.collectRange(rng)
+}
+
+// collectRange returns the cached objects of a FETCH or fill range, both ends
+// inclusive, in ascending (group, object) order, and whether the cache fully
+// covers the range. Only a fully covered range is served from cache; anything
+// else goes upstream.
+func (c *groupCache) collectRange(rng moqtransport.LocationRange) ([]*moqtransport.Object, bool) {
+	start, end := rng.Start, rng.End
+	if len(c.order) == 0 || rng.Open || end.Group < start.Group {
 		return nil, false
 	}
 	// More groups than the cache can hold cannot be covered; this also
@@ -384,8 +394,8 @@ func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtrans
 			continue
 		}
 		// The newest group is still growing: it covers the range only when
-		// the range ends inside it, below what has arrived.
-		if g != newest || g != end.Group || end.Object == 0 || end.Object-1 > cg.maxObject {
+		// the range ends inside it, at or below what has arrived.
+		if g != newest || g != end.Group || end.Object > cg.maxObject {
 			return nil, false
 		}
 	}
@@ -398,8 +408,7 @@ func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtrans
 			if obj.EndsSubgroup || obj.SubgroupReset {
 				continue // markers are subgroup bookkeeping, not FETCH records
 			}
-			loc := moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID}
-			if locationInFetchRange(loc, start, end) {
+			if rng.Contains(moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID}) {
 				out = append(out, obj)
 			}
 		}
@@ -411,17 +420,4 @@ func (c *groupCache) collectRange(start, end moqtransport.Location) ([]*moqtrans
 		return out[i].ObjectID < out[j].ObjectID
 	})
 	return out, true
-}
-
-// locationInFetchRange reports whether loc falls within a FETCH's requested
-// [start, end) range. An EndObject of 0 means "to the end of EndGroup" per
-// the FETCH semantics (draft-ietf-moq-transport §9.16.3).
-func locationInFetchRange(loc, start, end moqtransport.Location) bool {
-	if locationLess(loc, start) {
-		return false
-	}
-	if end.Object == 0 {
-		return loc.Group <= end.Group
-	}
-	return locationLess(loc, end)
 }
