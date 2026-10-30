@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - mlmrel rejected a SUBSCRIBE or FETCH whose namespace extends an announced one.
   It now routes it to the publisher of the longest announced prefix.
+- mlmrel dropped a namespace announced by two publishers when one of them
+  withdrew it. The namespace now lasts until its last publisher leaves.
 - mlmtest withdraws its namespace before closing a publisher session, so a
   relay that notices a closed session late, such as imquic, does not refuse the
   next test case's announcement.

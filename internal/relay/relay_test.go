@@ -634,6 +634,78 @@ func TestSubscribeNamespacePropagation(t *testing.T) {
 	})
 }
 
+// TestMultiPublisherNamespaceRetention is the interop runner's
+// publish-namespace-multi-publisher-retention case: two publishers announce
+// the same namespace and one leaves, by withdrawing or by dropping its
+// connection. The other still publishes it (Section 9.3), so the namespace
+// stays: no NAMESPACE_DONE, a late namespace subscriber is told about it, and
+// a SUBSCRIBE reaches the publisher that remains. Only the last publisher to
+// leave ends it.
+func TestMultiPublisherNamespaceRetention(t *testing.T) {
+	for _, leave := range []string{"withdraw", "disconnect"} {
+		t.Run(leave, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				h := relay.NewHandler(io.Discard)
+				observer, osConn, ocConn := connect(t, h)
+				nsSub, err := observer.SubscribeNamespace(t.Context(), []string{"moq-test"})
+				require.NoError(t, err)
+
+				asked := make(chan []string, 3)
+				first := acceptingPublisher("first", asked)
+				fsConn, fcConn := connectSession(t, h, first)
+				firstPub, err := first.PublishNamespace(t.Context(), testNamespace)
+				require.NoError(t, err)
+				ev := <-nsSub.Namespaces()
+				require.True(t, ev.Available)
+
+				second := acceptingPublisher("second", asked)
+				s2sConn, s2cConn := connectSession(t, h, second)
+				secondPub, err := second.PublishNamespace(t.Context(), testNamespace)
+				require.NoError(t, err)
+
+				// While both publish, the newer announcement serves.
+				subSession, ssConn, scConn := connect(t, h)
+				_, err = subSession.Subscribe(t.Context(), testNamespace, "track-a")
+				require.NoError(t, err)
+				require.Equal(t, "second", (<-asked)[0])
+
+				if leave == "withdraw" {
+					require.NoError(t, secondPub.Close())
+				} else {
+					shutdown(s2sConn, s2cConn)
+				}
+				synctest.Wait()
+				select {
+				case ev := <-nsSub.Namespaces():
+					t.Fatalf("namespace event %+v while the first publisher remains", ev)
+				default:
+				}
+
+				late, lsConn, lcConn := connect(t, h)
+				lateSub, err := late.SubscribeNamespace(t.Context(), []string{"moq-test"})
+				require.NoError(t, err)
+				ev = <-lateSub.Namespaces()
+				require.True(t, ev.Available)
+				require.Equal(t, testNamespace, ev.Namespace)
+
+				_, err = subSession.Subscribe(t.Context(), testNamespace, "track-b")
+				require.NoError(t, err)
+				require.Equal(t, "first", (<-asked)[0])
+
+				require.NoError(t, firstPub.Close())
+				ev = <-nsSub.Namespaces()
+				require.False(t, ev.Available)
+				ev = <-lateSub.Namespaces()
+				require.False(t, ev.Available)
+				_, err = subSession.Subscribe(t.Context(), testNamespace, "track-c")
+				requireRequestError(t, err, moqtransport.RequestErrorDoesNotExist)
+
+				shutdown(osConn, ocConn, fsConn, fcConn, s2sConn, s2cConn, ssConn, scConn, lsConn, lcConn)
+			})
+		})
+	}
+}
+
 // TestAnnouncementNotForwardedToSilentSessions: a session that never sent
 // SUBSCRIBE_NAMESPACE is told nothing. Section 8.4 has a relay forward
 // PUBLISH_NAMESPACE to matching subscribers, and a session that asked for
