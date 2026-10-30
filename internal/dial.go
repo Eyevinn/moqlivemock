@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/Eyevinn/moqtransport"
@@ -76,6 +78,23 @@ type DialConfig struct {
 	// ALPNs are the MOQT versions offered, as the QUIC ALPN or the
 	// WebTransport subprotocol. Nil offers every version this build speaks.
 	ALPNs []string
+}
+
+// DraftALPNs turns a -draft flag or DRAFT variable into the ALPNs to offer.
+// It takes the number alone, "22", or the interop runner's "draft-22". Empty
+// offers every draft this build speaks, which is nil, and a draft the build
+// does not speak is an error: from draft-17 the ALPN is the whole of version
+// negotiation, so there is nothing to fall back on.
+func DraftALPNs(draft string) ([]string, error) {
+	if draft == "" {
+		return nil, nil
+	}
+	alpn := "moqt-" + strings.TrimPrefix(draft, "draft-")
+	if !slices.Contains(moqtransport.SupportedALPNs(), alpn) {
+		return nil, fmt.Errorf("draft %q is not supported; this build speaks %v",
+			draft, moqtransport.SupportedALPNs())
+	}
+	return []string{alpn}, nil
 }
 
 // Dial opens a connection to the relay over the transport the URL's scheme

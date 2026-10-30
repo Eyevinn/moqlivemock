@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +20,7 @@ const defaultTimeout = 5 * time.Second
 
 type testCase struct {
 	name string
-	fn   func(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error
+	fn   func(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error
 }
 
 var testCases = []testCase{
@@ -38,7 +37,8 @@ func main() {
 	test := flag.String("t", "", "Specific test to run (default: all)")
 	list := flag.Bool("l", false, "List available tests")
 	tlsSkipVerify := flag.Bool("tls-disable-verify", false, "Skip TLS verification")
-	draft := flag.Int("draft", 18, "MoQ Transport draft version (18)")
+	draft := flag.String("draft", "",
+		"MoQ Transport draft to speak, 18 or 22, also as draft-22 (default: offer both and let the relay pick)")
 	flag.Parse()
 
 	// Environment variable overrides
@@ -51,13 +51,13 @@ func main() {
 	if os.Getenv("TLS_DISABLE_VERIFY") == "1" {
 		*tlsSkipVerify = true
 	}
+	// The interop runner sets DRAFT to the registry's spelling, draft-22.
 	if env := os.Getenv("DRAFT"); env != "" {
-		if d, err := strconv.Atoi(env); err == nil {
-			*draft = d
-		}
+		*draft = env
 	}
-	if *draft != 18 {
-		fmt.Fprintf(os.Stderr, "Error: draft must be 18, got %d\n", *draft)
+	alpns, err := internal.DraftALPNs(*draft)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -95,19 +95,22 @@ func main() {
 
 	// From draft-17 the ALPN is the whole of version negotiation, and the
 	// library knows which ones it speaks.
-	alpn := moqtransport.SupportedALPNs()[0]
+	offered := alpns
+	if offered == nil {
+		offered = moqtransport.SupportedALPNs()
+	}
 
 	// TAP v14 output
 	fmt.Println("TAP version 14")
 	fmt.Printf("# moqlivemock %s\n", internal.Version())
 	fmt.Printf("# Relay: %s\n", *relay)
-	fmt.Printf("# Draft: %d (ALPN: %s)\n", *draft, alpn)
+	fmt.Printf("# ALPN offered: %s\n", strings.Join(offered, ", "))
 	fmt.Printf("1..%d\n", len(cases))
 
 	failed := 0
 	for i, tc := range cases {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-		err := tc.fn(ctx, *relay, *tlsSkipVerify, *draft)
+		err := tc.fn(ctx, *relay, *tlsSkipVerify, alpns)
 		cancel()
 
 		num := i + 1
@@ -130,12 +133,14 @@ func main() {
 // the AUTHORITY and PATH setup options (draft-ietf-moq-transport-18 Section
 // 3.1.4), which a relay may need to accept the session; over WebTransport the
 // CONNECT request carries them.
-func connect(ctx context.Context, relay string, tlsSkipVerify bool, s *moqtransport.Session) error {
+//
+// alpns are the drafts offered, nil for all of them.
+func connect(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string, s *moqtransport.Session) error {
 	target, err := internal.ParseRelayURL(relay)
 	if err != nil {
 		return err
 	}
-	conn, err := target.Dial(ctx, internal.DialConfig{SkipVerify: tlsSkipVerify})
+	conn, err := target.Dial(ctx, internal.DialConfig{SkipVerify: tlsSkipVerify, ALPNs: alpns})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -148,7 +153,7 @@ func connect(ctx context.Context, relay string, tlsSkipVerify bool, s *moqtransp
 }
 
 // runSession connects a session with a no-op handler and returns it.
-func runSession(ctx context.Context, relay string, tlsSkipVerify bool) (*moqtransport.Session, error) {
+func runSession(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) (*moqtransport.Session, error) {
 	s := &moqtransport.Session{
 		// Accept announcements from the relay.
 		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
@@ -157,15 +162,15 @@ func runSession(ctx context.Context, relay string, tlsSkipVerify bool) (*moqtran
 			}),
 		Implementation: "Eyevinn/mlmtest",
 	}
-	if err := connect(ctx, relay, tlsSkipVerify, s); err != nil {
+	if err := connect(ctx, relay, tlsSkipVerify, alpns, s); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
 // testSetupOnly: connect, exchange SETUP, close.
-func testSetupOnly(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
-	s, err := runSession(ctx, relay, tlsSkipVerify)
+func testSetupOnly(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
+	s, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return err
 	}
@@ -174,8 +179,8 @@ func testSetupOnly(ctx context.Context, relay string, tlsSkipVerify bool, draft 
 }
 
 // testAnnounceOnly: setup, PUBLISH_NAMESPACE, wait for REQUEST_OK, close.
-func testAnnounceOnly(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
-	s, err := runSession(ctx, relay, tlsSkipVerify)
+func testAnnounceOnly(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
+	s, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return err
 	}
@@ -188,8 +193,8 @@ func testAnnounceOnly(ctx context.Context, relay string, tlsSkipVerify bool, dra
 }
 
 // testPublishNamespaceDone: setup, PUBLISH_NAMESPACE, REQUEST_OK, PUBLISH_NAMESPACE_DONE, close.
-func testPublishNamespaceDone(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
-	s, err := runSession(ctx, relay, tlsSkipVerify)
+func testPublishNamespaceDone(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
+	s, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return err
 	}
@@ -204,8 +209,8 @@ func testPublishNamespaceDone(ctx context.Context, relay string, tlsSkipVerify b
 }
 
 // testSubscribeError: setup, SUBSCRIBE non-existent track, expect REQUEST_ERROR.
-func testSubscribeError(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
-	s, err := runSession(ctx, relay, tlsSkipVerify)
+func testSubscribeError(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
+	s, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return err
 	}
@@ -227,7 +232,7 @@ func testSubscribeError(ctx context.Context, relay string, tlsSkipVerify bool, d
 // subscriptions. The announcement lasts as long as the returned handle is
 // open: closing it is draft-18's PUBLISH_NAMESPACE_DONE.
 func runPublisherSession(
-	ctx context.Context, relay string, tlsSkipVerify bool, namespace []string,
+	ctx context.Context, relay string, tlsSkipVerify bool, alpns []string, namespace []string,
 ) (*moqtransport.Session, *moqtransport.NamespacePublication, error) {
 	s := &moqtransport.Session{
 		PublishNamespaceHandler: moqtransport.PublishNamespaceHandlerFunc(
@@ -240,7 +245,7 @@ func runPublisherSession(
 			}),
 		Implementation: "Eyevinn/mlmtest",
 	}
-	if err := connect(ctx, relay, tlsSkipVerify, s); err != nil {
+	if err := connect(ctx, relay, tlsSkipVerify, alpns, s); err != nil {
 		return nil, nil, fmt.Errorf("publisher session: %w", err)
 	}
 	publication, err := s.PublishNamespace(ctx, namespace)
@@ -279,18 +284,18 @@ func closePublisher(s *moqtransport.Session, publication *moqtransport.Namespace
 }
 
 // testAnnounceSubscribe: publisher announces, subscriber subscribes, both succeed.
-func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
+func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
 	ns := []string{"moq-test", "interop"}
 
 	// Publisher: connect, setup, announce
-	pub, publication, err := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	pub, publication, err := runPublisherSession(ctx, relay, tlsSkipVerify, alpns, ns)
 	if err != nil {
 		return fmt.Errorf("publisher: %w", err)
 	}
 	defer func() { _ = closePublisher(pub, publication) }()
 
 	// Subscriber: connect, setup, subscribe
-	sub, err := runSession(ctx, relay, tlsSkipVerify)
+	sub, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return fmt.Errorf("subscriber session: %w", err)
 	}
@@ -305,11 +310,11 @@ func testAnnounceSubscribe(ctx context.Context, relay string, tlsSkipVerify bool
 
 // testSubscribeBeforeAnnounce: subscriber subscribes first, publisher 500ms later.
 // Either SUBSCRIBE_OK or REQUEST_ERROR is valid.
-func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerify bool, draft int) error {
+func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerify bool, alpns []string) error {
 	ns := []string{"moq-test", "interop"}
 
 	// Subscriber: connect first
-	sub, err := runSession(ctx, relay, tlsSkipVerify)
+	sub, err := runSession(ctx, relay, tlsSkipVerify, alpns)
 	if err != nil {
 		return fmt.Errorf("subscriber session: %w", err)
 	}
@@ -327,7 +332,7 @@ func testSubscribeBeforeAnnounce(ctx context.Context, relay string, tlsSkipVerif
 	// Wait 500ms, then publisher connects and announces
 	time.Sleep(500 * time.Millisecond)
 
-	pub, publication, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, ns)
+	pub, publication, pubErr := runPublisherSession(ctx, relay, tlsSkipVerify, alpns, ns)
 	if pubErr != nil {
 		return fmt.Errorf("publisher: %w", pubErr)
 	}

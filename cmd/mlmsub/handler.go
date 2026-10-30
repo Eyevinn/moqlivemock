@@ -19,12 +19,13 @@ func relayURL(addr string) (internal.RelayURL, error) {
 }
 
 // runClientWithDial connects to the relay and runs the subscriber on the
-// connection, offering alpn as the only MOQT version. It does not verify the
-// server certificate: the peers are test servers on self-signed certificates.
+// connection, offering the MOQT versions alpns names (nil: all of them). It
+// does not verify the server certificate: the peers are test servers on
+// self-signed certificates.
 func runClientWithDial(
-	ctx context.Context, relay internal.RelayURL, alpn string, h *sub.Handler, outs map[string]io.Writer,
+	ctx context.Context, relay internal.RelayURL, alpns []string, h *sub.Handler, outs map[string]io.Writer,
 ) error {
-	conn, err := relay.Dial(ctx, internal.DialConfig{SkipVerify: true, ALPNs: []string{alpn}})
+	conn, err := relay.Dial(ctx, internal.DialConfig{SkipVerify: true, ALPNs: alpns})
 	if err != nil {
 		return err
 	}

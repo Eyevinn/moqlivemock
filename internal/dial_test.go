@@ -41,3 +41,24 @@ func TestParseRelayURLRejects(t *testing.T) {
 		assert.Error(t, err, raw)
 	}
 }
+
+func TestDraftALPNs(t *testing.T) {
+	for _, c := range []struct {
+		draft string
+		want  []string
+	}{
+		{"", nil},
+		{"22", []string{"moqt-22"}},
+		{"draft-22", []string{"moqt-22"}},
+		{"18", []string{"moqt-18"}},
+		{"draft-18", []string{"moqt-18"}},
+	} {
+		got, err := DraftALPNs(c.draft)
+		require.NoError(t, err, c.draft)
+		assert.Equal(t, c.want, got, c.draft)
+	}
+	for _, draft := range []string{"16", "draft-20", "moqt-22", "x"} {
+		_, err := DraftALPNs(draft)
+		assert.Error(t, err, draft)
+	}
+}
