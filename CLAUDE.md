@@ -20,15 +20,17 @@ moqlivemock is a Go-based MoQ (Media over QUIC) live streaming mock implementati
 
 ### MoQ Transport Dependency
 
-Uses `github.com/Eyevinn/moqtransport`, on **draft-18**. Drafts 14 and 16 are
-gone: draft-17 changed the varint encoding, moved SETUP onto a pair of
+Uses `github.com/Eyevinn/moqtransport`, on **draft-22 and draft-18**, picked
+per session by ALPN (`Session.Version()`). Drafts 14 and 16 are gone:
+draft-17 changed the varint encoding, moved SETUP onto a pair of
 unidirectional streams and gave every request its own bidirectional stream, so
 nothing of the older wire format survives.
 
 The negotiated protocol identifier is the whole of version negotiation from
 draft-17 on — SETUP carries no version field — so `moqtransport.SupportedALPNs()`
 is the single source for both the QUIC ALPN list and the WebTransport
-subprotocol list. Do not hard-code `moqt-18` anywhere.
+subprotocol list. Do not hard-code `moqt-18` or `moqt-22` anywhere;
+`internal.DraftALPNs` turns a `-draft`/`DRAFT` value into the list to offer.
 
 Consequences worth knowing:
 
@@ -46,9 +48,19 @@ Consequences worth knowing:
   the stream, so a subgroup carrying properties must be opened with
   `moqtransport.WithObjectProperties()`.
 
-While the transport's draft-18 branch is in flight, `go.mod` has a
-`replace github.com/Eyevinn/moqtransport => ../moqtransport`. That must not
-reach main.
+Where the drafts differ for moqlivemock:
+
+- Draft-22 has no joining FETCH. A subscriber joins at the current group with
+  `WithFilter(NextObject())` plus `WithFill(FillRange(RelativeStart(1)))`, and
+  reads the fill from `RemoteTrack.Fill()`; mlmsub's catalog join does this.
+  A publisher serves fills with `Session.FillHandler`: mlmpub serves only the
+  catalog (media is generated from the next group on), and mlmrel serves a
+  fill from its group cache or with a FETCH of the same range upstream.
+- FETCH ranges are a `LocationFilter`, inclusive at both ends on both drafts.
+  `FetchRequest.Range(largest, has)` resolves one against the publisher's
+  Largest Object.
+- Tests that should cover both drafts use `testconn.PairALPN`; `Pair` speaks
+  the first of `moqtransport.SupportedALPNs()`, which is draft-22.
 
 ### Multi-Namespace Architecture
 

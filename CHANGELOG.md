@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MOQT draft-22 alongside draft-18, on moqtransport v0.15.0. mlmsub and mlmtest
+  offer both and pin one with `-draft`/`DRAFT`, which now also takes `draft-22`.
+- On draft-22, mlmsub joins the catalog with a fill instead of a joining FETCH;
+  mlmpub serves catalog fills and mlmrel serves fills from its cache or upstream.
+
 ### Fixed
 
 - mlmrel rejected a SUBSCRIBE or FETCH whose namespace extends an announced one.

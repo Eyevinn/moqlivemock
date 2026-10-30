@@ -45,15 +45,19 @@ CMSF catalog additionally offers a LOCMAF (Low Overhead CMAF) variant of every
 track. See the [Namespaces](#namespaces) section below for details.
 
 This project uses [moqtransport][moqtransport] for the MoQ transport layer and
-speaks [MOQT draft-18][moqt] (`moqt-18`) only. Drafts 14 and 16 are gone:
-draft-17 changed the variable-length integer encoding, moved SETUP onto a pair
-of unidirectional streams and gave every request its own bidirectional stream,
-so nothing of the older wire format survives.
+speaks [MOQT][moqt] draft-22 (`moqt-22`) and draft-18 (`moqt-18`), the two
+drafts the interop events target. Drafts 14 and 16 are gone: draft-17 changed
+the variable-length integer encoding, moved SETUP onto a pair of unidirectional
+streams and gave every request its own bidirectional stream, so nothing of the
+older wire format survives.
 
 From draft-17 the negotiated protocol identifier *is* the version negotiation —
 SETUP carries no version field — for both native QUIC (TLS ALPN) and
-WebTransport (subprotocol). A peer that offers no identifier mlmpub speaks
-cannot be spoken to at all, rather than falling back.
+WebTransport (subprotocol). mlmpub and mlmrel accept either draft, and mlmsub
+and mlmtest offer both, draft-22 first, unless `-draft` (or `DRAFT` for
+mlmtest, which also takes the interop runner's `draft-22` spelling) names one.
+A peer that offers no identifier they speak cannot be spoken to at all, rather
+than falling back.
 
 ## Namespaces
 
@@ -172,12 +176,13 @@ For CMSF and LOC namespaces the client retrieves the catalog track first, then
 subscribes to the media tracks listed in that catalog. For moq-mi there is no
 catalog, so the client subscribes directly to the fixed track names.
 
-By default the catalog is retrieved with a SUBSCRIBE (Filter Type = Largest
-Object) plus a relative joining FETCH at offset 0, per
-[draft-ietf-moq-msf-01][msf-01] §5, so the client gets the latest catalog group
-aligned to the live edge in a single round-trip. The `mlmsub -catalog-mode` flag
-selects the strategy: `joining` (default), `subscribe` (legacy plain SUBSCRIBE),
-or `fetch` (legacy standalone FETCH).
+By default the client joins the catalog track at its current group, per
+[draft-ietf-moq-msf-01][msf-01] §5, so it gets the latest catalog group aligned
+to the live edge in a single round-trip. On draft-22 that is a SUBSCRIBE that
+starts at the Next Object and carries a fill of the current group; on draft-18,
+which has no fills, a SUBSCRIBE plus a relative joining FETCH at offset 0. The
+`mlmsub -catalog-mode` flag selects the strategy: `joining` (default),
+`subscribe` (legacy plain SUBSCRIBE), or `fetch` (legacy standalone FETCH).
 
 The bundled `mlmsub` client connects to a single namespace (default:
 `mlm/cmsf/clear`, configurable via `-namespace`, whose `/` separates the fields
