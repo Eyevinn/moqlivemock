@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/Eyevinn/moqlivemock/internal"
 	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
 	"github.com/Eyevinn/moqlivemock/internal/sub"
-	"github.com/Eyevinn/moqtransport"
 )
 
 const (
@@ -42,7 +40,7 @@ type options struct {
 	addr         string
 	trackname    string
 	duration     int
-	draft        int
+	draft        string
 	muxout       string
 	videoOut     string
 	audioOut     string
@@ -98,7 +96,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 	fs.BoolVar(&opts.acceptAny, "accept-any", false, "Accept any announced namespace")
 	fs.BoolVar(&opts.discover, "discover", false, "Discovery mode: list announced namespaces and exit")
 	fs.StringVar(&opts.catalogTrack, "catalog-track", "catalog", "Catalog track name (e.g. 'catalog' or 'catalog.json')")
-	fs.IntVar(&opts.draft, "draft", 18, "MoQ Transport draft version (18)")
+	fs.StringVar(&opts.draft, "draft", "",
+		"MoQ Transport draft to speak, 18 or 22 (default: offer both and let the server pick)")
 
 	err := fs.Parse(args[1:])
 	return &opts, err
@@ -244,11 +243,10 @@ func runClient(ctx context.Context, opts *options) error {
 	// From draft-17 the protocol identifier is the whole of version
 	// negotiation: SETUP carries no version field, so a session whose ALPN or
 	// WebTransport subprotocol is not a MOQT version cannot start at all.
-	alpn := fmt.Sprintf("moqt-%d", opts.draft)
-	if !slices.Contains(moqtransport.SupportedALPNs(), alpn) {
-		return fmt.Errorf("draft %d is not supported; this build speaks %v",
-			opts.draft, moqtransport.SupportedALPNs())
+	alpns, err := internal.DraftALPNs(opts.draft)
+	if err != nil {
+		return err
 	}
 
-	return runClientWithDial(ctx, relay, alpn, h, outs)
+	return runClientWithDial(ctx, relay, alpns, h, outs)
 }

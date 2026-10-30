@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -148,16 +146,12 @@ func TestInteropTestCases(t *testing.T) {
 
 	for _, relay := range relays {
 		for _, alpn := range moqtransport.SupportedALPNs() {
-			draft, err := strconv.Atoi(strings.TrimPrefix(alpn, "moqt-"))
-			if err != nil {
-				t.Fatalf("cannot read a draft number out of ALPN %q: %v", alpn, err)
-			}
 			for _, tc := range testCases {
-				t.Run(fmt.Sprintf("%s/draft%d/%s", relay.transport, draft, tc.name), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/%s/%s", relay.transport, alpn, tc.name), func(t *testing.T) {
 					ctx, ctxCancel := context.WithTimeout(context.Background(), defaultTimeout)
 					defer ctxCancel()
-					if err := tc.fn(ctx, relay.url, true, draft); err != nil {
-						t.Fatalf("%s (draft-%d over %s): %v", tc.name, draft, relay.transport, err)
+					if err := tc.fn(ctx, relay.url, true, []string{alpn}); err != nil {
+						t.Fatalf("%s (%s over %s): %v", tc.name, alpn, relay.transport, err)
 					}
 				})
 			}
@@ -174,7 +168,7 @@ func TestPublishersWithdraw(t *testing.T) {
 	relay := "moqt://" + addr
 	for _, tc := range testCases {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
-		if err := tc.fn(ctx, relay, true, 18); err != nil {
+		if err := tc.fn(ctx, relay, true, nil); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		cancel()
