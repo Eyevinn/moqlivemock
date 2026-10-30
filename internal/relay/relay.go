@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -63,8 +64,11 @@ type Handler struct {
 	UpstreamPath      string
 	UpstreamAuthority string
 
-	mu            sync.Mutex
-	announcements map[nsKey]*announcement
+	mu sync.Mutex
+	// announcements holds every live announcement of each namespace, oldest
+	// first; a namespace with several publishers (Section 9.3) lasts until
+	// the last of them withdraws. No list is ever empty.
+	announcements map[nsKey][]*announcement
 	waiters       map[*nsWaiter]struct{}
 	tracks        map[trackKey]*relayTrack
 	announcers    map[*nsAnnouncer]struct{}
@@ -93,7 +97,7 @@ func NewHandler(logfh io.Writer) *Handler {
 		Linger:          2 * time.Second,
 		UpstreamTimeout: 5 * time.Second,
 		MaxRendezvous:   10 * time.Second,
-		announcements:   make(map[nsKey]*announcement),
+		announcements:   make(map[nsKey][]*announcement),
 		waiters:         make(map[*nsWaiter]struct{}),
 		tracks:          make(map[trackKey]*relayTrack),
 		announcers:      make(map[*nsAnnouncer]struct{}),
@@ -375,13 +379,14 @@ func (h *Handler) lookupAnnouncement(namespace []string) *announcement {
 // SUBSCRIBE or FETCH for a namespace matches a publisher that announced it or
 // any prefix of it: (foo, bar) matches (foo) and (foo, bar), but not (foobar)
 // (draft-ietf-moq-transport-18 Section 9.5). Of several matches the longest,
-// most specific announcement wins. The draft has the relay subscribe to every
+// most specific namespace wins, and of several publishers of that namespace
+// the most recent announcement. The draft has the relay subscribe to every
 // matching publisher and merge their Objects (Section 9.3); this relay keeps
 // one upstream subscription per track, so it picks one. h.mu must be held.
 func (h *Handler) matchLocked(namespace []string) *announcement {
 	for n := len(namespace); n > 0; n-- {
-		if a, ok := h.announcements[keyForNamespace(namespace[:n])]; ok {
-			return a
+		if as, ok := h.announcements[keyForNamespace(namespace[:n])]; ok {
+			return as[len(as)-1]
 		}
 	}
 	return nil
@@ -398,51 +403,71 @@ func (h *Handler) wakeWaitersLocked(a *announcement) {
 	}
 }
 
-// register adds the announcement to the table. A namespace announced again
-// replaces the previous announcement: with per-request cleanup keyed on the
-// request, the stale entry would otherwise linger if its withdrawal signal
-// were lost, and last-writer-wins is the useful reading of a re-announce.
+// register adds the announcement to the table. A namespace already announced
+// by another publisher gains a second one rather than losing the first: the
+// first still publishes it, and its withdrawal must not end the namespace for
+// a publisher that has not withdrawn (Section 9.3). The newest serves.
 func (h *Handler) register(session *moqtransport.Session, r *moqtransport.PublishNamespaceRequest) {
 	key := keyForNamespace(r.Namespace())
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if prev, ok := h.announcements[key]; ok {
-		slog.Warn("namespace announced again, replacing previous announcement",
-			"namespace", r.Namespace(), "sameSession", prev.session == session)
+	if prev := h.announcements[key]; len(prev) > 0 {
+		slog.Info("namespace announced by another publisher too",
+			"namespace", r.Namespace(), "publishers", len(prev)+1)
 	}
 	a := &announcement{
 		namespace: r.Namespace(),
 		session:   session,
 		request:   r,
 	}
-	h.announcements[key] = a
+	h.announcements[key] = append(h.announcements[key], a)
 	h.wakeWaitersLocked(a)
 }
 
-// deregister removes the announcement created by r and reports whether it was
-// still in the table. An entry replaced by a newer announcement of the same
-// namespace is left alone.
+// deregister removes the announcement created by r and reports whether that
+// left the namespace without a publisher.
 func (h *Handler) deregister(r *moqtransport.PublishNamespaceRequest) bool {
 	key := keyForNamespace(r.Namespace())
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if a, ok := h.announcements[key]; ok && a.request == r {
+	i := slices.IndexFunc(h.announcements[key], func(a *announcement) bool { return a.request == r })
+	if i < 0 {
+		return false
+	}
+	if !h.removeLocked(key, i) {
+		slog.Info("announcement withdrawn, namespace still published",
+			"namespace", r.Namespace(), "publishers", len(h.announcements[key]))
+		return false
+	}
+	return true
+}
+
+// removeLocked removes the i-th announcement of a namespace and reports
+// whether it was the last. h.mu must be held.
+func (h *Handler) removeLocked(key nsKey, i int) bool {
+	as := slices.Delete(h.announcements[key], i, i+1)
+	if len(as) == 0 {
 		delete(h.announcements, key)
 		return true
 	}
+	h.announcements[key] = as
 	return false
 }
 
-// dropSession removes every announcement the session owns and withdraws them
-// from the namespace subscribers.
+// dropSession removes every announcement the session owns and withdraws the
+// namespaces left without a publisher from the namespace subscribers.
 func (h *Handler) dropSession(session *moqtransport.Session) {
 	h.mu.Lock()
 	var dropped [][]string
-	for key, a := range h.announcements {
-		if a.session == session {
+	for key, as := range h.announcements {
+		namespace := as[0].namespace
+		as = slices.DeleteFunc(as, func(a *announcement) bool { return a.session == session })
+		if len(as) == 0 {
 			delete(h.announcements, key)
-			dropped = append(dropped, a.namespace)
+			dropped = append(dropped, namespace)
+			continue
 		}
+		h.announcements[key] = as
 	}
 	h.mu.Unlock()
 	for _, namespace := range dropped {
@@ -458,17 +483,25 @@ func (h *Handler) dropSession(session *moqtransport.Session) {
 // SUBSCRIBE_NAMESPACE matches nothing. Announcing to everyone cost a
 // bidirectional stream per session and namespace, and an answer from each
 // peer, for something none of them asked for.
+//
+// It and withdrawFromSubscribers check the table under nsMu, so the fan-out
+// follows the table even when a withdrawal and a new announcement of one
+// namespace race to it.
 func (h *Handler) announceToSubscribers(namespace []string) {
 	h.nsMu.Lock()
 	defer h.nsMu.Unlock()
+	key := keyForNamespace(namespace)
 	h.mu.Lock()
+	if _, ok := h.announcements[key]; !ok {
+		h.mu.Unlock()
+		return
+	}
 	announcers := make([]*nsAnnouncer, 0, len(h.announcers))
 	for na := range h.announcers {
 		announcers = append(announcers, na)
 	}
 	h.mu.Unlock()
 
-	key := keyForNamespace(namespace)
 	for _, na := range announcers {
 		if !na.announced[key] && prefixMatches(na.prefix, namespace) {
 			if err := na.announcer.Announce(namespace); err != nil {
@@ -487,6 +520,10 @@ func (h *Handler) withdrawFromSubscribers(namespace []string) {
 	defer h.nsMu.Unlock()
 	key := keyForNamespace(namespace)
 	h.mu.Lock()
+	if _, ok := h.announcements[key]; ok {
+		h.mu.Unlock()
+		return
+	}
 	announcers := make([]*nsAnnouncer, 0, len(h.announcers))
 	for na := range h.announcers {
 		announcers = append(announcers, na)
@@ -545,34 +582,34 @@ func (h *Handler) discoverNamespaces(session *moqtransport.Session) {
 }
 
 // registerDiscovered adds a namespace learned from a namespace subscription
-// rather than from a PUBLISH_NAMESPACE, and reports whether it was new. An
-// entry a peer announced directly carries the request that withdraws it, so it
-// wins over a discovered duplicate of the same namespace.
+// rather than from a PUBLISH_NAMESPACE, and reports whether it was added. An
+// entry the same peer announced directly carries the request that withdraws
+// it, so it wins over a discovered duplicate; another peer's entry does not
+// stand in for this one, which outlives its withdrawal.
 func (h *Handler) registerDiscovered(session *moqtransport.Session, namespace []string) bool {
 	key := keyForNamespace(namespace)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, ok := h.announcements[key]; ok {
+	if slices.ContainsFunc(h.announcements[key], func(a *announcement) bool { return a.session == session }) {
 		return false
 	}
 	a := &announcement{namespace: namespace, session: session}
-	h.announcements[key] = a
+	h.announcements[key] = append(h.announcements[key], a)
 	h.wakeWaitersLocked(a)
 	return true
 }
 
 // deregisterDiscovered removes a discovered namespace the upstream says is
-// gone, and reports whether it was still there. An entry backed by a
-// PUBLISH_NAMESPACE is left to its own withdrawal path.
+// gone, and reports whether that left the namespace without a publisher. An
+// entry backed by a PUBLISH_NAMESPACE is left to its own withdrawal path.
 func (h *Handler) deregisterDiscovered(session *moqtransport.Session, namespace []string) bool {
 	key := keyForNamespace(namespace)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if a, ok := h.announcements[key]; ok && a.request == nil && a.session == session {
-		delete(h.announcements, key)
-		return true
-	}
-	return false
+	i := slices.IndexFunc(h.announcements[key], func(a *announcement) bool {
+		return a.request == nil && a.session == session
+	})
+	return i >= 0 && h.removeLocked(key, i)
 }
 
 // addAnnouncer registers a namespace subscriber and replays the matching
@@ -583,9 +620,9 @@ func (h *Handler) addAnnouncer(na *nsAnnouncer) {
 	h.mu.Lock()
 	h.announcers[na] = struct{}{}
 	matches := make([][]string, 0)
-	for _, a := range h.announcements {
-		if prefixMatches(na.prefix, a.namespace) {
-			matches = append(matches, a.namespace)
+	for _, as := range h.announcements {
+		if prefixMatches(na.prefix, as[0].namespace) {
+			matches = append(matches, as[0].namespace)
 		}
 	}
 	h.mu.Unlock()
