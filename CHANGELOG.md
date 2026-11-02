@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-02
+
+mlmpub, mlmsub, mlmtest and mlmrel speak MOQT draft-22 alongside draft-18, on
+moqtransport v0.15.0, and on draft-22 the catalog is joined with a fill. mlmrel
+routes requests for a namespace under an announced one, and keeps a namespace
+that several publishers announce until the last of them withdraws it.
+
 ### Added
 
 - MOQT draft-22 alongside draft-18, on moqtransport v0.15.0. mlmsub and mlmtest
@@ -871,7 +878,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.15.1...v0.16.0
