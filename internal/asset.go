@@ -34,8 +34,13 @@ const (
 	// object header carrying a single LOC frame: same MoQ object framing as
 	// CMAF plus the LOC Timestamp extension property (1 byte property ID +
 	// vi64 µs-since-epoch ≈ 9 bytes). draft-ietf-moq-transport-16 +
-	// draft-ietf-moq-loc-03 §2.3.1.1.
+	// draft-ietf-moq-loc-05 §2.3.1.1.
 	locObjectOverheadBytes = cmafObjectOverheadBytes + 9
+
+	// locVideoFrameMarkingBytes is the LOC Video Frame Marking property on
+	// every video object: Type, Length and the one-byte marking
+	// (draft-ietf-moq-loc-05 §2.3.2.2).
+	locVideoFrameMarkingBytes = 3
 )
 
 // ProtectionType identifies how a track is encrypted.
@@ -890,12 +895,12 @@ func (a *Asset) GenCMAFCatalogEntry(namespace string, prot ProtectionType,
 }
 
 // GenLOCCatalogEntry generates an MSF catalog with LOC packaging for this asset.
-// Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-03.
+// Conforms to draft-ietf-moq-msf-01 with packaging="loc" per draft-ietf-moq-loc-05.
 //
 // Only AVC/HEVC/AV1 video and AAC/Opus audio tracks with ProtectionNone are
 // included. No initData is set (LOC sends video config in-band with keyframes).
 // AVC tracks use "avc3" and HEVC tracks use "hev1" codec prefixes since
-// parameter sets travel in the payload (draft-ietf-moq-loc-03 §2.1.1). AV1 keeps
+// parameter sets travel in the payload (draft-ietf-moq-loc-05 §2.1.1). AV1 keeps
 // its "av01" codec string: it has no distinct in-band sample entry and the
 // sequence header OBU rides in the keyframe temporal units.
 func (a *Asset) GenLOCCatalogEntry(generatedAtMS int64) (*Catalog, error) {
@@ -1107,7 +1112,11 @@ func calcLOCBitrate(ct *ContentTrack) int {
 	}
 	// Each LOC sample becomes one MoQ object.
 	objectRate := float64(ct.TimeScale) / float64(ct.SampleDur)
-	extraBytesPerSec := float64(locObjectOverheadBytes) * objectRate
+	overhead := locObjectOverheadBytes
+	if ct.ContentType == "video" {
+		overhead += locVideoFrameMarkingBytes
+	}
+	extraBytesPerSec := float64(overhead) * objectRate
 	// Video tracks prepend parameter sets to every IRAP frame.
 	if ct.GopLength > 0 {
 		var psBytes int

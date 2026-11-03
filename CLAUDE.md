@@ -43,7 +43,9 @@ Consequences worth knowing:
   SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a 0x06 Object
   Property makes the track malformed; draft-03 moved it to 0x0A and draft-04
   moved it again to 0x10 as the registry table settled. Check the draft before
-  assuming this one.
+  assuming this one. Video objects also carry Video Frame Marking (**0x09**,
+  draft-ietf-moq-loc-05 §2.3.2.2), the one-byte RFC 9626 §3.2 form: `0xE0` on a
+  key frame, `0xC0` otherwise.
 - The PROPERTIES bit lives in the subgroup header and covers every Object on
   the stream, so a subgroup carrying properties must be opened with
   `moqtransport.WithObjectProperties()`.

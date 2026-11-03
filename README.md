@@ -71,7 +71,7 @@ convention.
 | `mlm/cmsf/clear` | CMSF (CMAF chunks) | Always | *(none)* | Unencrypted tracks |
 | `mlm/cmsf/drm-{scheme}` | CMSF (CMAF chunks) | `-drmpath` set | `_drm` | Commercial DRM (Widevine/PlayReady/FairPlay via CPIX) |
 | `mlm/cmsf/eccp-{scheme}` | CMSF (CMAF chunks) | `-kid`/`-iv` set | `_eccp` | ClearKey/ECCP (explicit key over HTTP) |
-| `mlm/msf/clear` | LOC ([draft-mzanaty-moq-loc][LOC]) | Always | *(none)* | AVC video + AAC/Opus audio, clear only |
+| `mlm/msf/clear` | LOC ([draft-ietf-moq-loc][LOC]) | Always | *(none)* | AVC/HEVC/AV1 video + AAC/Opus audio, clear only |
 | `mlm/moq-mi/clear` | moq-mi ([draft-cenzano-moq-media-interop][moq-mi]) | When asset has AVC + AAC-LC/Opus | *(none)* | Catalogless, fixed track names `video0` / `audio0` |
 | `moq-test/interop` | — | Always | — | The [moq-interop-runner][interop-runner] test namespace. Never carries the publisher prefix: the runner addresses it as this exact tuple |
 
@@ -119,9 +119,15 @@ CMAF track and a LOCMAF track `<name>_locmaf`.
 ### LOC (`mlm/msf/clear`)
 
 The LOC namespace uses MSF with `packaging=loc` per
-[draft-ietf-moq-msf-00][MSF] and [draft-mzanaty-moq-loc][LOC]. Objects carry
+[draft-ietf-moq-msf-00][MSF] and [draft-ietf-moq-loc][LOC]. Objects carry
 raw codec bitstream — AVC as length-prefixed NALUs and AAC as raw frames —
 without any container framing.
+
+Every Object carries the LOC Timestamp property (0x10) in microseconds since
+the Unix epoch. Every video Object also carries the Video Frame Marking
+property (0x09), the one-byte frame marking of [RFC 9626][RFC9626] Section 3.2:
+`0xE0` on a key frame and `0xC0` on any other frame. A receiver can thus find
+the key frames without parsing the bitstream.
 
 On the subscriber side, `mlmsub` reframes LOC video (length-prefixed NALUs
 → AnnexB) and LOC audio (raw AAC → ADTS) so the output can be piped directly
@@ -620,7 +626,8 @@ Want to know more about Eyevinn and how it is to work here. Contact us at work@e
 [moqt]: https://datatracker.ietf.org/doc/draft-ietf-moq-transport/
 [MSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-msf-00
 [CMSF]: https://datatracker.ietf.org/doc/html/draft-ietf-moq-cmsf-00
-[LOC]: https://datatracker.ietf.org/doc/html/draft-mzanaty-moq-loc
+[LOC]: https://datatracker.ietf.org/doc/draft-ietf-moq-loc/
+[RFC9626]: https://www.rfc-editor.org/rfc/rfc9626
 [moq-mi]: https://datatracker.ietf.org/doc/html/draft-cenzano-moq-media-interop
 [moqtransport]: https://github.com/Eyevinn/moqtransport
 [warp-player]: https://github.com/Eyevinn/warp-player
