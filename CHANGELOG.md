@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- mlmpub and mlmrel gave two subscriptions to one track on a session the same
+  Track Alias, so Objects reached the wrong subscription or were lost. Fixed by
+  moqtransport v0.15.1.
+
 ## [0.18.0] - 2026-11-02
 
 mlmpub, mlmsub, mlmtest and mlmrel speak MOQT draft-22 alongside draft-18, on
