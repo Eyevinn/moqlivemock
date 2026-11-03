@@ -443,8 +443,14 @@ func PublishTrack(ctx context.Context, publisher *moqtransport.Subscription,
 	}
 }
 
-// LOC Object Property IDs from draft-ietf-moq-loc-04 §2.3.1.
+// LOC Object Property IDs from draft-ietf-moq-loc-05 §2.3.
 const (
+	// locPropVideoFrameMarking is the LOC Video Frame Marking property
+	// (§2.3.2.2): the frame marking of RFC 9626 Section 3 as a length-prefixed
+	// value. It lets a receiver find the independent frames without parsing
+	// the bitstream.
+	locPropVideoFrameMarking = 0x09
+
 	// locPropTimestamp is the LOC Timestamp property: microseconds since the
 	// Unix epoch when no Timescale property is present.
 	//
@@ -457,10 +463,24 @@ const (
 	locPropTimestamp = 0x10
 )
 
+// locFrameMarking returns the Video Frame Marking value for an Object that holds
+// one whole frame: the one-byte form of RFC 9626 Section 3.2 with S (start of
+// frame) and E (end of frame) set, and I set for an independent frame. D
+// (discardable) stays 0, since mlmpub does not know which frames can be dropped.
+func locFrameMarking(independent bool) []byte {
+	const startOfFrame, endOfFrame, independentFrame = 0x80, 0x40, 0x20
+	marking := byte(startOfFrame | endOfFrame)
+	if independent {
+		marking |= independentFrame
+	}
+	return []byte{marking}
+}
+
 // PublishLOCTrack publishes LOC media track data (one raw frame per object) in MoQ groups,
 // pacing delivery to wall-clock time. Each object carries a LOC Timestamp property
-// (draft-ietf-moq-loc-03 §2.3.1.1) with the sample presentation time in microseconds
-// since the Unix epoch.
+// (draft-ietf-moq-loc-05 §2.3.1.1) with the sample presentation time in microseconds
+// since the Unix epoch, and each video object also a Video Frame Marking property
+// (§2.3.2.2) that marks the key frames.
 func PublishLOCTrack(ctx context.Context, publisher *moqtransport.Subscription,
 	asset *internal.Asset, trackName string) {
 	ct := asset.GetTrackByName(trackName)
@@ -555,6 +575,11 @@ func PublishLOCTrack(ctx context.Context, publisher *moqtransport.Subscription,
 			timestampUs := (sampleTime/timebase)*1_000_000 + (sampleTime%timebase)*1_000_000/timebase
 			properties := moqtransport.KVPList{
 				{Type: locPropTimestamp, ValueVarInt: timestampUs},
+			}
+			if ct.ContentType == "video" {
+				properties = append(properties, moqtransport.KeyValuePair{
+					Type: locPropVideoFrameMarking, ValueBytes: locFrameMarking(sample.IsSync()),
+				})
 			}
 			if _, err := sg.WriteObjectWithProperties(objectID, properties, payload); err != nil {
 				slog.Error("failed to write LOC object", "track", ct.Name, "group", groupNr,
