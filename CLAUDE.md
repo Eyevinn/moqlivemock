@@ -38,7 +38,7 @@ Consequences worth knowing:
   long as its stream, and ending that stream is the message. A publisher learns
   a subscriber has gone from `Subscription.Context()` being cancelled.
 - Extension headers are now Object Properties, with a registry and per-property
-  scope. The LOC Timestamp property is **0x10** (draft-ietf-moq-loc-04). It has
+  scope. The LOC Timestamp property is **0x10** (draft-ietf-moq-loc-05). It has
   moved twice: 0x06 was unusable because MOQT allocates it to
   SUBGROUP_DELIVERY_TIMEOUT, which is Track scope only, so a 0x06 Object
   Property makes the track malformed; draft-03 moved it to 0x0A and draft-04
