@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - mlmpub puts the LOC Video Frame Marking property (0x09) on every LOC video
   object, so receivers can find the key frames without parsing the bitstream.
 
+### Changed
+
+- Bumped `golang.org/x/net` v0.62.0, `golang.org/x/crypto` v0.58.0 and
+  `golang.org/x/text` v0.43.0 (11 advisories, none reachable from moqlivemock).
+
 ### Fixed
 
 - mlmpub and mlmrel gave two subscriptions to one track on a session the same

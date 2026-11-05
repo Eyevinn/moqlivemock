@@ -22,10 +22,10 @@ require (
 	github.com/beevik/etree v1.5.0 // indirect
 	github.com/dunglas/httpsfv v1.1.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	golang.org/x/crypto v0.54.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
 
 replace github.com/quic-go/webtransport-go => github.com/Eyevinn/webtransport-go v0.0.0-20261016122133-4c2adc0635bf
