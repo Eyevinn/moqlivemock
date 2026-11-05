@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-05
+
+mlmpub marks every LOC video object with the Video Frame Marking property. On
+moqtransport v0.15.1, every subscription gets a Track Alias of its own, so mlmpub
+and mlmrel no longer mix up the Objects of two subscriptions to one track.
+
 ### Added
 
 - mlmpub puts the LOC Video Frame Marking property (0x09) on every LOC video
@@ -894,7 +900,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.0...v0.16.1
