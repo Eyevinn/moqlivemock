@@ -13,7 +13,7 @@ require (
 
 require github.com/Eyevinn/go-608 v0.9.0
 
-require github.com/mengelbart/qlog v0.1.0
+require github.com/mengelbart/qlog v0.1.1-0.20260825155429-978b2062c546
 
 require go.yaml.in/yaml/v3 v3.0.5 // indirect
 
