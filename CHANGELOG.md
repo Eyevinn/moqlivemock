@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-11-13
+
+mlmrel caps the memory its group cache holds and no longer loses Objects for a
+subscriber accepted just as a group starts. On moqtransport v0.15.2, a publisher can
+no longer crash a receiver with one Object header.
+
 ### Fixed
 
 - mlmrel caps its cache per track (`-cache-mib`, default 64) and in total
@@ -910,7 +916,8 @@ Full [MOQ Transport draft-14][moqt-d14] compliance release.
 
 - initial version of the repo
 
-[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/Eyevinn/moqlivemock/compare/v0.19.1...HEAD
+[0.19.1]: https://github.com/Eyevinn/moqlivemock/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/Eyevinn/moqlivemock/compare/v0.16.1...v0.17.0
