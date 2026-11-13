@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - mlmrel caps its cache per track (`-cache-mib`, default 64) and in total
   (`-cache-total-mib`, default 512), so a group that never ends cannot exhaust memory (#172).
+- mlmrel forwards everything after its SUBSCRIBE_OK to a new subscriber. One accepted
+  just as a group started could miss the rest of the group before.
 
 ## [0.19.0] - 2026-11-05
 

@@ -146,10 +146,12 @@ func (rt *relayTrack) release() {
 // and snapshot happen under one lock with dispatch, so the backlog and the
 // queue never overlap and never leave a gap. When the newest group was
 // dropped from the cache, its start is gone, so the subscriber waits for the
-// next group as one that fell behind does. A non-nil ended means the track
+// next group as one that fell behind does. largest is the Largest Location
+// at the attach, nil before the first object. A non-nil ended means the track
 // finished before the attach: the caller serves the backlog and closes with
 // it, since finish's fan-out has already run.
-func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, ended *publishEnd) {
+func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object,
+	largest *moqtransport.Location, ended *publishEnd) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 	rt.pending--
@@ -158,7 +160,11 @@ func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, end
 	if skipping {
 		s.behind, s.behindGroup = true, skip
 	}
-	return backlog, rt.endInfo
+	if rt.haveLargest {
+		l := rt.largest
+		largest = &l
+	}
+	return backlog, largest, rt.endInfo
 }
 
 func (rt *relayTrack) detach(s *subscriber) {

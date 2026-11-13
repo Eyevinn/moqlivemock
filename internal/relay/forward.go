@@ -96,10 +96,20 @@ func (s *subscriber) end(e publishEnd) {
 // cached newest group (the group-aligned join), then live from the queue. It
 // blocks until the subscription ends from either side; the caller holds the
 // track acquired.
+//
+// The subscriber attaches before the SUBSCRIBE_OK goes out. Its peer may
+// act on the answer at once, and an object dispatched between the answer and
+// the attach would reach neither the backlog nor the queue; a group that
+// started in that gap would leave the earlier group's remaining objects out
+// altogether. The queue holds what arrives while Accept runs.
 func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
+	s := newSubscriber(nil, rt.h.QueueLen)
+	backlog, largest, ended := rt.attach(s)
+	defer rt.detach(s)
+
 	var opts []moqtransport.SubscribeOkOption
-	if largest, ok := rt.snapshotLargest(); ok {
-		opts = append(opts, moqtransport.WithLargestObject(largest))
+	if largest != nil {
+		opts = append(opts, moqtransport.WithLargestObject(*largest))
 	}
 	if props := rt.remote.TrackProperties(); len(props) > 0 {
 		opts = append(opts, moqtransport.WithTrackProperties(props))
@@ -115,13 +125,9 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 		if rerr := r.Reject(moqtransport.RequestErrorNotSupported, err.Error()); rerr != nil {
 			slog.Debug("failed to reject subscription", "error", rerr)
 		}
-		rt.release()
 		return
 	}
-
-	s := newSubscriber(subscription, rt.h.QueueLen)
-	backlog, ended := rt.attach(s)
-	defer rt.detach(s)
+	s.sub = subscription
 	slog.Info("forwarding subscription", "namespace", rt.namespace, "track", rt.track,
 		"backlogObjects", len(backlog))
 
