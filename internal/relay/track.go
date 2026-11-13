@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Eyevinn/moqtransport"
@@ -77,7 +78,7 @@ func newRelayTrack(h *Handler, key trackKey, ann *announcement, namespace []stri
 		cancel:    cancel,
 		ready:     make(chan struct{}),
 		subs:      make(map[*subscriber]struct{}),
-		cache:     newGroupCache(h.CacheGroups),
+		cache:     newGroupCache(h.CacheGroups, h.CacheBytes, h.TotalCacheBytes, &h.cachedBytes),
 	}
 }
 
@@ -143,7 +144,9 @@ func (rt *relayTrack) release() {
 // attach turns a reservation into a live subscriber and returns the cached
 // objects of the newest group, the group-aligned join point. Registration
 // and snapshot happen under one lock with dispatch, so the backlog and the
-// queue never overlap and never leave a gap. A non-nil ended means the track
+// queue never overlap and never leave a gap. When the newest group was
+// dropped from the cache, its start is gone, so the subscriber waits for the
+// next group as one that fell behind does. A non-nil ended means the track
 // finished before the attach: the caller serves the backlog and closes with
 // it, since finish's fan-out has already run.
 func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, ended *publishEnd) {
@@ -151,7 +154,11 @@ func (rt *relayTrack) attach(s *subscriber) (backlog []*moqtransport.Object, end
 	defer rt.mu.Unlock()
 	rt.pending--
 	rt.subs[s] = struct{}{}
-	return rt.cache.newestGroupObjects(), rt.endInfo
+	backlog, skip, skipping := rt.cache.joinPoint()
+	if skipping {
+		s.behind, s.behindGroup = true, skip
+	}
+	return backlog, rt.endInfo
 }
 
 func (rt *relayTrack) detach(s *subscriber) {
@@ -232,7 +239,10 @@ func (rt *relayTrack) run() {
 func (rt *relayTrack) dispatch(obj *moqtransport.Object) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	rt.cache.add(obj)
+	if rt.cache.add(obj) {
+		slog.Warn("group outgrew the cache budget, no longer caching it",
+			"namespace", rt.namespace, "track", rt.track, "group", obj.GroupID)
+	}
 	if !obj.EndsSubgroup && !obj.SubgroupReset {
 		// A marker's Object ID is meaningless, so only real objects advance
 		// the largest location.
@@ -259,6 +269,7 @@ func (rt *relayTrack) finish() {
 	// Recorded under the same lock as attach, so a subscriber joins either
 	// the snapshot below or reads endInfo -- never neither.
 	rt.endInfo = &end
+	rt.cache.releaseBudget()
 	subs := make([]*subscriber, 0, len(rt.subs))
 	for s := range rt.subs {
 		subs = append(subs, s)
@@ -297,29 +308,63 @@ func locationLess(a, b moqtransport.Location) bool {
 // counts as complete once a subgroup carrying the END_OF_GROUP bit has
 // finished, or a newer group has started (the fallback for publishers that
 // do not set the bit).
+//
+// It also keeps to two byte budgets: maxBytes for this track and maxTotal
+// for the caches of all tracks, whose sum total holds. Without them, one
+// group that never ends could grow until the relay runs out of memory.
 type groupCache struct {
 	maxGroups int
+	maxBytes  int64
+	maxTotal  int64
+	total     *atomic.Int64
+	bytes     int64 // held by this track, and counted in total
 	groups    map[uint64]*cachedGroup
 	order     []uint64 // cached group IDs, ascending
 }
 
 type cachedGroup struct {
 	objects   []*moqtransport.Object
+	bytes     int64
 	maxObject uint64
 	complete  bool
 	// damaged says a subgroup of this group was reset: objects are missing,
 	// so the group must not be served from cache.
 	damaged bool
+	// dropped says the group outgrew the budget: its objects were let go and
+	// later ones are not kept, so it is not served from cache either.
+	dropped bool
 }
 
-func newGroupCache(maxGroups int) *groupCache {
+// objectOverhead approximates what a cached object costs beyond its payload
+// and property values: the Object itself and its slot in the group.
+// propertyOverhead is the same for each property.
+const (
+	objectOverhead   = 128
+	propertyOverhead = 40
+)
+
+// objectCost is what obj counts against the cache budgets.
+func objectCost(obj *moqtransport.Object) int64 {
+	cost := int64(objectOverhead + len(obj.Payload))
+	for _, p := range obj.Properties {
+		cost += int64(propertyOverhead + len(p.ValueBytes))
+	}
+	return cost
+}
+
+func newGroupCache(maxGroups int, maxBytes, maxTotal int64, total *atomic.Int64) *groupCache {
 	return &groupCache{
 		maxGroups: maxGroups,
+		maxBytes:  maxBytes,
+		maxTotal:  maxTotal,
+		total:     total,
 		groups:    make(map[uint64]*cachedGroup),
 	}
 }
 
-func (c *groupCache) add(obj *moqtransport.Object) {
+// add caches obj. It reports whether doing so dropped obj's group from the
+// cache, which happens once per group at most.
+func (c *groupCache) add(obj *moqtransport.Object) (dropped bool) {
 	cg, ok := c.groups[obj.GroupID]
 	if !ok {
 		cg = &cachedGroup{}
@@ -333,11 +378,12 @@ func (c *groupCache) add(obj *moqtransport.Object) {
 			}
 		}
 		for len(c.order) > c.maxGroups {
-			delete(c.groups, c.order[0])
-			c.order = c.order[1:]
+			c.evictOldest()
+		}
+		if _, kept := c.groups[obj.GroupID]; !kept {
+			return false // older than every group the cache keeps
 		}
 	}
-	cg.objects = append(cg.objects, obj)
 	switch {
 	case obj.SubgroupReset:
 		cg.damaged = true
@@ -348,18 +394,68 @@ func (c *groupCache) add(obj *moqtransport.Object) {
 	case obj.ObjectID > cg.maxObject:
 		cg.maxObject = obj.ObjectID
 	}
+	if cg.dropped {
+		return false
+	}
+	cost := objectCost(obj)
+	cg.objects = append(cg.objects, obj)
+	cg.bytes += cost
+	c.bytes += cost
+	c.total.Add(cost)
+
+	// Older groups go first: the newest is the one late joiners start with.
+	for c.overBudget() && c.order[0] < obj.GroupID {
+		c.evictOldest()
+	}
+	if !c.overBudget() {
+		return false
+	}
+	c.release(cg)
+	cg.dropped = true
+	return true
 }
 
-// newestGroupObjects returns a copy of the newest cached group's objects:
-// the group-aligned join point for a new subscriber.
-func (c *groupCache) newestGroupObjects() []*moqtransport.Object {
+func (c *groupCache) overBudget() bool {
+	return (c.maxBytes > 0 && c.bytes > c.maxBytes) ||
+		(c.maxTotal > 0 && c.total.Load() > c.maxTotal)
+}
+
+// release lets go of a group's objects and gives its bytes back to both
+// budgets.
+func (c *groupCache) release(cg *cachedGroup) {
+	c.bytes -= cg.bytes
+	c.total.Add(-cg.bytes)
+	cg.objects, cg.bytes = nil, 0
+}
+
+func (c *groupCache) evictOldest() {
+	c.release(c.groups[c.order[0]])
+	delete(c.groups, c.order[0])
+	c.order = c.order[1:]
+}
+
+// releaseBudget gives the track's bytes back to the relay-wide budget when
+// the track ends. The objects stay, for a subscriber whose attach races the
+// end; nothing is added after it.
+func (c *groupCache) releaseBudget() {
+	c.total.Add(-c.bytes)
+	c.bytes = 0
+}
+
+// joinPoint returns what a new subscriber starts with: a copy of the newest
+// cached group's objects, the group-aligned join. When that group was
+// dropped there is nothing to start with, and skip names the group the
+// subscriber must let pass before its first object.
+func (c *groupCache) joinPoint() (objects []*moqtransport.Object, skip uint64, skipping bool) {
 	if len(c.order) == 0 {
-		return nil
+		return nil, 0, false
 	}
-	objects := c.groups[c.order[len(c.order)-1]].objects
-	out := make([]*moqtransport.Object, len(objects))
-	copy(out, objects)
-	return out
+	newest := c.order[len(c.order)-1]
+	cg := c.groups[newest]
+	if cg.dropped {
+		return nil, newest, true
+	}
+	return slices.Clone(cg.objects), 0, false
 }
 
 // collectRange returns the cached objects of a range of the track, under
@@ -387,7 +483,7 @@ func (c *groupCache) collectRange(rng moqtransport.LocationRange) ([]*moqtranspo
 	newest := c.order[len(c.order)-1]
 	for g := start.Group; g <= end.Group; g++ {
 		cg, ok := c.groups[g]
-		if !ok || cg.damaged {
+		if !ok || cg.damaged || cg.dropped {
 			return nil, false
 		}
 		if cg.complete {

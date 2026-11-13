@@ -49,6 +49,8 @@ type options struct {
 	upstream      string
 	maxRendezvous time.Duration
 	cacheGroups   int
+	cacheMiB      int64
+	cacheTotalMiB int64
 	queueLen      int
 	linger        time.Duration
 	upstreamTO    time.Duration
@@ -76,6 +78,10 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 			"the subscriber's own value applies when shorter")
 	fs.IntVar(&opts.cacheGroups, "cache-groups", 3,
 		"recent groups cached per track, for late joins and cache-served FETCHes")
+	fs.Int64Var(&opts.cacheMiB, "cache-mib", 64,
+		"MiB cached per track at most; a group that will not fit is not cached (0 = no cap)")
+	fs.Int64Var(&opts.cacheTotalMiB, "cache-total-mib", 512,
+		"MiB cached across all tracks at most; a group that will not fit is not cached (0 = no cap)")
 	fs.IntVar(&opts.queueLen, "queue", 256,
 		"per-subscriber object queue length; on overflow the subscriber skips to the next group boundary")
 	fs.DurationVar(&opts.linger, "linger", 2*time.Second,
@@ -180,6 +186,8 @@ func runServer(ctx context.Context, opts *options) error {
 	h.QlogFilter = keep
 	h.MaxRendezvous = opts.maxRendezvous
 	h.CacheGroups = opts.cacheGroups
+	h.CacheBytes = opts.cacheMiB << 20
+	h.TotalCacheBytes = opts.cacheTotalMiB << 20
 	h.QueueLen = opts.queueLen
 	h.Linger = opts.linger
 	h.UpstreamTimeout = opts.upstreamTO

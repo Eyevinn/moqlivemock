@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Eyevinn/moqlivemock/internal/qlogfilter"
@@ -43,6 +44,15 @@ type Handler struct {
 	// CacheGroups is how many recent groups are kept per track, for
 	// group-aligned late joins and cache-served FETCHes.
 	CacheGroups int
+	// CacheBytes caps the bytes one track's cache holds, and TotalCacheBytes
+	// those of every track together. A group that takes the cache over
+	// either first evicts its track's older groups; if that is not enough it
+	// is dropped from the cache, and is then served neither to a late
+	// joiner, who starts at the next group, nor to a FETCH, which goes
+	// upstream. An object counts its payload, its properties and a fixed
+	// overhead, so empty objects count too. Zero means no cap.
+	CacheBytes      int64
+	TotalCacheBytes int64
 	// QueueLen is each subscriber's object queue length. A subscriber whose
 	// queue overflows has its open subgroups reset and skips to the next
 	// group boundary rather than stalling the upstream read loop.
@@ -73,6 +83,9 @@ type Handler struct {
 	tracks        map[trackKey]*relayTrack
 	announcers    map[*nsAnnouncer]struct{}
 
+	// cachedBytes is what every track's cache holds, for TotalCacheBytes.
+	cachedBytes atomic.Int64
+
 	// nsMu serializes namespace fan-out (the replay to a new announcer and
 	// live announce/withdraw notifications) so nobody sees a duplicate or
 	// missed announcement. Fan-out writes wait for the peer's
@@ -93,6 +106,8 @@ func NewHandler(logfh io.Writer) *Handler {
 	return &Handler{
 		Logfh:           logfh,
 		CacheGroups:     3,
+		CacheBytes:      64 << 20,
+		TotalCacheBytes: 512 << 20,
 		QueueLen:        256,
 		Linger:          2 * time.Second,
 		UpstreamTimeout: 5 * time.Second,

@@ -1,6 +1,8 @@
 package relay_test
 
 import (
+	"cmp"
+	"context"
 	"io"
 	"slices"
 	"sync/atomic"
@@ -501,6 +503,89 @@ func TestFanoutSharedUpstream(t *testing.T) {
 			t.Fatal("upstream not unsubscribed after the linger")
 		}
 
+		shutdown(psConn, pcConn, asConn, acConn, bsConn, bcConn)
+	})
+}
+
+// readPayloads reads the objects a track has received, in (group, object)
+// order, stopping once none arrives for a while.
+func readPayloads(t *testing.T, remote *moqtransport.RemoteTrack) []string {
+	t.Helper()
+	var objects []*moqtransport.Object
+	for {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+		obj, err := remote.ReadObject(ctx)
+		cancel()
+		if err != nil {
+			break
+		}
+		if obj.EndsSubgroup || obj.SubgroupReset {
+			continue
+		}
+		objects = append(objects, obj)
+	}
+	slices.SortFunc(objects, func(a, b *moqtransport.Object) int {
+		if a.GroupID != b.GroupID {
+			return cmp.Compare(a.GroupID, b.GroupID)
+		}
+		return cmp.Compare(a.ObjectID, b.ObjectID)
+	})
+	payloads := make([]string, len(objects))
+	for i, obj := range objects {
+		payloads[i] = string(obj.Payload)
+	}
+	return payloads
+}
+
+// TestLateJoinAfterDroppedGroup: a group that outgrows the cache budget is
+// dropped from the cache (#172). A subscriber already attached still gets all
+// of it, and one joining meanwhile starts at the next group rather than
+// mid-group.
+func TestLateJoinAfterDroppedGroup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		h := relay.NewHandler(io.Discard)
+		h.CacheBytes = 4 << 10
+
+		pub := newFanoutPublisher()
+		psConn, pcConn := connectSession(t, h, pub.session)
+		subA, asConn, acConn := connect(t, h)
+		subB, bsConn, bcConn := connect(t, h)
+
+		_, err := pub.session.PublishNamespace(t.Context(), testNamespace)
+		require.NoError(t, err)
+		remoteA, err := subA.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		upSub := <-pub.subs
+
+		big := make([]byte, 3<<10)
+		sg1, err := upSub.OpenSubgroup(1, 0, 128)
+		require.NoError(t, err)
+		for i := range uint64(2) {
+			_, err = sg1.WriteObject(i, big)
+			require.NoError(t, err)
+			obj, err := remoteA.ReadObject(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, moqtransport.Location{Group: 1, Object: i},
+				moqtransport.Location{Group: obj.GroupID, Object: obj.ObjectID})
+		}
+
+		remoteB, err := subB.Subscribe(t.Context(), testNamespace, "test-track")
+		require.NoError(t, err)
+		_, err = sg1.WriteObject(2, []byte("g1o2"))
+		require.NoError(t, err)
+		require.NoError(t, sg1.Close())
+		sg2, err := upSub.OpenSubgroup(2, 0, 128)
+		require.NoError(t, err)
+		_, err = sg2.WriteObject(0, []byte("g2o0"))
+		require.NoError(t, err)
+
+		require.NoError(t, sg2.Close())
+		synctest.Wait()
+		require.Equal(t, []string{"g1o2", "g2o0"}, readPayloads(t, remoteA))
+		require.Equal(t, []string{"g2o0"}, readPayloads(t, remoteB), "B starts at the next group")
+
+		require.NoError(t, remoteA.Close())
+		require.NoError(t, remoteB.Close())
 		shutdown(psConn, pcConn, asConn, acConn, bsConn, bcConn)
 	})
 }
