@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`-cache-total-mib`, default 512), so a group that never ends cannot exhaust memory (#172).
 - mlmrel forwards everything after its SUBSCRIBE_OK to a new subscriber. One accepted
   just as a group started could miss the rest of the group before.
+- A publisher could crash mlmrel, mlmsub or mlmtest with one Object header declaring a huge
+  length, and a peer could grow mlmpub's or mlmrel's memory by skipping a Request ID (#173).
+  Fixed by moqtransport v0.15.2.
 
 ## [0.19.0] - 2026-11-05
 
