@@ -23,15 +23,20 @@ type fwdItem struct {
 
 // subscriber is one downstream subscription being fed from a relayTrack. The
 // dispatch loop enqueues (never blocking) and the subscriber's own writer
-// goroutine drains; behind/behindGroup are guarded by the track's mutex.
+// goroutine drains; behind, behindGroup and floor are guarded by the track's
+// mutex.
 type subscriber struct {
 	sub   *moqtransport.Subscription
 	queue chan fwdItem
 	done  chan publishEnd // buffered 1: the end always gets through
 
-	// Guarded by relayTrack.mu, mutated only by dispatch.
+	// Guarded by relayTrack.mu. Mutated by dispatch, and set by attach for a
+	// subscriber that joins while the newest group is dropped from the cache.
 	behind      bool
 	behindGroup uint64
+	// floor is the group the subscriber last resynced at. Objects of earlier
+	// groups, still arriving on other streams, are no longer sent to it.
+	floor uint64
 
 	// Writer-goroutine state.
 	open map[sgKey]*moqtransport.Subgroup
@@ -52,6 +57,9 @@ func newSubscriber(sub *moqtransport.Subscription, queueLen int) *subscriber {
 // has room again, at which point a resync item tells the writer to reset its
 // open subgroups. Called with the track's mutex held.
 func (s *subscriber) enqueue(obj *moqtransport.Object) {
+	if obj.GroupID < s.floor {
+		return
+	}
 	if s.behind {
 		// Resync only at a real group start; an end-of-subgroup marker for a
 		// subgroup this subscriber dropped means nothing to it.
@@ -62,6 +70,7 @@ func (s *subscriber) enqueue(obj *moqtransport.Object) {
 		select {
 		case s.queue <- fwdItem{resync: true}:
 			s.behind = false
+			s.floor = obj.GroupID
 		default:
 			return
 		}
@@ -147,8 +156,12 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 
 func (s *subscriber) handle(item fwdItem) bool {
 	if item.resync {
-		slog.Info("subscriber fell behind, resetting open subgroups")
-		s.resetAll(moqtransport.StreamErrorTooFarBehind)
+		// A subscriber that joined while the newest group was dropped from
+		// the cache resyncs too, with nothing open yet.
+		if len(s.open) > 0 {
+			slog.Info("subscriber fell behind, resetting open subgroups")
+			s.resetAll(moqtransport.StreamErrorTooFarBehind)
+		}
 		return true
 	}
 	return s.writeObject(item.obj)

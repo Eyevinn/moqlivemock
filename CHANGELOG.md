@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- mlmrel caps its cache per track (`-cache-mib`, default 64) and in total
+  (`-cache-total-mib`, default 512), so a group that never ends cannot exhaust memory (#172).
+
 ## [0.19.0] - 2026-11-05
 
 mlmpub marks every LOC video object with the Video Frame Marking property. On
