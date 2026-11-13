@@ -19,6 +19,13 @@ jobs:
         with:
           go-version: stable
       - name: Update to latest dependencies
-        run: go get -u -t ./...
+        # quic-go v0.65.0 makes http3.HTTPStreamer.HTTPStream also return an
+        # error, and webtransport-go v0.13.0, which the Eyevinn fork in the
+        # replace directive is based on, does not build against it
+        # (quic-go/webtransport-go#377). Drop the exclude once the fork is
+        # rebased onto a webtransport-go release that supports it.
+        run: |
+          go mod edit -exclude=github.com/quic-go/quic-go@v0.65.0
+          go get -u -t ./...
       - name: Test
         run: go test -v ./...
