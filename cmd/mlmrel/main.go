@@ -52,6 +52,7 @@ type options struct {
 	cacheMiB      int64
 	cacheTotalMiB int64
 	queueLen      int
+	queueMiB      int64
 	linger        time.Duration
 	upstreamTO    time.Duration
 	qlogfile      string
@@ -84,6 +85,8 @@ func parseOptions(fs *flag.FlagSet, args []string) (*options, error) {
 		"MiB cached across all tracks at most; a group that will not fit is not cached (0 = no cap)")
 	fs.IntVar(&opts.queueLen, "queue", 256,
 		"per-subscriber object queue length; on overflow the subscriber skips to the next group boundary")
+	fs.Int64Var(&opts.queueMiB, "queue-mib", 16,
+		"MiB queued per subscriber at most; on overflow the subscriber skips to the next group boundary (0 = no cap)")
 	fs.DurationVar(&opts.linger, "linger", 2*time.Second,
 		"how long an upstream subscription survives its last downstream subscriber")
 	fs.DurationVar(&opts.upstreamTO, "upstream-timeout", 5*time.Second,
@@ -189,6 +192,7 @@ func runServer(ctx context.Context, opts *options) error {
 	h.CacheBytes = opts.cacheMiB << 20
 	h.TotalCacheBytes = opts.cacheTotalMiB << 20
 	h.QueueLen = opts.queueLen
+	h.QueueBytes = opts.queueMiB << 20
 	h.Linger = opts.linger
 	h.UpstreamTimeout = opts.upstreamTO
 	if opts.upstream != "" {

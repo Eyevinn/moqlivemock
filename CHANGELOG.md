@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- mlmrel caps each subscriber's queue in bytes too (`-queue-mib`, default 16), so large
+  objects cannot pile up for a slow subscriber; one that falls further behind skips to the next group.
+
 ## [0.19.1] - 2026-11-13
 
 mlmrel caps the memory its group cache holds and no longer loses Objects for a
