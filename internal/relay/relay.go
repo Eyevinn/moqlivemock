@@ -53,10 +53,14 @@ type Handler struct {
 	// overhead, so empty objects count too. Zero means no cap.
 	CacheBytes      int64
 	TotalCacheBytes int64
-	// QueueLen is each subscriber's object queue length. A subscriber whose
-	// queue overflows has its open subgroups reset and skips to the next
-	// group boundary rather than stalling the upstream read loop.
-	QueueLen int
+	// QueueLen is each subscriber's object queue length, and QueueBytes caps
+	// what the queued objects cost, counted as for the cache. A subscriber
+	// whose queue overflows either has its open subgroups reset and skips to
+	// the next group boundary rather than stalling the upstream read loop.
+	// An empty queue takes an object larger than QueueBytes. Zero QueueBytes
+	// means no cap.
+	QueueLen   int
+	QueueBytes int64
 	// Linger is how long an upstream subscription survives its last
 	// downstream subscriber, so bouncing clients do not thrash the upstream.
 	Linger time.Duration
@@ -109,6 +113,7 @@ func NewHandler(logfh io.Writer) *Handler {
 		CacheBytes:      64 << 20,
 		TotalCacheBytes: 512 << 20,
 		QueueLen:        256,
+		QueueBytes:      16 << 20,
 		Linger:          2 * time.Second,
 		UpstreamTimeout: 5 * time.Second,
 		MaxRendezvous:   10 * time.Second,

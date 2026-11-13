@@ -3,6 +3,7 @@ package relay
 import (
 	"errors"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/Eyevinn/moqtransport"
 )
@@ -38,24 +39,32 @@ type subscriber struct {
 	// groups, still arriving on other streams, are no longer sent to it.
 	floor uint64
 
+	// maxBytes caps queuedBytes, what the queued objects cost (objectCost);
+	// zero means no cap. Dispatch adds, under the track's mutex, and the
+	// writer subtracts as it takes objects off the queue.
+	maxBytes    int64
+	queuedBytes atomic.Int64
+
 	// Writer-goroutine state.
 	open map[sgKey]*moqtransport.Subgroup
 }
 
-func newSubscriber(sub *moqtransport.Subscription, queueLen int) *subscriber {
+func newSubscriber(sub *moqtransport.Subscription, queueLen int, queueBytes int64) *subscriber {
 	return &subscriber{
-		sub:   sub,
-		queue: make(chan fwdItem, queueLen),
-		done:  make(chan publishEnd, 1),
-		open:  make(map[sgKey]*moqtransport.Subgroup),
+		sub:      sub,
+		queue:    make(chan fwdItem, queueLen),
+		maxBytes: queueBytes,
+		done:     make(chan publishEnd, 1),
+		open:     make(map[sgKey]*moqtransport.Subgroup),
 	}
 }
 
 // enqueue hands an object to the subscriber without ever blocking the
-// dispatch loop. A full queue puts the subscriber "behind": objects are
-// dropped until a later group starts (its first object, ID 0) and the queue
-// has room again, at which point a resync item tells the writer to reset its
-// open subgroups. Called with the track's mutex held.
+// dispatch loop. A full queue, by count or by bytes, puts the subscriber
+// "behind": objects are dropped until a later group starts (its first
+// object, ID 0) and the queue has room again, at which point a resync item
+// tells the writer to reset its open subgroups. Called with the track's
+// mutex held.
 func (s *subscriber) enqueue(obj *moqtransport.Object) {
 	if obj.GroupID < s.floor {
 		return
@@ -67,6 +76,9 @@ func (s *subscriber) enqueue(obj *moqtransport.Object) {
 			obj.EndsSubgroup || obj.SubgroupReset {
 			return
 		}
+		if !s.fits(obj) {
+			return
+		}
 		select {
 		case s.queue <- fwdItem{resync: true}:
 			s.behind = false
@@ -75,11 +87,35 @@ func (s *subscriber) enqueue(obj *moqtransport.Object) {
 			return
 		}
 	}
+	if !s.fits(obj) {
+		s.behind = true
+		s.behindGroup = obj.GroupID
+		return
+	}
+	cost := objectCost(obj)
+	s.queuedBytes.Add(cost)
 	select {
 	case s.queue <- fwdItem{obj: obj}:
 	default:
+		s.queuedBytes.Add(-cost)
 		s.behind = true
 		s.behindGroup = obj.GroupID
+	}
+}
+
+// fits reports whether obj stays within the byte cap. An empty queue takes
+// any object, so one larger than the cap is not refused for ever; the queue
+// then holds at most the cap or that one object. Only dispatch adds to
+// queuedBytes, so room seen here is still there when the object is queued.
+func (s *subscriber) fits(obj *moqtransport.Object) bool {
+	queued := s.queuedBytes.Load()
+	return s.maxBytes <= 0 || queued == 0 || queued+objectCost(obj) <= s.maxBytes
+}
+
+// take accounts for an item the writer has taken off the queue.
+func (s *subscriber) take(item fwdItem) {
+	if item.obj != nil {
+		s.queuedBytes.Add(-objectCost(item.obj))
 	}
 }
 
@@ -103,7 +139,7 @@ func (s *subscriber) end(e publishEnd) {
 // started in that gap would leave the earlier group's remaining objects out
 // altogether. The queue holds what arrives while Accept runs.
 func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
-	s := newSubscriber(nil, rt.h.QueueLen)
+	s := newSubscriber(nil, rt.h.QueueLen, rt.h.QueueBytes)
 	backlog, largest, ended := rt.attach(s)
 	defer rt.detach(s)
 
@@ -161,6 +197,7 @@ func (rt *relayTrack) serveSubscriber(r *moqtransport.SubscribeRequest) {
 }
 
 func (s *subscriber) handle(item fwdItem) bool {
+	s.take(item)
 	if item.resync {
 		// A subscriber that joined while the newest group was dropped from
 		// the cache resyncs too, with nothing open yet.
